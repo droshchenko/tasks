@@ -19,7 +19,7 @@ pub const PK_NAME: &str = "tasks_pk";
 // atomic upsert of one row. A second table would mean two writes with no transaction around them,
 // and the in-memory copy would have to be reconciled against a half-applied change.
 //
-// `who` is an email or the literal `claude`, unvalidated on purpose: MCP has no session to derive an
+// `who` is an email or the literal `AI`, unvalidated on purpose: MCP has no session to derive an
 // author from, and an author whose user row was later removed still has to render.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TaskCommentJsonModel {

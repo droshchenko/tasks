@@ -11,7 +11,7 @@ pub struct AddCommentInput {
     #[property(description = "Which task to comment on, by id, e.g. `RMS-42`")]
     pub id: String,
     #[property(
-        description = "Who is leaving it: an email from users_list, or the literal `claude` when it is Claude commenting. Same rule as an assignee — resolve a spoken first name to an address, never store the name"
+        description = "Who is leaving it: an email from users_list, or the literal `AI` when an agent is commenting. Same rule as an assignee — resolve a spoken first name to an address, never store the name"
     )]
     pub who: String,
     #[property(description = "The comment, as Markdown — the board renders it")]

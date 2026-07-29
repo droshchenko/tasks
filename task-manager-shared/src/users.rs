@@ -6,10 +6,22 @@ use serde::{Deserialize, Serialize};
 
 /// The one assignee that is not a person and has no user row.
 ///
-/// A task carrying it is Claude's to build. Deliberately *not* a row in the roster: a row would
-/// have to be added to every project's membership to be assignable, and disabling it would read as
-/// disabling a colleague.
-pub const ASSIGNEE_CLAUDE: &str = "claude";
+/// A task carrying it is an agent's to do. Neutral on purpose — not the name of any particular model, so
+/// it does not have to be renamed when whatever is doing the work changes.
+///
+/// Deliberately *not* a row in the roster: a row would have to be added to every project's membership to
+/// be assignable, and disabling it would read as disabling a colleague. It is assignable on every board,
+/// always, and `users_list` says so — that is how an agent learns it may put work on itself.
+pub const ASSIGNEE_AI: &str = "AI";
+
+/// Whether a value names the reserved assignee, whatever case it was written in.
+///
+/// Case-insensitive because it travels through MCP as free text: an agent writing `ai` means the same
+/// thing as one writing `AI`, and silently creating an assignee nobody resolves would be the worse
+/// reading.
+pub fn is_ai_assignee(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case(ASSIGNEE_AI)
+}
 
 // One row of the roster.
 //

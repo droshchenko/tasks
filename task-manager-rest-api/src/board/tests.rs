@@ -333,7 +333,11 @@ fn a_display_name_resolves_only_for_a_known_user_with_a_name() {
         Some("Yuri".to_string())
     );
     assert_eq!(read.display_name_of("noname@mxtm.ai"), None);
-    assert_eq!(read.display_name_of("claude"), None);
+    // The reserved assignee resolves to itself rather than to nothing: it has no user row by design, and
+    // a sticker showing whatever case an agent typed would be worse than showing "AI".
+    assert_eq!(read.display_name_of("AI"), Some("AI".to_string()));
+    assert_eq!(read.display_name_of("ai"), Some("AI".to_string()));
+    assert_eq!(read.display_name_of("nobody@x.io"), None);
     assert_eq!(read.display_name_of("stranger@mxtm.ai"), None);
 }
 

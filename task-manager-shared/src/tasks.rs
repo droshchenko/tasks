@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 // One comment on a task's thread.
 //
-// `who` is a user's email or the literal `claude`. It is a plain string rather than a reference to
+// `who` is a user's email or the literal `AI`. It is a plain string rather than a reference to
 // the roster: MCP has no session to derive an author from, so it passes one, and an author whose
 // user row was removed still has to render.
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
@@ -65,6 +65,31 @@ pub struct TaskResponse {
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
 pub struct TasksResponse {
     pub tasks: Vec<TaskResponse>,
+}
+
+// The exact task a handle names, plus which board it is on.
+//
+// Answered by the server rather than found in the loaded board, and that is the point: work closed more
+// than seven days ago is not in the board read at all, and a handle can name a project other than the one
+// on screen. Both are exactly when looking a number up is worth doing.
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct FindTaskResponse {
+    pub task: Option<TaskResponse>,
+    pub project_id: String,
+    pub project_prefix: String,
+    pub project_name: String,
+    // True when the hit is older than the seven-day window, so it is NOT on the board. Said out loud, or
+    // somebody goes hunting through the columns for a card that is not drawn.
+    pub archived: bool,
+    // Why there is no task, in words. Empty on a hit — an id that is not there has to come back as a
+    // message, never as an empty result that reads like "there is nothing there".
+    pub not_found: String,
+}
+
+#[derive(MyHttpInput)]
+pub struct FindTaskInputModel {
+    #[http_query(name: "query", description: "A task id such as RMS-42 or RMS-000042")]
+    pub query: String,
 }
 
 #[derive(MyHttpInput)]

@@ -44,6 +44,7 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
         .register_post_action(kind_templates::DeleteKindTemplateAction::new(app.clone()));
 
     http_server_builder.register_get_action(tasks::ListTasksAction::new(app.clone()));
+    http_server_builder.register_get_action(tasks::FindTaskAction::new(app.clone()));
 
     http_server_builder.register_get_action(users::ListUsersAction::new(app.clone()));
     http_server_builder.register_post_action(users::CreateUserAction::new(app.clone()));

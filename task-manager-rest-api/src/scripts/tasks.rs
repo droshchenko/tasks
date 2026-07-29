@@ -227,22 +227,41 @@ fn build_comment(
         .map(str::trim)
         .filter(|itm| !itm.is_empty())
         .ok_or_else(|| {
-            "a comment needs an author — pass `comment_by` as an email, or `claude`".to_string()
+            "a comment needs an author — pass `comment_by` as an email, or `AI`".to_string()
         })?;
 
     Ok(Some(crate::board::CommentModel {
         moment: DateTimeAsMicroseconds::now(),
-        who: who.to_lowercase(),
+        who: normalise_actor(who),
         text: comment.to_string(),
     }))
 }
 
-/// An assignee is stored lower-cased, and blank means nobody. `claude` survives this untouched, which
-/// is the point — it is a real assignee value, just not a person.
-fn normalise_assignee(src: Option<&str>) -> Option<String> {
-    let src = src?.trim().to_lowercase();
+/// How an email or the reserved `AI` is stored, for an assignee and a comment's author alike.
+///
+/// One function because the two must not drift: a comment signed `AI` and a task assigned `AI` have to be
+/// the same string, or a filter on one silently misses the other.
+///
+/// Addresses are lower-cased — they are case-insensitive, and storing two spellings of one would split a
+/// person in two. `AI` is stored exactly as declared whatever case it arrived in, so the value that comes
+/// back is the value the tool descriptions told the caller to use.
+fn normalise_actor(src: &str) -> String {
+    if task_manager_shared::users::is_ai_assignee(src) {
+        return task_manager_shared::users::ASSIGNEE_AI.to_string();
+    }
 
-    if src.is_empty() { None } else { Some(src) }
+    src.to_lowercase()
+}
+
+/// An assignee, normalised by [`normalise_actor`]. Blank means nobody.
+fn normalise_assignee(src: Option<&str>) -> Option<String> {
+    let src = src?.trim();
+
+    if src.is_empty() {
+        return None;
+    }
+
+    Some(normalise_actor(src))
 }
 
 /// Write the project row purely to save its task counter.
@@ -379,7 +398,7 @@ pub async fn add_comment(
     text: &str,
 ) -> Result<String, String> {
     if who.trim().is_empty() {
-        return Err("a comment needs an author — an email, or `claude`".to_string());
+        return Err("a comment needs an author — an email, or `AI`".to_string());
     }
 
     if text.trim().is_empty() {
@@ -461,14 +480,35 @@ mod tests {
         assert_eq!(comment.text, "did the thing");
     }
 
-    /// `claude` is a legitimate author and must survive untouched — it is how an agent signs its own note.
+    /// `AI` is a legitimate author and must survive untouched — it is how an agent signs its own note.
     #[test]
-    fn claude_is_a_legitimate_author() {
-        let comment = build_comment(Some("built it"), Some("claude"))
+    fn ai_is_a_legitimate_author() {
+        let comment = build_comment(Some("built it"), Some("AI"))
             .unwrap()
             .expect("should build");
 
-        assert_eq!(comment.who, "claude");
+        assert_eq!(comment.who, "AI");
+
+        // Any case reads as the same reserved value, so a filter on one spelling finds the other.
+        let lower = build_comment(Some("built it"), Some(" ai "))
+            .unwrap()
+            .expect("should build");
+
+        assert_eq!(lower.who, "AI");
+    }
+
+    /// The two paths must agree, or a comment signed `AI` and a task assigned `AI` would be different
+    /// strings and a filter on one would miss the other.
+    #[test]
+    fn an_assignee_and_an_author_normalise_the_same_way() {
+        assert_eq!(normalise_assignee(Some("AI")).as_deref(), Some("AI"));
+        assert_eq!(normalise_assignee(Some("ai")).as_deref(), Some("AI"));
+        assert_eq!(
+            normalise_assignee(Some(" Yuri@MXTM.ai ")).as_deref(),
+            Some("yuri@mxtm.ai")
+        );
+        assert_eq!(normalise_assignee(Some("   ")), None);
+        assert_eq!(normalise_assignee(None), None);
     }
 
     /// Whitespace-only text is not a comment. Without this, a caller could satisfy the Done rule with a

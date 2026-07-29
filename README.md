@@ -122,6 +122,20 @@ This is a deliberate simplification of `development-tasks-mcp`, where labels wer
 vocabulary with written definitions, a `used_by` count and an "in use but undefined" report. That
 machinery is gone.
 
+### The reserved assignee `AI`
+
+One assignee is not a person and has no user row: the literal `AI`, meaning the task is an agent's to do.
+Neutral on purpose, so it does not have to be renamed when whatever does the work changes.
+
+Deliberately not a row on the roster — a row would have to be added to every project's membership to be
+assignable, and disabling it would read as disabling a colleague. It is assignable on every board, always,
+and `users_list` returns it first with `reserved` true, which is how an agent learns it may put work on
+itself.
+
+Stored exactly as declared whatever case it arrives in, while an address is lower-cased. One function
+(`normalise_actor`) does both for an assignee and for a comment's author, because a comment signed `AI` and
+a task assigned `AI` have to be the same string or a filter on one would miss the other.
+
 ## Task
 
 | Field | |
@@ -132,7 +146,7 @@ machinery is gone.
 | `text` | Markdown — the UI renders it. |
 | `status` | A column id of this project. Unknown → reads as `todo`. **Always `todo` on creation** — `tasks_create` takes no status. |
 | `kind` | A kind id of this project. Optional. |
-| `assignee` | An email, or `claude`. |
+| `assignee` | An email, or the reserved `AI`. |
 | `labels` | Free tags, lowercased and de-duplicated. |
 | `depends_on` | **Numbers** of blocking tasks, within the same project. |
 | `comments` | A thread. Each comment: moment, `who`, Markdown text. |
@@ -249,7 +263,7 @@ next build.
 
 | Area | |
 |---|---|
-| **Home** (root URL) | The board. A project dropdown on top — only projects you may see; an admin sees all — and the choice is remembered in `localStorage`. **Read-only:** nothing is edited with a mouse, anywhere. |
+| **Home** (root URL) | The board. A project dropdown on top — only projects you may see; an admin sees all — and the choice is remembered in `localStorage`. Filters by task type and by assignee, plus a search box: free text narrows the board in place, while a task id (`RMS-42`) is looked up on the server and opens as a card, because the answer may be on another board or closed longer than seven days ago and therefore not drawn at all. **Read-only:** nothing is edited with a mouse, anywhere. |
 | **Projects setup** | Every project as one row — prefix, name, description, task count, which column template it follows, its task types, how many members. Editing is by dialog: **Edit** for what a project *is* (name, description, prefix, and which column template), then **Task types** and **Members**. Admin only. |
 | **Users** | The roster. Admin only. |
 | **Settings** | A menu of areas on the left, the chosen one on the right, with the area in the route (`/settings/column-templates`) so each is linkable and Back works between them. **Column templates** is where a board's columns are configured. **Diagnostics** is read-only: which `client_id` was picked up, which `redirect_uri` is expected, how many admins the settings list holds — the first thing worth reading when a sign-in fails. |

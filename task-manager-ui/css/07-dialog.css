@@ -173,3 +173,42 @@
   height: 100%;
   object-fit: contain;
 }
+
+/* One task, shown in full by id. */
+.task-view-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.task-view-text {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* The thread reads as a list of things people said, so it is separated from the task's own text rather
+   than continuing it. */
+.task-view-thread {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.task-view-comment {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.task-view-comment-who {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}

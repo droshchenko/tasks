@@ -341,9 +341,15 @@ impl BoardInner {
 
     /// The display name for an assignee value, when there is one.
     ///
-    /// `None` for `claude` and for an email with no user row — the caller then shows the raw value,
+    /// `AI` resolves to itself; `None` for an email with no user row — the caller then shows the raw value,
     /// which is more honest than inventing a name for it.
     pub fn display_name_of(&self, assignee: &str) -> Option<String> {
+        // The reserved assignee has no user row by design, so it would otherwise fall through and a
+        // sticker would show whatever case the agent happened to write.
+        if task_manager_shared::users::is_ai_assignee(assignee) {
+            return Some(task_manager_shared::users::ASSIGNEE_AI.to_string());
+        }
+
         let user = self.get_user(assignee)?;
 
         if user.name.trim().is_empty() {

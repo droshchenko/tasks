@@ -1,6 +1,6 @@
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use service_sdk::my_telemetry::MyTelemetryContext;
-use task_manager_shared::users::ASSIGNEE_CLAUDE;
+use task_manager_shared::users::{ASSIGNEE_AI, is_ai_assignee};
 
 use crate::app::AppContext;
 use crate::board::UserModel;
@@ -12,9 +12,9 @@ use crate::postgres::UserDto;
 fn validate_email(email: &str) -> Result<String, String> {
     let email = email.trim().to_lowercase();
 
-    if email == ASSIGNEE_CLAUDE {
+    if is_ai_assignee(&email) {
         return Err(format!(
-            "'{ASSIGNEE_CLAUDE}' is not a person — it is the assignee that means \"Claude builds this\", and it needs no user row"
+            "'{ASSIGNEE_AI}' is not a person — it is the reserved assignee meaning an agent does this, and it needs no user row"
         ));
     }
 

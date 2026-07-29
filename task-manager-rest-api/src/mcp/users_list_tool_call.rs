@@ -20,7 +20,9 @@ pub struct UsersListInput {
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct UsersListResponse {
-    #[property(description = "The people, by email")]
+    #[property(
+        description = "The people, by email, led by the reserved AI assignee. An entry with `reserved` true is not a person"
+    )]
     pub users: Vec<UserView>,
     #[property(description = "Number of rows in `users`")]
     pub amount: i32,
@@ -42,7 +44,9 @@ impl ToolDefinition for UsersListHandler {
 a comment and you were given a NAME rather than an address. It maps the two: a task's `assignee` and \
 a comment's `who` are emails, and a first name written there names nobody at all — the board shows \
 names but stores addresses. Pass the project to see only the people who may work on that board. If \
-more than one person still fits the name, ask which; do not guess.";
+more than one person still fits the name, ask which; do not guess. The list always begins with `AI`, the \
+reserved assignee that means an agent does the task — assign work to yourself with that, not with an \
+address.";
 }
 
 #[async_trait::async_trait]
@@ -59,7 +63,12 @@ impl McpToolCall<UsersListInput, UsersListResponse> for UsersListHandler {
             }
         };
 
-        let users: Vec<UserView> = board
+        // AI leads the list, on every project and whatever the filters say: it is assignable everywhere,
+        // it is never disabled, and it is not a member of anything — so filtering it like a person would
+        // hide the one assignee the caller can always use, which is usually itself.
+        let mut users: Vec<UserView> = vec![UserView::ai()];
+
+        let people: Vec<UserView> = board
             .users()
             .iter()
             .filter(|user| include_disabled || !user.disabled)
@@ -69,6 +78,8 @@ impl McpToolCall<UsersListInput, UsersListResponse> for UsersListHandler {
             })
             .map(|user| UserView::from_model(user))
             .collect();
+
+        users.extend(people);
 
         Ok(UsersListResponse {
             amount: users.len() as i32,

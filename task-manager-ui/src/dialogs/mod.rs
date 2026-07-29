@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 use task_manager_shared::column_templates::ColumnTemplateResponse;
 use task_manager_shared::kind_templates::KindTemplateResponse;
 use task_manager_shared::projects::ProjectResponse;
+use task_manager_shared::tasks::FindTaskResponse;
 
 mod dialog_template;
 pub use dialog_template::*;
@@ -15,6 +16,8 @@ mod edit_members;
 pub use edit_members::*;
 mod edit_project;
 pub use edit_project::*;
+mod view_task;
+pub use view_task::*;
 
 /// Which dialog is open, if any.
 ///
@@ -51,6 +54,10 @@ pub enum DialogState {
         template: Option<Rc<KindTemplateResponse>>,
         on_saved: EventHandler<()>,
     },
+    /// One task, looked up by id. Read-only — it has no `on_saved` because there is nothing to save.
+    ViewTask {
+        found: FindTaskResponse,
+    },
 }
 
 /// Mounted once, at the top of the signed-in shell, so a dialog overlays whatever screen opened it.
@@ -68,6 +75,9 @@ pub fn RenderDialog() -> Element {
         },
         DialogState::EditMembers { project, on_saved } => rsx! {
             EditMembersDialog { project, on_saved }
+        },
+        DialogState::ViewTask { found } => rsx! {
+            ViewTaskDialog { found }
         },
         DialogState::EditKindTemplate { template, on_saved } => rsx! {
             EditKindTemplateDialog {

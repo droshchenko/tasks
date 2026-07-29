@@ -41,7 +41,7 @@ pub struct TasksCreateInput {
     )]
     pub kind: Option<String>,
     #[property(
-        description = "Who takes it: an email from users_list, or the literal `claude` when this is Claude's to build. Never a first name — a name here names nobody. Omit to leave it unassigned"
+        description = "Who takes it: an email from users_list, or the literal `AI` when an agent does it. Never a first name — a name here names nobody. Omit to leave it unassigned"
     )]
     pub assignee: Option<String>,
     #[property(
@@ -119,7 +119,7 @@ pub struct TasksUpdateInput {
     )]
     pub kind: Option<String>,
     #[property(
-        description = "Reassign it — an email, or `claude`. Pass an empty string to clear the assignee; omit to leave it as it is"
+        description = "Reassign it — an email, or `AI`. Pass an empty string to clear the assignee; omit to leave it as it is"
     )]
     pub assignee: Option<String>,
     #[property(
@@ -139,7 +139,7 @@ pub struct TasksUpdateInput {
     )]
     pub comment: Option<String>,
     #[property(
-        description = "Who the comment is from: an email, or the literal `claude`. Required whenever `comment` is passed — there is no session here to derive an author from"
+        description = "Who the comment is from: an email, or the literal `AI`. Required whenever `comment` is passed — there is no session here to derive an author from"
     )]
     pub comment_by: Option<String>,
 }

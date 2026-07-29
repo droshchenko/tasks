@@ -116,7 +116,7 @@ impl ProjectView {
 pub struct CommentView {
     #[property(description = "When it was left, unix seconds (UTC)")]
     pub moment_unix_seconds: i64,
-    #[property(description = "Who left it — an email, or `claude`")]
+    #[property(description = "Who left it — an email, or `AI`")]
     pub who: String,
     #[property(description = "The comment, as Markdown")]
     pub text: String,
@@ -139,10 +139,10 @@ pub struct TaskView {
     pub status: String,
     #[property(description = "What kind of work it is, or absent when it has no kind")]
     pub kind: Option<String>,
-    #[property(description = "Who is on it — an email, or `claude`. Absent means nobody yet")]
+    #[property(description = "Who is on it — an email, or `AI`. Absent means nobody yet")]
     pub assignee: Option<String>,
     #[property(
-        description = "The assignee's name, when they are on the roster. Absent for `claude` and for an email with no user"
+        description = "The assignee's name, when they are on the roster. `AI` resolves to itself; absent for an email with no user"
     )]
     pub assignee_name: Option<String>,
     #[property(description = "Tags on this task, lowercased and sorted")]
@@ -223,6 +223,10 @@ pub struct UserView {
         description = "True when this person can no longer sign in. Do not assign new work to them; their existing tasks and comments are left as they are"
     )]
     pub disabled: bool,
+    #[property(
+        description = "True for the one entry that is not a person: the reserved assignee AI, meaning an agent does this task. Assignable on every board and never disabled. Put it in `assignee` when the work is yours"
+    )]
+    pub reserved: bool,
 }
 
 impl UserView {
@@ -231,6 +235,17 @@ impl UserView {
             email: user.email.clone(),
             name: user.name.clone(),
             disabled: user.disabled,
+            reserved: false,
+        }
+    }
+
+    /// The reserved assignee, which has no user row to build from.
+    pub fn ai() -> Self {
+        Self {
+            email: task_manager_shared::users::ASSIGNEE_AI.to_string(),
+            name: "AI".to_string(),
+            disabled: false,
+            reserved: true,
         }
     }
 }

@@ -72,9 +72,11 @@ written into `assignee` names nobody at all. When someone is named in conversati
 Yuri\" — call users_list and match the name to an address; pass the project so you only consider \
 people who may actually see that board. If more than one person fits, ask which. Do not guess.\
 \
-A TASK CAN BE PUT ON CLAUDE. The literal `claude` is a valid assignee and means the task is Claude's \
-to build — left for an agent to execute rather than for a person. It is not a user, has no row on the \
-roster, and needs none.\
+A TASK CAN BE PUT ON AN AGENT. The literal `AI` is a valid assignee on EVERY board and means the task \
+is an agent's to do rather than a person's — assign work to yourself with that, never with an address. \
+It is not a user: it has no row on the roster, is never disabled, and needs no membership anywhere, \
+which is why `users_list` always returns it first with `reserved` true. Neutral on purpose, so it does \
+not have to change when whatever does the work does. Written in any case — `ai` reads the same as `AI`.\
 \
 DEPENDENCIES ORDER THE WORK, AND THEY DO NOT CROSS PROJECTS. A task lists the tasks blocking it in \
 `depends_on` (ids of tasks on the same board; bare numbers work too). From that, every read derives \
@@ -95,7 +97,7 @@ short checklist. Keep a task to a sticker's worth — a line or two, not a docum
 belongs in the thread.\
 \
 THE THREAD IS FOR WHAT YOU LEARNED; THE TEXT IS FOR WHAT IS TO BE DONE. Findings, decisions, dead \
-ends and questions go on as comments with tasks_add_comment — passing `who` (an email, or `claude`) and \
+ends and questions go on as comments with tasks_add_comment — passing `who` (an email, or `AI`) and \
 Markdown text; the moment is stamped for you. Rewrite the task's own text only when the work itself \
 changed. A comment deliberately does not move the task's `updated`, so a busy thread does not read as \
 active work. Every task reports `comments_amount`; when it is not zero, tasks_get_comments is worth \

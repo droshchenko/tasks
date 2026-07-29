@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use service_sdk::my_postgres::MyPostgres;
 use service_sdk::my_postgres::sql_where::NoneWhereModel;
-use service_sdk::my_postgres::{MyPostgres, UpdateConflictType};
 
 service_sdk::macros::use_my_postgres!();
 
@@ -26,6 +26,11 @@ pub struct ProjectMemberDto {
     #[primary_key(1)]
     pub email: String,
 }
+
+// EVERY column here is part of the primary key, and that rules out an upsert: the generator emits
+// `ON CONFLICT ... DO UPDATE SET <the non-key columns>`, there are none, and Postgres refuses
+// `DO UPDATE SET` with an empty list — "syntax error at end of input". Which is fine, because there is
+// genuinely nothing to update on a pair that is already there. Insert-if-not-exists says exactly that.
 
 // Membership is replaced wholesale, so the delete side only ever needs the project.
 #[derive(WhereDbModel, Debug)]
@@ -90,15 +95,12 @@ impl ProjectMembersRepo {
             })
             .collect();
 
+        // Insert-if-not-exists rather than an upsert. See the note on the DTO: with every column in the
+        // primary key there is nothing to update, and asking for an update produced invalid SQL.
         self.postgres
             .with_retries(3, Duration::from_secs(1))
-            .bulk_insert_or_update_db_entity(
-                TABLE_NAME,
-                UpdateConflictType::OnPrimaryKeyConstraint(PK_NAME.into()),
-                &rows,
-                Some(ctx),
-            )
+            .bulk_insert_db_entities_if_not_exists(TABLE_NAME, &rows, Some(ctx))
             .await
-            .expect("project_members: bulk_insert_or_update_db_entity failed");
+            .expect("project_members: bulk_insert_db_entities_if_not_exists failed");
     }
 }

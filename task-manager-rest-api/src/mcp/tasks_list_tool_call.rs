@@ -17,7 +17,7 @@ pub struct TasksListInput {
     #[property(description = "Return only tasks of this kind, by kind id. Omit for every kind")]
     pub kind: Option<String>,
     #[property(
-        description = "Return only tasks assigned to this email, or to `claude`. Omit to ignore who is on them"
+        description = "Return only tasks assigned to this email, or to `AI`. Omit to ignore who is on them"
     )]
     pub assignee: Option<String>,
     #[property(description = "Return only tasks carrying this label. Omit to ignore labels")]
@@ -134,7 +134,12 @@ impl McpToolCall<TasksListInput, TasksListResponse> for TasksListHandler {
             })
             .filter(|task| match &assignee {
                 None => true,
-                Some(wanted) => task.assignee.as_ref() == Some(wanted),
+                // Case-insensitive: an address is stored lower-cased and `AI` is stored as declared, so a
+                // caller passing either spelling of either one has to match.
+                Some(wanted) => task
+                    .assignee
+                    .as_ref()
+                    .is_some_and(|itm| itm.eq_ignore_ascii_case(wanted)),
             })
             .filter(|task| match &label {
                 None => true,

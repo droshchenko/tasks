@@ -188,3 +188,9 @@
   vertical-align: -2px;
   filter: brightness(0) invert(1);
 }
+
+/* The board's search box. Wide enough for a sentence, because most of what gets typed here is words — a
+   task id is short and fits either way. */
+.board-search {
+  width: 260px;
+}

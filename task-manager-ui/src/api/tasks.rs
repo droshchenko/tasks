@@ -1,5 +1,7 @@
 use flurl::HttpVerb;
-use task_manager_shared::tasks::{GetTasksInputModel, TasksResponse};
+use task_manager_shared::tasks::{
+    FindTaskInputModel, FindTaskResponse, GetTasksInputModel, TasksResponse,
+};
 
 use crate::models::RequestError;
 
@@ -15,4 +17,17 @@ pub async fn get_tasks(project_id: &str) -> Result<TasksResponse, RequestError> 
     };
 
     handle_http_response(authed("/api/tasks/v1", HttpVerb::Get, request).await).await
+}
+
+/// Look one task up by its handle — `RMS-42`.
+///
+/// Always the server: a task closed more than seven days ago is not in the board read, and a handle names
+/// its own project, which may not be the one on screen. A miss comes back as `not_found` text rather than
+/// as an error, because "there is no RMS-999" is an answer, not a failure.
+pub async fn find_task(query: &str) -> Result<FindTaskResponse, RequestError> {
+    let request = FindTaskInputModel {
+        query: query.to_string(),
+    };
+
+    handle_http_response(authed("/api/tasks/v1/find", HttpVerb::Get, request).await).await
 }
