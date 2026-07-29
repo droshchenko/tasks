@@ -15,7 +15,6 @@ pub fn RenderHome() -> Element {
     let app_state = consume_context::<Signal<AppState>>();
 
     let mut projects = use_signal(Vec::<ProjectResponse>::new);
-    let mut tasks = use_signal(Vec::<TaskResponse>::new);
     let mut selected = use_signal(String::new);
     let mut error = use_signal(String::new);
     let mut loading = use_signal(|| true);
@@ -48,23 +47,27 @@ pub fn RenderHome() -> Element {
         }
     });
 
-    // Re-reads on two triggers: the person picked another board, or the server said this one changed.
-    // Reading `board_revision` inside the future is what subscribes to it.
-    use_future(move || async move {
-        let _ = app_state.read().board_revision;
+    // `use_resource`, NOT `use_future`. This is the whole reason the board was empty: `use_future` spawns
+    // its task once through `use_hook` and tracks nothing, so reading `selected` inside it did not subscribe
+    // to anything — the read happened once, at mount, when the selection was still empty, and never again.
+    // `use_resource` runs its closure inside a `ReactiveContext` and restarts when what it read changes.
+    //
+    // The reads are in the CLOSURE body rather than the async block on purpose: that is the part the
+    // reactive context definitely covers, so the dependency cannot be lost to a polling detail.
+    let tasks = use_resource(move || {
         let project_id = selected.read().clone();
+        // Bumped by the WebSocket when the server says this board changed. Reading it here is what makes a
+        // push repaint the board.
+        let _revision = app_state.read().board_revision;
 
-        if project_id.is_empty() {
-            tasks.set(Vec::new());
-            return;
-        }
-
-        match crate::api::get_tasks(&project_id).await {
-            Ok(response) => {
-                tasks.set(response.tasks);
-                error.set(String::new());
+        async move {
+            if project_id.is_empty() {
+                return Ok(Vec::new());
             }
-            Err(err) => error.set(err.message),
+
+            crate::api::get_tasks(&project_id)
+                .await
+                .map(|response| response.tasks)
         }
     });
 
@@ -115,7 +118,14 @@ pub fn RenderHome() -> Element {
         };
     };
 
-    let tasks_ra = tasks.read();
+    // Absent means the first read is still in flight; an error is shown rather than swallowed into an
+    // empty board, which would read as "no work here".
+    let tasks_read = tasks.read();
+    let (tasks_ra, tasks_error): (Vec<TaskResponse>, String) = match tasks_read.as_ref() {
+        None => (Vec::new(), String::new()),
+        Some(Ok(list)) => (list.clone(), String::new()),
+        Some(Err(err)) => (Vec::new(), err.message.clone()),
+    };
 
     // Every filter narrows the same list, so they compose: a type AND an assignee AND some text. A task id
     // is the exception and narrows nothing — the answer to an id may be on another board or off this one
@@ -145,28 +155,44 @@ pub fn RenderHome() -> Element {
             div { class: "page-header",
                 h1 { class: "page-title", "Home" }
                 div { class: "project-picker",
+                    // `selected` on the matching option, not `value` on the select: HTML decides a
+                    // dropdown's shown item from the option's attribute, so the remembered project was
+                    // restored into the signal but the control still displayed the first entry.
                     select {
-                        value: "{selected_id}",
                         onchange: move |event| selected.set(event.value()),
                         for project in projects_ra.iter() {
-                            option { value: "{project.id}", "{project.prefix} · {project.name}" }
+                            option {
+                                value: "{project.id}",
+                                selected: project.id == selected_id,
+                                "{project.prefix} · {project.name}"
+                            }
                         }
                     }
                     select {
-                        value: "{kind_wanted}",
                         onchange: move |event| kind_filter.set(event.value()),
-                        option { value: "", "Any type" }
+                        option { value: "", selected: kind_wanted.is_empty(), "Any type" }
                         for kind in current.kinds.iter() {
-                            option { value: "{kind.id}", "{kind.name}" }
+                            option {
+                                value: "{kind.id}",
+                                selected: kind.id == kind_wanted,
+                                "{kind.name}"
+                            }
                         }
                     }
                     select {
-                        value: "{assignee_wanted}",
                         onchange: move |event| assignee_filter.set(event.value()),
-                        option { value: "", "Anyone" }
-                        option { value: "{UNASSIGNED}", "Unassigned" }
+                        option { value: "", selected: assignee_wanted.is_empty(), "Anyone" }
+                        option {
+                            value: "{UNASSIGNED}",
+                            selected: assignee_wanted == UNASSIGNED,
+                            "Unassigned"
+                        }
                         for who in assignees.iter() {
-                            option { value: "{who.0}", "{who.1}" }
+                            option {
+                                value: "{who.0}",
+                                selected: who.0 == assignee_wanted,
+                                "{who.1}"
+                            }
                         }
                     }
                     input {
@@ -214,6 +240,10 @@ pub fn RenderHome() -> Element {
 
             if !error_text.is_empty() {
                 div { class: "error-banner", "{error_text}" }
+            }
+
+            if !tasks_error.is_empty() {
+                div { class: "error-banner", "{tasks_error}" }
             }
 
             div { class: "board",

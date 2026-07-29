@@ -14,22 +14,26 @@ pub fn RenderUsers() -> Element {
     let mut error = use_signal(String::new);
     let mut revision = use_signal(|| 0_u32);
 
-    use_future(move || async move {
-        let _ = *revision.read();
+    // `use_resource`, not `use_future`: the latter spawns once and tracks nothing, so bumping `revision`
+    // after a write refreshed nothing at all.
+    use_resource(move || {
+        let _revision = *revision.read();
 
-        match crate::api::get_users().await {
-            Ok(Some(response)) => {
-                users.set(response.users);
-                allowed.set(true);
-                loading.set(false);
-            }
-            Ok(None) => {
-                allowed.set(false);
-                loading.set(false);
-            }
-            Err(err) => {
-                error.set(err.message);
-                loading.set(false);
+        async move {
+            match crate::api::get_users().await {
+                Ok(Some(response)) => {
+                    users.set(response.users);
+                    allowed.set(true);
+                    loading.set(false);
+                }
+                Ok(None) => {
+                    allowed.set(false);
+                    loading.set(false);
+                }
+                Err(err) => {
+                    error.set(err.message);
+                    loading.set(false);
+                }
             }
         }
     });

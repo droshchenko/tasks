@@ -251,12 +251,20 @@ pub fn EditProjectDialog(
         }
         div { class: "form-row",
             label { "Columns" }
+            // `selected` on the option, not `value` on the select — see the project picker on Home.
             select {
-                value: "{selected_template}",
                 onchange: move |event| cs.write().draft.column_template_id = event.value(),
-                option { value: "", "No template — Todo → Done only" }
+                option {
+                    value: "",
+                    selected: selected_template.is_empty(),
+                    "No template — Todo → Done only"
+                }
                 for template in templates.iter() {
-                    option { value: "{template.id}", "{template.name}" }
+                    option {
+                        value: "{template.id}",
+                        selected: template.id == selected_template,
+                        "{template.name}"
+                    }
                 }
             }
             div { class: "field-hint",
@@ -266,11 +274,18 @@ pub fn EditProjectDialog(
         div { class: "form-row",
             label { "Task types" }
             select {
-                value: "{selected_kind_template}",
                 onchange: move |event| cs.write().draft.kind_template_id = event.value(),
-                option { value: "", "No template — no task types" }
+                option {
+                    value: "",
+                    selected: selected_kind_template.is_empty(),
+                    "No template — no task types"
+                }
                 for template in kind_templates.iter() {
-                    option { value: "{template.id}", "{template.name}" }
+                    option {
+                        value: "{template.id}",
+                        selected: template.id == selected_kind_template,
+                        "{template.name}"
+                    }
                 }
             }
             div { class: "field-hint",
