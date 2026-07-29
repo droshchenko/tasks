@@ -92,8 +92,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 6px;
-  flex-wrap: wrap;
+  margin-bottom: 4px;
 }
 
 .sticker-id {
@@ -102,14 +101,38 @@
   color: var(--text-faint);
 }
 
-.sticker-kind {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  color: #fff;
-  border-radius: 3px;
-  padding: 1px 6px;
+/* The eye. Pushed to the far edge of the card's top row with `auto` rather than by ordering, so it stays
+   there whatever else the row ends up holding. */
+.sticker-view {
+  margin-left: auto;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  /* Dimmed until wanted: one per card down a full column is a row of eyes staring back otherwise. */
+  opacity: 0.45;
+}
+
+.sticker:hover .sticker-view,
+.sticker-view:focus-visible {
+  opacity: 1;
+}
+
+/* The whole face of the card. Clamped to three lines rather than left to grow: a card is a handle for a
+   task, and the task itself is one click away — a first line long enough to need four lines is a paragraph
+   somebody wrote instead of a title, and it must not be allowed to set the height of the column. */
+.sticker-title {
+  font-size: 14px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  /* A long unbroken token — a URL, a path — would otherwise widen the column past its max. */
+  overflow-wrap: anywhere;
 }
 
 .sticker-blocked-flag {
@@ -121,42 +144,16 @@
   padding: 1px 6px;
 }
 
-.sticker-text {
-  font-size: 14px;
-}
-
-.sticker-text p {
-  margin: 0 0 6px 0;
-}
-
-.sticker-text p:last-child {
-  margin-bottom: 0;
-}
-
-.sticker-text ul {
-  margin: 4px 0;
-  padding-left: 18px;
-}
-
-.sticker-bottom {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.sticker-assignee {
+/* No longer on a card — the board shows a title and nothing else. Kept because the task-type tag is drawn
+   by Settings and by project setup, where a type is being picked and its colour is the whole point. */
+.sticker-kind {
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text);
-}
-
-.sticker-deps {
-  font-size: 12px;
-  color: #9a6700;
-  margin-top: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 6px;
 }
 
 .project-picker {

@@ -174,29 +174,133 @@
   object-fit: contain;
 }
 
-/* One task, shown in full by id. */
-.task-view-meta {
-  display: flex;
+/* One task, shown in full. The board is a list of titles now, so this is where the whole thing is read —
+   which is why it takes 95% of the window rather than a column in the middle of it. */
+.modal.modal-task {
+  width: 95vw;
+  max-width: 95vw;
+  height: 95vh;
+  max-height: 95vh;
+}
+
+/* The backdrop's padding and top alignment are for a dialog that grows with its content. This one is
+   already as big as it means to be, so the padding would only push it off the bottom of the window. */
+.modal-backdrop:has(.modal-task) {
+  padding: 0;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+/* Four areas at fixed proportions, so nothing on this screen is reached by scrolling past something else.
+   The body stops scrolling and each half does its own — see `.task-view-text` and `.task-view-thread`. */
+.modal-task .modal-body {
+  overflow: hidden;
+  display: flex;
+  min-height: 0;
+}
+
+.task-view {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  /* Halves, deliberately: the text and the conversation about it are worth the same room. */
+  grid-template-rows: 1fr 1fr;
+  gap: 14px;
+}
+
+.task-view-top {
+  display: grid;
+  /* `minmax(0, 1fr)` and not `1fr`: a grid item's automatic minimum is its content, so one long word in the
+     text would push the attribute column off the dialog. */
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: 16px;
+  min-height: 0;
 }
 
 .task-view-text {
   font-size: 14px;
   line-height: 1.5;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
 }
 
-/* The thread reads as a list of things people said, so it is separated from the task's own text rather
-   than continuing it. */
-.task-view-thread {
-  margin-top: 16px;
+/* Labelled values down the right-hand side, separated by a rule rather than by a box — it is the same task,
+   not a panel about it. */
+.task-view-attrs {
+  border-left: 1px solid var(--border);
+  padding-left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.task-view-attr-label {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 3px;
+}
+
+.task-view-attr-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* The lower half. The header stays put and only the thread under it moves, so which list you are scrolling
+   is still answerable once the comments have moved. */
+.task-view-bottom {
   border-top: 1px solid var(--border);
   padding-top: 12px;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.task-view-thread-header {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.task-view-thread {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+/* No room for two columns: the attributes go under the text, and the halves stop being halves — on a screen
+   this narrow, scrolling the body is the only thing that works. */
+@media (max-width: 720px) {
+  .task-view {
+    grid-template-rows: auto auto;
+    overflow-y: auto;
+  }
+
+  .task-view-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-view-attrs {
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
 }
 
 .task-view-comment {

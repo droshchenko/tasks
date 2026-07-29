@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO, ProjectResponse};
-use task_manager_shared::tasks::TaskResponse;
+use task_manager_shared::tasks::{FindTaskResponse, TaskResponse};
 
 use dioxus_utils::{DataState, RenderState};
 
@@ -542,6 +542,11 @@ fn RenderColumn(
     }
 }
 
+/// One card, and deliberately almost nothing: its handle and its title.
+///
+/// The whole task — the text, the thread, who has it, what it waits on — is one click away behind the eye,
+/// and only there. A column of full cards is a wall of Markdown you have to read to scan, which is the
+/// opposite of what a board is for; a column of titles is a list you can take in at a glance.
 #[component]
 fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
     let kind = task
@@ -549,28 +554,23 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
         .as_ref()
         .and_then(|kind_id| project.kinds.iter().find(|itm| &itm.id == kind_id));
 
-    let kind_color = kind
-        .map(|itm| KindColor::parse_or_default(&itm.color))
-        .unwrap_or_default();
-
-    // Rendered rather than shown as source: agents write Markdown, and a checklist as literal dashes is
-    // markedly harder to read. `markdown::to_html` escapes raw HTML instead of passing it through, which
-    // is what makes rendering text this side did not author safe.
-    let text_html = markdown::to_html(&task.text);
-
-    let assignee = task
-        .assignee_name
-        .clone()
-        .or_else(|| task.assignee.clone())
-        .unwrap_or_else(|| "Unassigned".to_string());
-
+    // The type survives on the face of the card as the colour of its left edge and nothing more. It costs
+    // no room, so it does not compete with the title the way a badge would.
     let border = kind
-        .map(|_| format!("border-left-color: {}", kind_color.hex()))
+        .map(|itm| {
+            format!(
+                "border-left-color: {}",
+                KindColor::parse_or_default(&itm.color).hex()
+            )
+        })
         .unwrap_or_default();
 
-    // Only shown in Done, and only as "how long ago" — the exact timestamp is noise on a sticker, while
-    // the age is the thing that matters, because it says how close the task is to leaving the board.
-    let closed_note = task.closed_unix_seconds.map(closed_how_long_ago);
+    let title = task_title(&task.text);
+
+    // Built here rather than fetched: this side already holds the whole task and the project it is on, so
+    // the card opens instantly and without a round trip. `archived` is false by definition — a card that is
+    // drawn is on the board.
+    let found = found_locally(&task, &project);
 
     rsx! {
         div {
@@ -579,59 +579,111 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
 
             div { class: "sticker-top",
                 span { class: "sticker-id", "{task.id}" }
-                if let Some(kind) = kind {
-                    span {
-                        class: "sticker-kind",
-                        style: "background: {kind_color.hex()}",
-                        title: "{kind.description}",
-                        // Only when this build actually has the file: a name stored before an icon was
-                        // renamed away draws as no icon rather than as a broken image.
-                        if crate::web::icon_exists(&kind.icon) {
-                            img { class: "sticker-kind-icon", src: "{crate::web::icon_url(&kind.icon)}", alt: "" }
-                        }
-                        "{kind.name}"
-                    }
-                }
-                if task.blocked {
-                    span { class: "sticker-blocked-flag", "Blocked" }
+                button {
+                    class: "sticker-view",
+                    title: "View the task",
+                    onclick: move |_| {
+                        crate::dialogs::open(crate::dialogs::DialogState::ViewTask {
+                            found: found.clone(),
+                        });
+                    },
+                    "👁"
                 }
             }
 
-            div { class: "sticker-text", dangerous_inner_html: "{text_html}" }
-
-            if !task.depends_on.is_empty() {
-                div { class: "sticker-deps", "Waiting on {task.depends_on.join(\", \")}" }
-            }
-
-            div { class: "sticker-bottom",
-                span { class: "sticker-assignee", "{assignee}" }
-                if let Some(closed) = closed_note {
-                    span { title: "Work closed more than seven days ago leaves the board", "{closed}" }
-                }
-                if !task.comments.is_empty() {
-                    span { "💬 {task.comments.len()}" }
-                }
-                for label in task.labels.iter() {
-                    span { class: "tag", "{label}" }
-                }
-            }
+            div { class: "sticker-title", "{title}" }
         }
     }
 }
 
-/// "Closed today" / "Closed 3 days ago" — the age, not the timestamp.
-///
-/// Days rather than hours because the archive window is measured in days, so the number on the sticker and
-/// the reason it will disappear are the same number.
-fn closed_how_long_ago(closed_unix_seconds: i64) -> String {
-    let now = js_sys::Date::now() as i64 / 1_000;
-    let days = (now - closed_unix_seconds).max(0) / (24 * 60 * 60);
-
-    match days {
-        0 => "Closed today".to_string(),
-        1 => "Closed yesterday".to_string(),
-        _ => format!("Closed {days} days ago"),
+/// The task exactly as a lookup by id would have answered it, assembled from what is already on screen.
+fn found_locally(task: &TaskResponse, project: &ProjectResponse) -> FindTaskResponse {
+    FindTaskResponse {
+        task: Some(task.clone()),
+        project_id: project.id.clone(),
+        project_prefix: project.prefix.clone(),
+        project_name: project.name.clone(),
+        archived: false,
+        not_found: String::new(),
     }
+}
+
+/// The first line of the text, as the card's title.
+///
+/// A task has no title field — agents write one body, and its first line is the sentence they lead with.
+/// So the title is read out of the text rather than stored, which also means nothing has to be migrated and
+/// a task written before this screen changed still has one.
+///
+/// The Markdown that line may be wrapped in is taken off: a heading's `#`, a bullet's dash, a quote's `>`,
+/// and emphasis around the whole line. What is left is shown as plain text, never rendered — a title is one
+/// line, and the point of the card is that it is not a document.
+fn task_title(text: &str) -> String {
+    for line in text.lines() {
+        let line = strip_markdown_markers(line.trim());
+
+        if !line.is_empty() {
+            return line.to_string();
+        }
+    }
+
+    "(no text)".to_string()
+}
+
+fn strip_markdown_markers(line: &str) -> &str {
+    let mut line = line;
+
+    // Repeated, because a line can carry more than one of these at once — `> ## Title` is a heading inside
+    // a quote, and both have to come off before the text starts.
+    loop {
+        let stripped = strip_one_marker(line);
+
+        if stripped == line {
+            break;
+        }
+
+        line = stripped;
+    }
+
+    // Emphasis wrapping the WHOLE line only. Trimming these characters anywhere would eat the underscores
+    // out of a crate name and the backticks off an identifier that is only part of the sentence.
+    for marker in ["**", "__", "*", "_", "`"] {
+        if line.len() > marker.len() * 2 && line.starts_with(marker) && line.ends_with(marker) {
+            line = &line[marker.len()..line.len() - marker.len()];
+            break;
+        }
+    }
+
+    line.trim()
+}
+
+/// One block marker off the front, or the line unchanged.
+///
+/// A bullet is only a bullet when whitespace follows it — otherwise `**Ship it**` would lose its opening
+/// asterisks to the list rule and never reach the emphasis rule.
+fn strip_one_marker(line: &str) -> &str {
+    if let Some(rest) = line.strip_prefix('>') {
+        return rest.trim_start();
+    }
+
+    let hashes = line.chars().take_while(|c| *c == '#').count();
+
+    if hashes > 0 {
+        let rest = &line[hashes..];
+
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return rest.trim_start();
+        }
+    }
+
+    for bullet in ['-', '*', '+'] {
+        if let Some(rest) = line.strip_prefix(bullet) {
+            if rest.starts_with(char::is_whitespace) {
+                return rest.trim_start();
+            }
+        }
+    }
+
+    line
 }
 
 #[cfg(test)]
@@ -658,6 +710,58 @@ mod tests {
             updated_unix_seconds: 0,
             closed_unix_seconds: None,
         }
+    }
+
+    /// The card's whole face comes out of this, so what it does to a first line is worth pinning.
+    #[test]
+    fn the_title_is_the_first_line_of_the_text() {
+        assert_eq!(
+            task_title("Fix the login redirect\n\nIt drops the return url."),
+            "Fix the login redirect"
+        );
+
+        assert_eq!(
+            task_title("\n\n  Fix the login redirect  \n"),
+            "Fix the login redirect",
+            "leading blank lines are skipped and the line is trimmed"
+        );
+
+        assert_eq!(task_title(""), "(no text)");
+        assert_eq!(task_title("\n \n"), "(no text)");
+    }
+
+    /// Agents write Markdown, so the first line arrives wrapped in whatever they lead with.
+    #[test]
+    fn the_title_comes_out_of_its_markdown() {
+        assert_eq!(
+            task_title("# Fix the login redirect"),
+            "Fix the login redirect"
+        );
+        assert_eq!(task_title("### Fix it"), "Fix it");
+        assert_eq!(task_title("- Fix it"), "Fix it");
+        assert_eq!(task_title("* Fix it"), "Fix it");
+        assert_eq!(task_title("> ## Fix it"), "Fix it", "both markers come off");
+        assert_eq!(task_title("**Fix it**"), "Fix it");
+        assert_eq!(task_title("`Fix it`"), "Fix it");
+    }
+
+    /// The characters emphasis is made of also appear inside ordinary text, and taking them out anywhere
+    /// would mangle a crate name or a multiplication.
+    #[test]
+    fn the_title_keeps_markers_that_are_not_markers() {
+        assert_eq!(
+            task_title("Rename my_jet_tools to something else"),
+            "Rename my_jet_tools to something else"
+        );
+        assert_eq!(
+            task_title("*emphasis* only at the start is not a wrapper"),
+            "*emphasis* only at the start is not a wrapper"
+        );
+        assert_eq!(
+            task_title("Publish task-manager-ui 0.1.13"),
+            "Publish task-manager-ui 0.1.13",
+            "a dash inside a word is not a bullet"
+        );
     }
 
     /// Which of the two things the box does is decided here, so the shapes are worth pinning.
