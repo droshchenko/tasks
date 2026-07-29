@@ -66,6 +66,11 @@ pub struct TaskDto {
     pub created: DateTimeAsMicroseconds,
     #[sql_type("timestamp")]
     pub updated: DateTimeAsMicroseconds,
+    // When the task landed in Done; NULL whenever it is not there. Nullable rather than defaulted,
+    // because "never closed" and "closed at the epoch" are different facts and only one of them is true
+    // of a task in Todo.
+    #[sql_type("timestamp")]
+    pub close_moment: Option<DateTimeAsMicroseconds>,
 }
 
 // Deleting one task. The PK is composite, so both halves are needed.

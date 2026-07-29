@@ -37,10 +37,6 @@ pub struct TasksCreateInput {
     )]
     pub text: String,
     #[property(
-        description = "Which column to put it in, by column id. Omit for `todo`, which is where new work belongs"
-    )]
-    pub status: Option<String>,
-    #[property(
         description = "What kind of work it is, by kind id. Read the kind descriptions from projects_list first — the meanings are per project. Omit for no kind"
     )]
     pub kind: Option<String>,
@@ -73,7 +69,10 @@ impl ToolDefinition for TasksCreateHandler {
     const DESCRIPTION: &'static str = "Put a new task on a board. Use it when you are asked to \
 remember a piece of work, or when work is agreed that nobody is doing yet. Read the board first: this \
 creates a task unconditionally, so calling it twice for the same work leaves two of them. The \
-returned `id` is how the task is named from then on.";
+returned `id` is how the task is named from then on.\
+\
+A new task ALWAYS starts in `todo` — there is no status to pass. Moving it on is tasks_update's job, \
+which is also where landing work has to say what was done.";
 }
 
 #[async_trait::async_trait]
@@ -87,7 +86,6 @@ impl McpToolCall<TasksCreateInput, TaskWriteResponse> for TasksCreateHandler {
             NewTask {
                 project_prefix: model.project,
                 text: model.text,
-                status: model.status,
                 kind: model.kind,
                 assignee: model.assignee,
                 labels: model.labels.unwrap_or_default(),
@@ -136,6 +134,14 @@ pub struct TasksUpdateInput {
         description = "Replace the WHOLE set of blocking task ids. Pass [] to clear every dependency; omit to leave them untouched"
     )]
     pub depends_on: Option<Vec<String>>,
+    #[property(
+        description = "A note to put on the task's thread as part of this same change, as Markdown. Optional in general — and REQUIRED when this change moves the task to `done`, where it has to say what was actually done. Write a line or two: what changed, and anything the next person should know"
+    )]
+    pub comment: Option<String>,
+    #[property(
+        description = "Who the comment is from: an email, or the literal `claude`. Required whenever `comment` is passed — there is no session here to derive an author from"
+    )]
+    pub comment_by: Option<String>,
 }
 
 pub struct TasksUpdateHandler {
@@ -153,7 +159,12 @@ impl ToolDefinition for TasksUpdateHandler {
     const DESCRIPTION: &'static str = "Move a task between columns, rewrite it, or change who is on \
 it. This is what to call when work starts and when it lands. Only the fields you pass change; \
 omitted ones keep their value. An update that would change nothing is refused rather than quietly \
-doing nothing — which is almost always a status that was meant to be passed and was not.";
+doing nothing — which is almost always a status that was meant to be passed and was not.\
+\
+MOVING A TASK TO `done` REQUIRES A COMMENT saying what was actually done — pass `comment` and \
+`comment_by` in the same call. Without one the move is refused. The Done column is what the board is \
+worth reading for later, and \"moved to done\" on its own records nothing. Only the transition into \
+Done needs this: editing a task that is already there does not.";
 }
 
 #[async_trait::async_trait]
@@ -173,6 +184,8 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
                 add_labels: model.add_labels.unwrap_or_default(),
                 remove_labels: model.remove_labels.unwrap_or_default(),
                 depends_on: model.depends_on,
+                comment: model.comment,
+                comment_by: model.comment_by,
             },
         )
         .await?;

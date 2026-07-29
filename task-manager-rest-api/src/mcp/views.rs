@@ -167,6 +167,10 @@ pub struct TaskView {
         description = "When the task itself last changed, unix seconds (UTC). A comment does not move this — the thread is a separate record from the work"
     )]
     pub updated_unix_seconds: i64,
+    #[property(
+        description = "When the task landed in `done`, unix seconds (UTC), and absent whenever it is not there. Work closed more than seven days ago is archived and left out of tasks_list unless you ask for it"
+    )]
+    pub closed_unix_seconds: Option<i64>,
 }
 
 impl TaskView {
@@ -197,6 +201,9 @@ impl TaskView {
             comments_amount: task.comments.len() as i32,
             created_unix_seconds: task.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: task.updated.unix_microseconds / 1_000_000,
+            closed_unix_seconds: task
+                .close_moment
+                .map(|itm| itm.unix_microseconds / 1_000_000),
         }
     }
 }

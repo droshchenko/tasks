@@ -120,13 +120,26 @@ machinery is gone.
 | `number` | Sequential within the project, from the project's own counter. Not reused after a delete. |
 | — | The human id `PREFIX-000042` is **composed on read**, never stored — see above. Zero-padded; `RMS-1` typed by a human parses the same way. |
 | `text` | Markdown — the UI renders it. |
-| `status` | A column id of this project. Unknown → reads as `todo`. |
+| `status` | A column id of this project. Unknown → reads as `todo`. **Always `todo` on creation** — `tasks_create` takes no status. |
 | `kind` | A kind id of this project. Optional. |
 | `assignee` | An email, or `claude`. |
 | `labels` | Free tags, lowercased and de-duplicated. |
 | `depends_on` | **Numbers** of blocking tasks, within the same project. |
 | `comments` | A thread. Each comment: moment, `who`, Markdown text. |
+| `close_moment` | When the task landed in Done; absent whenever it is not there. Cleared on re-open, so a re-closed task is dated by its latest close. |
 | `created`, `updated` | A comment does not move `updated` — the thread is a separate record from the work. |
+
+**Landing work has to say what was done.** Moving a task into Done without a `comment` is refused — the
+Done column is the whole reason a board is worth reading months later, and "moved to done" records nothing
+anybody can use. Only the *transition* is gated: a task already there can be re-labelled or reassigned
+freely. And since `tasks_create` cannot set a status, creating a task straight into Done is not a way
+around it.
+
+**The board is the last seven days of Done, not all of it.** Work closed longer ago than that counts as
+archived: it is left out of the board and out of `tasks_list`. Done is the only column that grows for
+ever, and one nobody can read is one nobody looks at. Nothing is deleted — an archived task is still
+reachable by its id, and `include_archived` brings the history back. The window is measured from
+`close_moment`, not `updated`, so editing an old finished task does not drag it back onto the board.
 
 **`blocked` and `blocks` are derived, never stored.** `blocked` is true while any id in
 `depends_on` names a task that is not `done`; an id matching no task counts as still-blocking, so

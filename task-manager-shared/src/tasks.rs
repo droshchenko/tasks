@@ -52,6 +52,10 @@ pub struct TaskResponse {
     pub comments: Vec<TaskCommentResponse>,
     pub created_unix_seconds: i64,
     pub updated_unix_seconds: i64,
+    // When the task landed in Done, and absent whenever it is not there. Home shows it, and it is what
+    // the seven-day archive window is measured from — a task closed longer ago than that is not returned
+    // at all.
+    pub closed_unix_seconds: Option<i64>,
 }
 
 // A whole board in one response, oldest task first.

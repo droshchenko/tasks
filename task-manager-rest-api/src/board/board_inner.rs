@@ -1,8 +1,16 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use ahash::{AHashMap, AHashSet};
+use rust_extensions::date_time::DateTimeAsMicroseconds;
 
 use super::models::{ProjectModel, TaskModel, UserModel};
+
+/// How long a finished task stays on the board before it counts as archived.
+///
+/// Done is the only column that grows for ever, so it is the only one that needs a window. Seven days is
+/// long enough to cover "what did we ship this week" and short enough that the column stays readable.
+pub const ARCHIVE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// The whole product state, indexed, as one immutable snapshot.
 ///
@@ -275,6 +283,33 @@ impl BoardInner {
     }
 
     // ------------------------------------------------------------------------------- derivations
+
+    /// Whether a finished task has aged out of the board.
+    ///
+    /// Done is the one column that grows without bound, and a board nobody can read is a board nobody
+    /// looks at — so work older than [`ARCHIVE_AFTER`] stops being shown. Nothing is deleted: the task is
+    /// still there, still reachable by its id, and `tasks_list` can ask for it explicitly.
+    ///
+    /// A task in Done with no `close_moment` is treated as **not** archived. That should not occur — the
+    /// moment is written on the way in — and being lenient about it means a gap in the data cannot make
+    /// work silently vanish from the board.
+    pub fn is_archived(&self, task: &TaskModel) -> bool {
+        let Some(project) = self.projects.get(&task.project_id) else {
+            return false;
+        };
+
+        if project.effective_status(&task.status) != task_manager_shared::projects::COLUMN_ID_DONE {
+            return false;
+        }
+
+        let Some(closed) = task.close_moment else {
+            return false;
+        };
+
+        let now = DateTimeAsMicroseconds::now();
+
+        now.unix_microseconds - closed.unix_microseconds > ARCHIVE_AFTER.as_micros() as i64
+    }
 
     /// Whether a task is blocked: any id in `depends_on` naming a task that is not Done.
     ///

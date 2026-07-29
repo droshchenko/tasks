@@ -123,6 +123,15 @@ pub struct TaskModel {
     // Moved by a change to the task itself. A comment does NOT move it: the thread is a separate
     // record from the work.
     pub updated: DateTimeAsMicroseconds,
+    // When the task was moved into Done, and `None` whenever it is not there.
+    //
+    // Separate from `updated` because that moves on every edit, including edits made after the work
+    // landed — so it cannot answer "how long ago was this closed", which is what decides whether the task
+    // still appears on the board or has aged out into the archive.
+    //
+    // Cleared when a task is re-opened, so a re-closed task is dated by its latest close rather than its
+    // first.
+    pub close_moment: Option<DateTimeAsMicroseconds>,
 }
 
 /// One person.

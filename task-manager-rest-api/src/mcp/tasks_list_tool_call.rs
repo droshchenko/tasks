@@ -26,6 +26,10 @@ pub struct TasksListInput {
         description = "Return only tasks that are ready to start — nothing in their `depends_on` is unfinished. Pass true when you are picking up work rather than surveying the board"
     )]
     pub only_unblocked: Option<bool>,
+    #[property(
+        description = "Include work closed more than seven days ago. Omitted or false gives you the live board, which is almost always what you want; pass true only when you are deliberately looking back — \"what did we ship last month\" — because a long-lived board has far more archived tasks than live ones"
+    )]
+    pub include_archived: Option<bool>,
 }
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
@@ -54,7 +58,12 @@ impl ToolDefinition for TasksListHandler {
 this returns, so call it before changing anything — and before creating anything, because a board is \
 hand-written and a near-duplicate is a mistake rather than a second task. Each task also carries the \
 derived `blocked` and `blocks`, which is how you tell what is ready to start from what is only \
-waiting.";
+waiting.\
+\
+By default this is the LIVE board: work closed more than seven days ago counts as archived and is left \
+out, because Done is the only column that grows for ever. Nothing is deleted — an archived task is still \
+reachable by its id, and `include_archived` brings the whole history back when you are deliberately \
+looking backwards.";
 }
 
 #[async_trait::async_trait]
@@ -106,6 +115,7 @@ impl McpToolCall<TasksListInput, TasksListResponse> for TasksListHandler {
             .filter(|itm| !itm.is_empty());
 
         let only_unblocked = model.only_unblocked.unwrap_or(false);
+        let include_archived = model.include_archived.unwrap_or(false);
 
         let tasks: Vec<TaskView> = board
             .tasks_of_project(&project.id)
@@ -131,6 +141,8 @@ impl McpToolCall<TasksListInput, TasksListResponse> for TasksListHandler {
                 Some(wanted) => task.labels.contains(wanted),
             })
             .filter(|task| !only_unblocked || !board.is_blocked(task))
+            // The same seven-day window Home uses, so the tool and the board agree on what "the board" is.
+            .filter(|task| include_archived || !board.is_archived(task))
             .map(|task| TaskView::from_model(task, &project, &board))
             .collect();
 

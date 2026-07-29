@@ -101,9 +101,28 @@ changed. A comment deliberately does not move the task's `updated`, so a busy th
 active work. Every task reports `comments_amount`; when it is not zero, tasks_get_comments is worth \
 reading before picking the task up — the reason the work is shaped the way it is usually lives there.\
 \
+MOVING A TASK TO `done` REQUIRES A COMMENT, AND THE MOVE IS REFUSED WITHOUT ONE. Pass `comment` and \
+`comment_by` to tasks_update in the same call as the status change. Say what was actually done — what \
+changed, and anything the next person should know — not that it is finished, which the column already \
+says. The Done column is the whole reason a board is worth reading months later, and \"moved to done\" \
+records nothing anybody can use. Only the transition INTO Done needs this: a task already there can be \
+re-labelled or reassigned freely. `comment` is available on any update, not just this one — it is simply \
+optional everywhere else.\
+\
 FINISHED WORK IS NOT DELETED. It moves to `done`, which is what keeps a board readable as a history. \
 tasks_delete is for a task that should never have been created, it cannot be undone, and its number is \
 never reused.\
+\
+A NEW TASK ALWAYS STARTS IN `todo`. tasks_create takes no status — moving work on is tasks_update's \
+job, which is also where landing it has to be explained. There is deliberately no way to create a task \
+straight into Done.\
+\
+THE BOARD IS THE LAST SEVEN DAYS OF DONE, NOT ALL OF IT. Work closed more than seven days ago counts as \
+archived: tasks_list leaves it out, and so does the board a person looks at. Done is the only column that \
+grows for ever, and one nobody can read is one nobody looks at. Nothing is deleted — an archived task is \
+still reachable by its id, and `include_archived` on tasks_list brings the history back when you are \
+deliberately looking backwards. Practical consequence: \"this board has 12 tasks\" means twelve live ones, \
+and a task you cannot find by listing may still exist.\
 \
 LIST BEFORE YOU CREATE. tasks_create adds a task unconditionally, so calling it twice for the same \
 work leaves two of them on a board a person reads by eye. Check what is already there first.\

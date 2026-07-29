@@ -4,7 +4,7 @@ use rust_extensions::date_time::DateTimeAsMicroseconds;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO};
 
-use super::{Board, ColumnModel, KindModel, ProjectModel, TaskModel, UserModel};
+use super::{ARCHIVE_AFTER, Board, ColumnModel, KindModel, ProjectModel, TaskModel, UserModel};
 
 fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
     ProjectModel {
@@ -44,6 +44,7 @@ fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> Task
         comments: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
         updated: DateTimeAsMicroseconds::new(0),
+        close_moment: None,
     }
 }
 
@@ -292,4 +293,74 @@ fn a_display_name_resolves_only_for_a_known_user_with_a_name() {
     assert_eq!(read.display_name_of("noname@mxtm.ai"), None);
     assert_eq!(read.display_name_of("claude"), None);
     assert_eq!(read.display_name_of("stranger@mxtm.ai"), None);
+}
+
+/// Closed work leaves the board after the window, and nothing else does. Getting this wrong either buries
+/// the board under years of finished tasks or hides work that is still live.
+#[test]
+fn only_work_closed_longer_ago_than_the_window_is_archived() {
+    let board = Board::new();
+    board.upsert_project(project("p", "RMS", &[]));
+
+    let now = DateTimeAsMicroseconds::now();
+    let window = ARCHIVE_AFTER.as_micros() as i64;
+
+    let mut just_closed = task("p", 1, COLUMN_ID_DONE, &[]);
+    just_closed.close_moment = Some(DateTimeAsMicroseconds::new(
+        now.unix_microseconds - 60_000_000,
+    ));
+
+    let mut long_closed = task("p", 2, COLUMN_ID_DONE, &[]);
+    long_closed.close_moment = Some(DateTimeAsMicroseconds::new(
+        now.unix_microseconds - window - 60_000_000,
+    ));
+
+    // A task still being worked on is never archived, however old it is.
+    let mut old_and_open = task("p", 3, COLUMN_ID_TODO, &[]);
+    old_and_open.created = DateTimeAsMicroseconds::new(0);
+
+    board.upsert_task(just_closed.clone());
+    board.upsert_task(long_closed.clone());
+    board.upsert_task(old_and_open.clone());
+
+    let read = board.read();
+
+    assert!(
+        !read.is_archived(&just_closed),
+        "closed a minute ago is live"
+    );
+    assert!(
+        read.is_archived(&long_closed),
+        "closed past the window is archived"
+    );
+    assert!(!read.is_archived(&old_and_open), "open work never archives");
+}
+
+/// A task sitting in Done with no close moment must not vanish. It should not happen — the moment is
+/// written on the way in — but being lenient means a gap in the data cannot silently swallow work.
+#[test]
+fn done_without_a_close_moment_stays_visible() {
+    let board = Board::new();
+    board.upsert_project(project("p", "RMS", &[]));
+
+    let orphan = task("p", 1, COLUMN_ID_DONE, &[]);
+    board.upsert_task(orphan.clone());
+
+    assert!(orphan.close_moment.is_none());
+    assert!(!board.read().is_archived(&orphan));
+}
+
+/// The archive window is measured against the EFFECTIVE status, so a task whose column was deleted reads
+/// as Todo and therefore cannot be archived — even if it still carries an old close moment.
+#[test]
+fn a_task_whose_column_was_deleted_is_not_archived() {
+    let board = Board::new();
+    board.upsert_project(project("p", "RMS", &[]));
+
+    let mut orphaned_column = task("p", 1, "gone", &[]);
+    orphaned_column.close_moment = Some(DateTimeAsMicroseconds::new(1));
+
+    board.upsert_task(orphaned_column.clone());
+
+    assert!(!board.read().is_archived(&orphaned_column));
 }

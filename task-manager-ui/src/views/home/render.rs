@@ -247,6 +247,10 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
         .map(|_| format!("border-left-color: {}", kind_color.hex()))
         .unwrap_or_default();
 
+    // Only shown in Done, and only as "how long ago" — the exact timestamp is noise on a sticker, while
+    // the age is the thing that matters, because it says how close the task is to leaving the board.
+    let closed_note = task.closed_unix_seconds.map(closed_how_long_ago);
+
     rsx! {
         div {
             class: if task.blocked { "sticker blocked" } else { "sticker" },
@@ -275,6 +279,9 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
 
             div { class: "sticker-bottom",
                 span { class: "sticker-assignee", "{assignee}" }
+                if let Some(closed) = closed_note {
+                    span { title: "Work closed more than seven days ago leaves the board", "{closed}" }
+                }
                 if !task.comments.is_empty() {
                     span { "💬 {task.comments.len()}" }
                 }
@@ -283,5 +290,20 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
                 }
             }
         }
+    }
+}
+
+/// "Closed today" / "Closed 3 days ago" — the age, not the timestamp.
+///
+/// Days rather than hours because the archive window is measured in days, so the number on the sticker and
+/// the reason it will disappear are the same number.
+fn closed_how_long_ago(closed_unix_seconds: i64) -> String {
+    let now = js_sys::Date::now() as i64 / 1_000;
+    let days = (now - closed_unix_seconds).max(0) / (24 * 60 * 60);
+
+    match days {
+        0 => "Closed today".to_string(),
+        1 => "Closed yesterday".to_string(),
+        _ => format!("Closed {days} days ago"),
     }
 }

@@ -14,7 +14,7 @@ use_my_http_server!();
     route: "/api/tasks/v1",
     controller: "Tasks",
     summary: "Read a board",
-    description: "The only task endpoint there is, and it only reads. Every task mutation arrives through /mcp — Home is a viewer, and nothing on it is edited with a mouse. Tasks come back oldest first with `blocked` and `blocks` derived, their handles composed from the project's current prefix, and an unknown status already folded into Todo.",
+    description: "The only task endpoint there is, and it only reads. Every task mutation arrives through /mcp — Home is a viewer, and nothing on it is edited with a mouse. Tasks come back oldest first with `blocked` and `blocks` derived, their handles composed from the project's current prefix, and an unknown status already folded into Todo. Work closed more than seven days ago is left out — it counts as archived, and is still reachable by id through MCP.",
     input_data: "GetTasksInputModel",
     result: [
         {status_code: 200, description: "The board", model: "TasksResponse"},
@@ -46,9 +46,13 @@ async fn handle_request(
         .get_project(&input_data.project_id)
         .ok_or_else(|| not_found("No such project"))?;
 
+    // Archived work is left out rather than paged: Done is the only column that grows for ever, and a
+    // board nobody can read is a board nobody looks at. Nothing is deleted — the tasks are still there and
+    // still reachable by id through MCP.
     let tasks = board
         .tasks_of_project(&project.id)
         .iter()
+        .filter(|task| !board.is_archived(task))
         .map(|task| task_to_response(task, &project, &board))
         .collect();
 
