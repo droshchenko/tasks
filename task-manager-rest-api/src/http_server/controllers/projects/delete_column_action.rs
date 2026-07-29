@@ -9,8 +9,8 @@ use crate::http_server::errors::bad_request;
 use_my_http_server!();
 
 #[http_route(
-    method: "DELETE",
-    route: "/api/projects/v1/{projectId}/columns/{columnId}",
+    method: "POST",
+    route: "/api/projects/v1/columns/delete",
     controller: "Projects",
     summary: "Remove a column",
     description: "Admin only. Its tasks are left alone: their stored status still names this column and they read as Todo from now on, so re-creating a column with the same id brings them straight back to it.",

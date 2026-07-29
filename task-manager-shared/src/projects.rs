@@ -89,7 +89,7 @@ pub struct CreateProjectInputModel {
 
 #[derive(MyHttpInput)]
 pub struct UpdateProjectInputModel {
-    #[http_path(name: "projectId", description: "Project id")]
+    #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
     #[http_body(name: "name", description: "Project name", trim)]
     pub name: String,
@@ -102,7 +102,7 @@ pub struct UpdateProjectInputModel {
 
 #[derive(MyHttpInput)]
 pub struct AddProjectColumnInputModel {
-    #[http_path(name: "projectId", description: "Project id")]
+    #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
     // Typed in by hand and immutable from then on: tasks reference it as their status, and there
     // is no rename — only delete.
@@ -118,9 +118,9 @@ pub struct AddProjectColumnInputModel {
 
 #[derive(MyHttpInput)]
 pub struct UpdateProjectColumnInputModel {
-    #[http_path(name: "projectId", description: "Project id")]
+    #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
-    #[http_path(name: "columnId", description: "Column id")]
+    #[http_body(name: "columnId", description: "Column id")]
     pub column_id: String,
     #[http_body(name: "name", description: "Column name", trim)]
     pub name: String,
@@ -134,15 +134,15 @@ pub struct UpdateProjectColumnInputModel {
 // Todo from then on. Re-creating a column with the same id brings them back to it.
 #[derive(MyHttpInput)]
 pub struct DeleteProjectColumnInputModel {
-    #[http_path(name: "projectId", description: "Project id")]
+    #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
-    #[http_path(name: "columnId", description: "Column id")]
+    #[http_body(name: "columnId", description: "Column id")]
     pub column_id: String,
 }
 
 #[derive(MyHttpInput)]
 pub struct AddProjectKindInputModel {
-    #[http_path(name: "projectId", description: "Project id")]
+    #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
     // Immutable once created, same as a column id.
     #[http_body(name: "id", description: "Kind id, e.g. bug", trim, to_lowercase)]
@@ -157,9 +157,9 @@ pub struct AddProjectKindInputModel {
 
 #[derive(MyHttpInput)]
 pub struct UpdateProjectKindInputModel {
-    #[http_path(name: "projectId", description: "Project id")]
+    #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
-    #[http_path(name: "kindId", description: "Kind id")]
+    #[http_body(name: "kindId", description: "Kind id")]
     pub kind_id: String,
     #[http_body(name: "name", description: "Kind name", trim)]
     pub name: String,
@@ -172,9 +172,9 @@ pub struct UpdateProjectKindInputModel {
 // A task pointing at a deleted kind reads as having no kind at all.
 #[derive(MyHttpInput)]
 pub struct DeleteProjectKindInputModel {
-    #[http_path(name: "projectId", description: "Project id")]
+    #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
-    #[http_path(name: "kindId", description: "Kind id")]
+    #[http_body(name: "kindId", description: "Kind id")]
     pub kind_id: String,
 }
 
@@ -182,7 +182,7 @@ pub struct DeleteProjectKindInputModel {
 // caller never has to diff it.
 #[derive(MyHttpInput)]
 pub struct SetProjectMembersInputModel {
-    #[http_path(name: "projectId", description: "Project id")]
+    #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
     #[http_body(name: "members", description: "Emails of every user who may see this project")]
     pub members: Vec<String>,

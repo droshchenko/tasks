@@ -567,3 +567,92 @@ input[readonly] {
   font-size: 15px;
 }
 
+/* Dialogs. One wrapper (`dialog_template`) produces all of this, so there is exactly one modal shape. */
+
+/* Above the sticky top bar (z-index 20) — a dialog the tabs draw over is not a dialog. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(9, 30, 66, 0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow-y: auto;
+}
+
+.modal {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raised);
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  /* Caps the dialog at the viewport so the body scrolls rather than the footer sliding off-screen. */
+  max-height: calc(100vh - 80px);
+}
+
+.modal.modal-lg {
+  max-width: 760px;
+}
+
+.modal.modal-xl {
+  max-width: 1100px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.modal-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: var(--text);
+}
+
+/* The only part that scrolls: the header stays legible and the buttons stay reachable. */
+.modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+/* Pushes the page's own buttons to the right of its title. */
+.page-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.table td.num,
+.table th.num {
+  text-align: right;
+}
+

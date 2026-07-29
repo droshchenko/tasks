@@ -22,14 +22,14 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
 
     http_server_builder.register_get_action(projects::ListProjectsAction::new(app.clone()));
     http_server_builder.register_post_action(projects::CreateProjectAction::new(app.clone()));
-    http_server_builder.register_put_action(projects::UpdateProjectAction::new(app.clone()));
+    http_server_builder.register_post_action(projects::UpdateProjectAction::new(app.clone()));
     http_server_builder.register_post_action(projects::AddColumnAction::new(app.clone()));
-    http_server_builder.register_put_action(projects::UpdateColumnAction::new(app.clone()));
-    http_server_builder.register_delete_action(projects::DeleteColumnAction::new(app.clone()));
+    http_server_builder.register_post_action(projects::UpdateColumnAction::new(app.clone()));
+    http_server_builder.register_post_action(projects::DeleteColumnAction::new(app.clone()));
     http_server_builder.register_post_action(projects::AddKindAction::new(app.clone()));
-    http_server_builder.register_put_action(projects::UpdateKindAction::new(app.clone()));
-    http_server_builder.register_delete_action(projects::DeleteKindAction::new(app.clone()));
-    http_server_builder.register_put_action(projects::SetMembersAction::new(app.clone()));
+    http_server_builder.register_post_action(projects::UpdateKindAction::new(app.clone()));
+    http_server_builder.register_post_action(projects::DeleteKindAction::new(app.clone()));
+    http_server_builder.register_post_action(projects::SetMembersAction::new(app.clone()));
 
     http_server_builder.register_get_action(tasks::ListTasksAction::new(app.clone()));
 

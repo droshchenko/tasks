@@ -10,7 +10,7 @@ use_my_http_server!();
 
 #[http_route(
     method: "POST",
-    route: "/api/projects/v1/{projectId}/kinds",
+    route: "/api/projects/v1/kinds/add",
     controller: "Projects",
     summary: "Add a kind",
     description: "Admin only. The description is what an agent reads before classifying a task, so write the rule for applying it rather than a synonym of the name. The colour is one of the fixed palette values.",

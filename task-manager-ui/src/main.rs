@@ -3,6 +3,7 @@ use futures::{SinkExt, StreamExt};
 use reqwasm::websocket::{Message, futures::WebSocket};
 
 mod api;
+mod dialogs;
 mod models;
 mod states;
 mod templates;
@@ -66,6 +67,9 @@ fn main() {
 fn Shell(active: &'static str, children: Element) -> Element {
     let mut app_state = use_context_provider(|| Signal::new(AppState::default()));
 
+    // A context of its own rather than a field of `AppState` — see `dialogs::DialogState` for why.
+    use_context_provider(|| Signal::new(crate::dialogs::DialogState::None));
+
     let signed_in = app_state.read().signed_in.clone();
 
     // Asked once per page load. `/me` is the only way to find out: the token in localStorage may be
@@ -108,6 +112,9 @@ fn Shell(active: &'static str, children: Element) -> Element {
 
             rsx! {
                 crate::templates::ContentPanel { active, {children} }
+                // Last, and outside the content panel: a dialog is an overlay over whatever screen
+                // opened it, and it is mounted once here so no screen has to remember to.
+                crate::dialogs::RenderDialog {}
             }
         }
     }

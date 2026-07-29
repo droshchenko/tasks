@@ -9,8 +9,8 @@ use crate::http_server::errors::bad_request;
 use_my_http_server!();
 
 #[http_route(
-    method: "PUT",
-    route: "/api/projects/v1/{projectId}/members",
+    method: "POST",
+    route: "/api/projects/v1/members/set",
     controller: "Projects",
     summary: "Set who may see this project",
     description: "Admin only. Replaces the whole set, which is how the screen works — a list of checkboxes saved at once — and means the caller never has to know the current state to change it. An email with no user row is accepted and simply grants nothing until that person is created.",

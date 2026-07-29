@@ -6,5 +6,6 @@ fn main() {
         .add_file("04-table.css")
         .add_file("05-board.css")
         .add_file("06-auth.css")
+        .add_file("07-dialog.css")
         .compile("./public/assets/app.css");
 }

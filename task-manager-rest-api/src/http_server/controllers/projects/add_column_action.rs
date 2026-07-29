@@ -10,7 +10,7 @@ use_my_http_server!();
 
 #[http_route(
     method: "POST",
-    route: "/api/projects/v1/{projectId}/columns",
+    route: "/api/projects/v1/columns/add",
     controller: "Projects",
     summary: "Add a column",
     description: "Admin only. Sits between Todo and Done, which exist in every project and cannot be added. The id is typed in once and never renamed afterwards — tasks point at it as their status.",

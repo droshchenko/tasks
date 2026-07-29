@@ -9,8 +9,8 @@ use crate::http_server::errors::bad_request;
 use_my_http_server!();
 
 #[http_route(
-    method: "PUT",
-    route: "/api/projects/v1/{projectId}",
+    method: "POST",
+    route: "/api/projects/v1/update",
     controller: "Projects",
     summary: "Rename a project or move its prefix",
     description: "Admin only. Renaming the prefix keeps the old one in the project history, so an id written under it can still be traced with the tasks_resolve_id MCP tool once another project takes that prefix over.",

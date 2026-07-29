@@ -9,8 +9,8 @@ use crate::http_server::errors::bad_request;
 use_my_http_server!();
 
 #[http_route(
-    method: "DELETE",
-    route: "/api/projects/v1/{projectId}/kinds/{kindId}",
+    method: "POST",
+    route: "/api/projects/v1/kinds/delete",
     controller: "Projects",
     summary: "Remove a kind",
     description: "Admin only. Tasks carrying it read as having no kind — the same leniency a deleted column gets.",

@@ -9,8 +9,8 @@ use crate::http_server::errors::bad_request;
 use_my_http_server!();
 
 #[http_route(
-    method: "PUT",
-    route: "/api/projects/v1/{projectId}/columns/{columnId}",
+    method: "POST",
+    route: "/api/projects/v1/columns/update",
     controller: "Projects",
     summary: "Rename a column or move it",
     description: "Admin only. The id is not touched: tasks reference it as their status, and there is no rename that would not have to rewrite every one of them.",

@@ -240,12 +240,30 @@ next build.
 | Area | |
 |---|---|
 | **Home** (root URL) | The board. A project dropdown on top — only projects you may see; an admin sees all — and the choice is remembered in `localStorage`. **Read-only:** nothing is edited with a mouse, anywhere. |
-| **Projects setup** | Name, description, prefix, columns, kinds, members. Admin only. |
+| **Projects setup** | Every project as one row — prefix, name, description, task count, its columns in order, its kinds, how many members. Editing is by dialog: **Edit** for the three fields a project *is*, then **Columns**, **Kinds** and **Members** for the three collections it holds. Admin only. |
 | **Users** | The roster. Admin only. |
 | **Settings** | Read-only diagnostics: which `client_id` was picked up, which `redirect_uri` is expected, how many admins the settings list holds. Nothing to configure — it all comes from the service settings — but it is the first thing worth reading when a sign-in fails. |
 
 The admin areas are hidden from a non-admin. Cosmetic on its own, since the server refuses them anyway;
 the point is not showing somebody three screens that all answer 403.
+
+Dialogs follow `dioxus-design-patterns`: one `DialogState` enum, a `RenderDialog` router mounted once in
+the shell, and `dialog_template` supplying the frame, Cancel and close. A dialog never calls an API on
+behalf of the page — it takes an `on_saved: EventHandler<()>`, and every caller resets its `DataState`, so
+what appears after a save is what the server actually stored. `DialogState` is a context signal of its own
+rather than a field of `AppState`, which the guide would have it be: Dioxus subscribes per signal, not per
+field, so putting it in `AppState` would make opening a dialog re-run Home's board read.
+
+### A route may not have a static segment after a parameter
+
+`#[http_path]` fields are **appended** to the url in declaration order — `append_path_segment`, no `{name}`
+substitution. So `/api/projects/v1/{projectId}/columns` is unreachable from the generated client: it can
+only build `/api/projects/v1/{projectId}`, and the server answers 404. Seven of the ten project endpoints
+were written that way and every one of them was dead on arrival.
+
+Mutations are therefore `POST` to a **static** url with the ids in the body — `/api/projects/v1/columns/add`,
+`/api/projects/v1/members/set` — which is also the shape every other house service uses (`/promo-codes/save`,
+`/individual-offers/assign`). Param-last (`/api/users/v1/{email}`) is fine and is used where it fits.
 
 Sign-in is one button: `/api/auth/v1/google-url` → Google → back to `/authorized`, which exchanges the
 code, stores the token and replaces the URL so a reload cannot re-submit a spent code. Signing out

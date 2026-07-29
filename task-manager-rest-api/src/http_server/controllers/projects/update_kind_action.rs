@@ -9,8 +9,8 @@ use crate::http_server::errors::bad_request;
 use_my_http_server!();
 
 #[http_route(
-    method: "PUT",
-    route: "/api/projects/v1/{projectId}/kinds/{kindId}",
+    method: "POST",
+    route: "/api/projects/v1/kinds/update",
     controller: "Projects",
     summary: "Rename a kind or recolour it",
     description: "Admin only. The id is immutable for the same reason a column id is — tasks point at it.",
