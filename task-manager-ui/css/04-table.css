@@ -39,6 +39,14 @@
   color: var(--text-muted);
 }
 
+/* "Unassigned" is not a name. Set in the same weight and colour as one it reads as a person until you have
+   read the word; grey, it reads as a gap, which is what it is. Used on the card and in the dialog so both
+   say it the same way. */
+.unassigned {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
 .tag {
   display: inline-block;
   background: rgba(9, 30, 66, 0.06);

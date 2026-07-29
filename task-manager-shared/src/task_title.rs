@@ -23,6 +23,43 @@ pub fn task_title(text: &str) -> String {
     "(no text)".to_string()
 }
 
+/// Everything after the title line — what is left to read once the title has been said elsewhere.
+///
+/// Exactly the complement of [`task_title`]: it drops the one line that function returned and nothing else,
+/// so the two together lose nothing. Empty when the task is a title and no more.
+///
+/// The Markdown is handed back as it was written, indentation included — trimming the front of the remainder
+/// would turn an indented code block into a paragraph.
+pub fn task_text_without_title(text: &str) -> &str {
+    let mut offset = 0;
+    let mut rest = "";
+
+    for line in text.split_inclusive('\n') {
+        offset += line.len();
+
+        if !strip_markdown_markers(line.trim()).is_empty() {
+            rest = &text[offset..];
+            break;
+        }
+    }
+
+    // The blank line that separates a heading from its body is punctuation, not content: keeping it would
+    // start the text with a gap whose only job was to end the title.
+    while let Some((first, tail)) = rest.split_once('\n') {
+        if !first.trim().is_empty() {
+            break;
+        }
+
+        rest = tail;
+    }
+
+    if rest.trim().is_empty() {
+        return "";
+    }
+
+    rest.trim_end()
+}
+
 fn strip_markdown_markers(line: &str) -> &str {
     let mut line = line;
 
@@ -115,6 +152,45 @@ mod tests {
         assert_eq!(task_title("> ## Fix it"), "Fix it", "both markers come off");
         assert_eq!(task_title("**Fix it**"), "Fix it");
         assert_eq!(task_title("`Fix it`"), "Fix it");
+    }
+
+    /// The title is shown in one place and the rest in another, so between them they have to account for the
+    /// whole text — a line that fell into neither would be a line nobody could read.
+    #[test]
+    fn the_body_is_everything_the_title_is_not() {
+        assert_eq!(
+            task_text_without_title("Fix the login redirect\n\nIt drops the return url."),
+            "It drops the return url."
+        );
+
+        assert_eq!(
+            task_text_without_title("# Fix it\n\n- one\n- two\n"),
+            "- one\n- two",
+            "the marker goes with the title line, the list stays"
+        );
+
+        assert_eq!(
+            task_text_without_title("\n\nFix it\nRight after, no blank line"),
+            "Right after, no blank line"
+        );
+
+        assert_eq!(
+            task_text_without_title("Fix it"),
+            "",
+            "a task that is a title and no more has no body"
+        );
+        assert_eq!(task_text_without_title("Fix it\n\n \n"), "");
+        assert_eq!(task_text_without_title(""), "");
+    }
+
+    /// Indentation is content in Markdown — four spaces is a code block, and trimming the front of the
+    /// remainder would silently turn one into a paragraph.
+    #[test]
+    fn the_body_keeps_the_indentation_it_was_written_with() {
+        assert_eq!(
+            task_text_without_title("Fix it\n\n    cargo test\n"),
+            "    cargo test"
+        );
     }
 
     /// The characters emphasis is made of also appear inside ordinary text, and taking them out anywhere

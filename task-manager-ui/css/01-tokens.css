@@ -25,6 +25,20 @@
   box-sizing: border-box;
 }
 
+/* Everything still scrolls; nothing shows a bar for it.
+   Applied to `*` rather than to the handful of containers that scroll today, because the list would be a
+   thing to remember: the next pane that overflows would grow a bar back and nobody would connect it to a
+   rule in this file. Three declarations because three engines disagree — `scrollbar-width` is the standard
+   and Firefox, `-ms-overflow-style` is old Edge, and WebKit only listens to the pseudo-element. */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
 html,
 body {
   margin: 0;

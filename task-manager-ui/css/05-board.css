@@ -46,7 +46,8 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* Room for the scrollbar, so it does not sit on top of a card's right edge. */
+  /* Breathing room at the right edge of a card. It used to be room for the scrollbar, which is now hidden
+     (see `01-tokens.css`) — the gap is worth keeping on its own. */
   padding-right: 2px;
 }
 
@@ -166,6 +167,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The `.unassigned` utility loses to the rule above on load order alone — same specificity, earlier file. The
+   compound selector is what makes it win, rather than reordering the CSS pipeline around one colour. */
+.sticker-assignee.unassigned {
+  color: var(--text-faint);
+  font-weight: 400;
 }
 
 .sticker-counters {

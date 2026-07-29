@@ -627,7 +627,10 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
             // The counters say only HOW MANY. What they count is in the dialog, and a card that listed the ids
             // it waits on was one of the things that made a column unreadable.
             div { class: "sticker-bottom",
-                span { class: "sticker-assignee", "{assignee}" }
+                span {
+                    class: if task.assignee.is_some() { "sticker-assignee" } else { "sticker-assignee unassigned" },
+                    "{assignee}"
+                }
                 div { class: "sticker-counters",
                     if !task.comments.is_empty() {
                         span { title: "{task.comments.len()} comments", "💬 {task.comments.len()}" }

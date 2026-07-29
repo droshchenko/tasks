@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use task_manager_shared::projects::COLUMN_ID_DONE;
-use task_manager_shared::task_title::task_title;
+use task_manager_shared::task_title::{task_text_without_title, task_title};
 use task_manager_shared::tasks::{FindTaskResponse, TaskResponse};
 
 /// One task, shown in full.
@@ -63,15 +63,25 @@ fn closed_how_long_ago(closed_unix_seconds: i64) -> String {
 }
 
 fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
+    // Without its first line: the header is already showing that line as the title, and a heading repeated
+    // immediately under itself reads as a mistake.
+    let body = task_text_without_title(&task.text);
+
     // Rendered rather than shown as source: agents write Markdown, and a checklist as literal dashes is
     // markedly harder to read. `markdown::to_html` escapes raw HTML instead of passing it through, which is
     // what makes rendering text this side did not author safe.
-    let text_html = markdown::to_html(&task.text);
+    let text_html = markdown::to_html(body);
 
     rsx! {
         div { class: "task-view",
             div { class: "task-view-top",
-                div { class: "task-view-text", dangerous_inner_html: "{text_html}" }
+                if body.is_empty() {
+                    // Said rather than left blank: an empty pane reads as something that failed to load,
+                    // whereas most one-line tasks are one line on purpose.
+                    div { class: "field-hint", "Nothing beyond the title." }
+                } else {
+                    div { class: "task-view-text", dangerous_inner_html: "{text_html}" }
+                }
                 {render_attributes(task, found)}
             }
             {render_thread(task)}
@@ -116,7 +126,10 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
 
             div { class: "task-view-attr",
                 div { class: "task-view-attr-label", "Assignee" }
-                div { "{assignee}" }
+                div {
+                    class: if task.assignee.is_some() { "" } else { "unassigned" },
+                    "{assignee}"
+                }
             }
 
             // Which board this is on. Worth saying because a dependency can name a task on ANOTHER project,
