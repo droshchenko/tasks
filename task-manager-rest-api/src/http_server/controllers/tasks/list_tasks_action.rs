@@ -10,8 +10,8 @@ use crate::mappers::task_to_response;
 use_my_http_server!();
 
 #[http_route(
-    method: "GET",
-    route: "/api/tasks/v1",
+    method: "POST",
+    route: "/api/tasks/v1/list",
     controller: "Tasks",
     summary: "Read a board",
     description: "The only task endpoint there is, and it only reads. Every task mutation arrives through /mcp — Home is a viewer, and nothing on it is edited with a mouse. Tasks come back oldest first with `blocked` and `blocks` derived, their handles composed from the project's current prefix, and an unknown status already folded into Todo. Work closed more than seven days ago is left out — it counts as archived, and is still reachable by id through MCP.",

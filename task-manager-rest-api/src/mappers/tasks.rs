@@ -35,6 +35,7 @@ impl From<&TaskDto> for TaskModel {
             text: src.task_text.clone(),
             status: src.status.clone(),
             kind: src.kind.clone(),
+            goal_id: src.goal_id.clone(),
             assignee: src.assignee.clone(),
             labels: src.labels.clone(),
             depends_on: src.depends_on.clone(),
@@ -54,6 +55,7 @@ impl From<&TaskModel> for TaskDto {
             task_text: src.text.clone(),
             status: src.status.clone(),
             kind: src.kind.clone(),
+            goal_id: src.goal_id.clone(),
             assignee: src.assignee.clone(),
             labels: src.labels.clone(),
             depends_on: src.depends_on.clone(),
@@ -80,6 +82,8 @@ pub fn task_to_response(
     project: &ProjectModel,
     board: &BoardInner,
 ) -> TaskResponse {
+    let goal = board.effective_goal(task);
+
     let assignee_name = task
         .assignee
         .as_ref()
@@ -91,6 +95,9 @@ pub fn task_to_response(
         text: task.text.clone(),
         status: project.effective_status(&task.status),
         kind: project.effective_kind(task.kind.as_deref()),
+        // Resolved, so a task pointing at a goal that is gone reads as standalone rather than dangling.
+        goal_id: goal.as_ref().map(|itm| itm.id.clone()),
+        goal_name: goal.as_ref().map(|itm| itm.name.clone()),
         assignee: task.assignee.clone(),
         assignee_name,
         labels: task.labels.clone(),

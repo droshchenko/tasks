@@ -13,7 +13,7 @@ use super::{authed, handle_http_empty, handle_http_response};
 // bug this shape replaced. Param-last (`/api/users/v1/{email}`) is fine and is used where it fits.
 
 pub async fn get_projects() -> Result<ProjectsResponse, RequestError> {
-    let response = authed("/api/projects/v1", HttpVerb::Get, EmptyRequestModel).await;
+    let response = authed("/api/projects/v1/list", HttpVerb::Post, EmptyRequestModel).await;
 
     handle_http_response(response).await
 }

@@ -9,7 +9,7 @@ use super::{authed, handle_http_response_opt};
 pub async fn get_diagnostics() -> Result<Option<DiagnosticsResponse>, RequestError> {
     let response = authed(
         "/api/system/v1/diagnostics",
-        HttpVerb::Get,
+        HttpVerb::Post,
         EmptyRequestModel,
     )
     .await;

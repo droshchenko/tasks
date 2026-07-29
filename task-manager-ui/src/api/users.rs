@@ -7,7 +7,7 @@ use super::{authed, handle_http_empty, handle_http_response_opt};
 
 /// `Ok(None)` when the caller is not an admin — the screen says so rather than showing an error.
 pub async fn get_users() -> Result<Option<UsersResponse>, RequestError> {
-    let response = authed("/api/users/v1", HttpVerb::Get, EmptyRequestModel).await;
+    let response = authed("/api/users/v1/list", HttpVerb::Post, EmptyRequestModel).await;
 
     handle_http_response_opt(response).await
 }

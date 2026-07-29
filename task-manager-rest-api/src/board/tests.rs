@@ -80,6 +80,7 @@ fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> Task
         text: format!("task {number}"),
         status: status.to_string(),
         kind: None,
+        goal_id: None,
         assignee: None,
         labels: Vec::new(),
         depends_on: depends_on.to_vec(),

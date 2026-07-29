@@ -505,6 +505,8 @@ mod tests {
             text: text.to_string(),
             status: COLUMN_ID_TODO.to_string(),
             kind: None,
+            goal_id: None,
+            goal_name: None,
             assignee: assignee.map(|itm| itm.to_string()),
             assignee_name: None,
             labels: labels.iter().map(|itm| itm.to_string()).collect(),

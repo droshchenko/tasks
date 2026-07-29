@@ -4,7 +4,9 @@ use std::time::Duration;
 use ahash::{AHashMap, AHashSet};
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 
-use super::models::{ColumnTemplateModel, KindTemplateModel, ProjectModel, TaskModel, UserModel};
+use super::models::{
+    ColumnTemplateModel, GoalModel, KindTemplateModel, ProjectModel, TaskModel, UserModel,
+};
 
 /// How long a finished task stays on the board before it counts as archived.
 ///
@@ -35,6 +37,9 @@ pub struct BoardInner {
     /// Upper-cased prefix -> every project that has *ever* held it, current holder included.
     /// A multimap, because a prefix is free to move on once renamed away from.
     historical_prefix_index: AHashMap<String, Vec<String>>,
+    /// Goal id -> goal. Flat rather than nested per project: a task names a goal by id alone, and that is
+    /// the lookup every read of a task does.
+    goals: AHashMap<String, Arc<GoalModel>>,
     /// project id -> task number -> task.
     tasks: AHashMap<String, AHashMap<i64, Arc<TaskModel>>>,
     /// Lower-cased email -> user.
@@ -54,6 +59,7 @@ impl BoardInner {
             kind_templates: AHashMap::new(),
             prefix_index: AHashMap::new(),
             historical_prefix_index: AHashMap::new(),
+            goals: AHashMap::new(),
             tasks: AHashMap::new(),
             users: AHashMap::new(),
             projects_list: Arc::new(Vec::new()),
@@ -80,6 +86,7 @@ impl BoardInner {
         users: Vec<UserModel>,
         column_templates: Vec<ColumnTemplateModel>,
         kind_templates: Vec<KindTemplateModel>,
+        goals: Vec<GoalModel>,
     ) -> Self {
         let mut result = Self::new();
 
@@ -91,6 +98,10 @@ impl BoardInner {
 
         for template in kind_templates {
             result.put_kind_template(Arc::new(template));
+        }
+
+        for goal in goals {
+            result.put_goal(Arc::new(goal));
         }
 
         let mut highest_number: AHashMap<&str, i64> = AHashMap::new();
@@ -149,6 +160,14 @@ impl BoardInner {
 
     pub(super) fn drop_kind_template(&mut self, id: &str) {
         self.kind_templates.remove(id);
+    }
+
+    pub(super) fn put_goal(&mut self, goal: Arc<GoalModel>) {
+        self.goals.insert(goal.id.clone(), goal);
+    }
+
+    pub(super) fn drop_goal(&mut self, id: &str) {
+        self.goals.remove(id);
     }
 
     pub(super) fn put_task(&mut self, task: Arc<TaskModel>) {
@@ -292,6 +311,55 @@ impl BoardInner {
             .values()
             .filter(|itm| itm.kind_template_id.as_deref() == Some(template_id))
             .count()
+    }
+
+    pub fn get_goal(&self, id: &str) -> Option<Arc<GoalModel>> {
+        self.goals.get(id).cloned()
+    }
+
+    /// A project's goals, oldest first — the order they were set in.
+    pub fn goals_of_project(&self, project_id: &str) -> Vec<Arc<GoalModel>> {
+        let mut result: Vec<Arc<GoalModel>> = self
+            .goals
+            .values()
+            .filter(|itm| itm.project_id == project_id)
+            .cloned()
+            .collect();
+
+        result.sort_by_key(|itm| itm.created.unix_microseconds);
+        result
+    }
+
+    /// The goal a task should be *read* as part of.
+    ///
+    /// `None` when it has none, and also when it names a goal that no longer exists — the stored value is
+    /// left alone, exactly as with a status or a task type, so re-creating the goal would bring the task
+    /// back to it. Which is what makes deleting a goal a safe, reversible thing to do.
+    pub fn effective_goal(&self, task: &TaskModel) -> Option<Arc<GoalModel>> {
+        self.get_goal(task.goal_id.as_deref()?)
+    }
+
+    /// How many of a goal's tasks there are, and how many are done. The whole of a goal's progress —
+    /// derived, never stored, so it cannot disagree with the board.
+    pub fn goal_progress(&self, goal_id: &str) -> (usize, usize) {
+        let mut total = 0;
+        let mut done = 0;
+
+        for of_project in self.tasks.values() {
+            for task in of_project.values() {
+                if task.goal_id.as_deref() != Some(goal_id) {
+                    continue;
+                }
+
+                total += 1;
+
+                if task.status == task_manager_shared::projects::COLUMN_ID_DONE {
+                    done += 1;
+                }
+            }
+        }
+
+        (total, done)
     }
 
     pub fn get_project(&self, project_id: &str) -> Option<Arc<ProjectModel>> {

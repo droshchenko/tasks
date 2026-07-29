@@ -8,7 +8,7 @@ use crate::app::AppContext;
 use_my_http_server!();
 
 #[http_route(
-    method: "GET",
+    method: "POST",
     route: "/api/auth/v1/me",
     controller: "Auth",
     summary: "Who am I",

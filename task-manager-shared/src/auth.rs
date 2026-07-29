@@ -37,9 +37,13 @@ pub struct GoogleCallbackResponse {
 // Google hands the browser back to us with a one-time `code`; `state` is the CSRF token we issued
 // with the auth URL and expect to see returned unchanged.
 #[derive(MyHttpInput)]
+// Body, not query, and that is load-bearing. Both values are base64-ish and regularly contain a `+`; a
+// `+` in a QUERY value means a space, so sending them as query parameters mangled the state on roughly
+// six sign-ins in ten — the ones whose state happened to contain one — and surfaced as a 401 that looked
+// random. A JSON body carries the bytes verbatim and has no such rule.
 pub struct GoogleCallbackInputModel {
-    #[http_query(name: "code", description: "One-time authorization code from Google")]
+    #[http_body(name: "code", description: "One-time authorization code from Google")]
     pub code: String,
-    #[http_query(name: "state", description: "The CSRF token issued with the auth URL")]
+    #[http_body(name: "state", description: "The CSRF token issued with the auth URL")]
     pub state: String,
 }

@@ -15,14 +15,14 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
     };
 
     http_server_builder.register_get_action(system::PingAction::new(app.clone()));
-    http_server_builder.register_get_action(system::DiagnosticsAction::new(app.clone()));
+    http_server_builder.register_post_action(system::DiagnosticsAction::new(app.clone()));
 
-    http_server_builder.register_get_action(auth::GoogleAuthUrlAction::new(app.clone()));
-    http_server_builder.register_get_action(auth::GoogleCallbackAction::new(app.clone()));
-    http_server_builder.register_get_action(auth::MeAction::new(app.clone()));
+    http_server_builder.register_post_action(auth::GoogleAuthUrlAction::new(app.clone()));
+    http_server_builder.register_post_action(auth::GoogleCallbackAction::new(app.clone()));
+    http_server_builder.register_post_action(auth::MeAction::new(app.clone()));
     http_server_builder.register_post_action(auth::LogoutAction::new(app.clone()));
 
-    http_server_builder.register_get_action(projects::ListProjectsAction::new(app.clone()));
+    http_server_builder.register_post_action(projects::ListProjectsAction::new(app.clone()));
     http_server_builder.register_post_action(projects::CreateProjectAction::new(app.clone()));
     http_server_builder.register_post_action(projects::UpdateProjectAction::new(app.clone()));
     http_server_builder.register_post_action(projects::SetColumnTemplateAction::new(app.clone()));
@@ -30,23 +30,23 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
     http_server_builder.register_post_action(projects::SetMembersAction::new(app.clone()));
 
     http_server_builder
-        .register_get_action(column_templates::ListTemplatesAction::new(app.clone()));
+        .register_post_action(column_templates::ListTemplatesAction::new(app.clone()));
     http_server_builder
         .register_post_action(column_templates::SaveTemplateAction::new(app.clone()));
     http_server_builder
         .register_post_action(column_templates::DeleteTemplateAction::new(app.clone()));
 
     http_server_builder
-        .register_get_action(kind_templates::ListKindTemplatesAction::new(app.clone()));
+        .register_post_action(kind_templates::ListKindTemplatesAction::new(app.clone()));
     http_server_builder
         .register_post_action(kind_templates::SaveKindTemplateAction::new(app.clone()));
     http_server_builder
         .register_post_action(kind_templates::DeleteKindTemplateAction::new(app.clone()));
 
-    http_server_builder.register_get_action(tasks::ListTasksAction::new(app.clone()));
-    http_server_builder.register_get_action(tasks::FindTaskAction::new(app.clone()));
+    http_server_builder.register_post_action(tasks::ListTasksAction::new(app.clone()));
+    http_server_builder.register_post_action(tasks::FindTaskAction::new(app.clone()));
 
-    http_server_builder.register_get_action(users::ListUsersAction::new(app.clone()));
+    http_server_builder.register_post_action(users::ListUsersAction::new(app.clone()));
     http_server_builder.register_post_action(users::CreateUserAction::new(app.clone()));
     http_server_builder.register_post_action(users::UpdateUserAction::new(app.clone()));
 }

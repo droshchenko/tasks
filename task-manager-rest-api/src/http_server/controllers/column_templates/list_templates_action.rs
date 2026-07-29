@@ -8,8 +8,8 @@ use crate::app::AppContext;
 use_my_http_server!();
 
 #[http_route(
-    method: "GET",
-    route: "/api/column-templates/v1",
+    method: "POST",
+    route: "/api/column-templates/v1/list",
     controller: "ColumnTemplates",
     summary: "Every column template",
     description: "Admin only. A template is a named set of columns, defined once and followed by any number of projects — which is why columns are configured here rather than on each project. `usedBy` counts the projects following each one: it says whether editing it is a small change or a large one, and a template with any followers cannot be deleted.",

@@ -9,7 +9,7 @@ use crate::mappers::task_to_response;
 use_my_http_server!();
 
 #[http_route(
-    method: "GET",
+    method: "POST",
     route: "/api/tasks/v1/find",
     controller: "Tasks",
     summary: "Look one task up by its id",

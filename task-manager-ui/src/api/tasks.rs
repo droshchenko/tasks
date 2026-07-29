@@ -16,7 +16,7 @@ pub async fn get_tasks(project_id: &str) -> Result<TasksResponse, RequestError> 
         project_id: project_id.to_string(),
     };
 
-    handle_http_response(authed("/api/tasks/v1", HttpVerb::Get, request).await).await
+    handle_http_response(authed("/api/tasks/v1/list", HttpVerb::Post, request).await).await
 }
 
 /// Look one task up by its handle — `RMS-42`.
@@ -29,5 +29,5 @@ pub async fn find_task(query: &str) -> Result<FindTaskResponse, RequestError> {
         query: query.to_string(),
     };
 
-    handle_http_response(authed("/api/tasks/v1/find", HttpVerb::Get, request).await).await
+    handle_http_response(authed("/api/tasks/v1/find", HttpVerb::Post, request).await).await
 }

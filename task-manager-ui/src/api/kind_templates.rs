@@ -7,7 +7,12 @@ use super::{authed, handle_http_empty, handle_http_response_opt};
 
 /// `Ok(None)` for a non-admin: the section is admin-only and the shell asks before it knows.
 pub async fn get_kind_templates() -> Result<Option<KindTemplatesResponse>, RequestError> {
-    let response = authed("/api/kind-templates/v1", HttpVerb::Get, EmptyRequestModel).await;
+    let response = authed(
+        "/api/kind-templates/v1/list",
+        HttpVerb::Post,
+        EmptyRequestModel,
+    )
+    .await;
 
     handle_http_response_opt(response).await
 }

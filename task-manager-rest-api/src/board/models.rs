@@ -135,6 +135,19 @@ impl ProjectModel {
     }
 }
 
+/// A goal, in memory — a container for tasks, an epic.
+///
+/// It does not list its tasks: a task carries the goal id. Deleting a goal therefore takes nothing with
+/// it, and its tasks read as standalone from then on.
+#[derive(Debug, Clone)]
+pub struct GoalModel {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub description: String,
+    pub created: DateTimeAsMicroseconds,
+}
+
 /// One comment on a task's thread.
 #[derive(Debug, Clone)]
 pub struct CommentModel {
@@ -157,6 +170,9 @@ pub struct TaskModel {
     // column that no longer exists.
     pub status: String,
     pub kind: Option<String>,
+    // The stored goal. Read it through `BoardInner::effective_goal` — this can name a goal that no longer
+    // exists, and such a task reads as standalone.
+    pub goal_id: Option<String>,
     pub assignee: Option<String>,
     // Lower-cased and de-duplicated on write, sorted so a listing is reproducible.
     pub labels: Vec<String>,

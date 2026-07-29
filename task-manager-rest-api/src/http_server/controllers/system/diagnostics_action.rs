@@ -8,7 +8,7 @@ use crate::app::AppContext;
 use_my_http_server!();
 
 #[http_route(
-    method: "GET",
+    method: "POST",
     route: "/api/system/v1/diagnostics",
     controller: "System",
     summary: "What this deployment is configured with",

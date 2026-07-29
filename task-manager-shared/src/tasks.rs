@@ -37,6 +37,11 @@ pub struct TaskResponse {
     pub text: String,
     pub status: String,
     pub kind: Option<String>,
+    // Which goal this task is part of, and its name. Both absent for a standalone task — and also when the
+    // stored goal no longer exists, which reads the same way on purpose: a deleted goal leaves its tasks
+    // standalone rather than dangling.
+    pub goal_id: Option<String>,
+    pub goal_name: Option<String>,
     pub assignee: Option<String>,
     // The assignee's display name, resolved from the roster. Absent when the assignee is `claude`
     // or an email with no user row — Home then shows the raw assignee value.
@@ -88,12 +93,12 @@ pub struct FindTaskResponse {
 
 #[derive(MyHttpInput)]
 pub struct FindTaskInputModel {
-    #[http_query(name: "query", description: "A task id such as RMS-42 or RMS-000042")]
+    #[http_body(name: "query", description: "A task id such as RMS-42 or RMS-000042")]
     pub query: String,
 }
 
 #[derive(MyHttpInput)]
 pub struct GetTasksInputModel {
-    #[http_query(name: "projectId", description: "Which project's board to read")]
+    #[http_body(name: "projectId", description: "Which project's board to read")]
     pub project_id: String,
 }

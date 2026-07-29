@@ -9,7 +9,7 @@ use crate::http_server::errors::unauthorized;
 use_my_http_server!();
 
 #[http_route(
-    method: "GET",
+    method: "POST",
     route: "/api/auth/v1/google-callback",
     controller: "Auth",
     summary: "Finish a Google sign-in",
@@ -37,8 +37,19 @@ async fn handle_request(
 ) -> Result<HttpOkResult, HttpFailResult> {
     // The state has to be one we issued and have not seen come back before. Without this, a third party
     // could hand a victim's browser a code of its own choosing.
-    if !crate::auth::LoginState::is_valid(&input_data.state, &action.app.session_key) {
-        return Err(unauthorized("Sign-in expired — start again"));
+    //
+    // Logged rather than silently refused: this is the one step of the sign-in whose failure the person
+    // in front of the screen cannot explain and neither can we, and "somebody says they cannot get in"
+    // is otherwise a guess between a slow flow and a mangled parameter.
+    if let Err(problem) = crate::auth::LoginState::check(&input_data.state, &action.app.session_key)
+    {
+        service_sdk::my_logger::LOGGER.write_warning(
+            "GoogleCallback",
+            format!("Refused a sign-in: {}", problem.as_log_reason()),
+            service_sdk::my_logger::LogEventCtx::new(),
+        );
+
+        return Err(unauthorized(problem.as_message()));
     }
 
     let settings = action.app.settings_reader.get_settings().await;
@@ -66,7 +77,16 @@ async fn handle_request(
             crate::scripts::provision_settings_admin(&action.app, &identity.email, &identity.name)
                 .await;
         }
+        // Logged with the address, because this is the refusal an admin has to act on: the fix is to add
+        // exactly this address to the roster, and without it in a log the admin is working from whatever
+        // the person managed to relay.
         None => {
+            service_sdk::my_logger::LOGGER.write_warning(
+                "GoogleCallback",
+                format!("Refused a sign-in: {} is not on the roster", identity.email),
+                service_sdk::my_logger::LogEventCtx::new(),
+            );
+
             return Err(unauthorized("This account has not been given access"));
         }
     }

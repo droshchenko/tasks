@@ -9,8 +9,8 @@ use crate::mappers::user_to_response;
 use_my_http_server!();
 
 #[http_route(
-    method: "GET",
-    route: "/api/users/v1",
+    method: "POST",
+    route: "/api/users/v1/list",
     controller: "Users",
     summary: "The roster",
     description: "Admin only. Feeds the Users screen and the membership checkboxes in Projects setup. `admin_from_settings` marks the people whose admin right comes from the service settings rather than their row — the UI shows that as granted-elsewhere instead of an editable checkbox that would silently do nothing.",

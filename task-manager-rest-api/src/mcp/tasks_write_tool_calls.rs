@@ -41,6 +41,10 @@ pub struct TasksCreateInput {
     )]
     pub kind: Option<String>,
     #[property(
+        description = "The goal this task is part of, by the goal id from goals_list. A goal is a container — an epic. Omit to leave the task standalone; on an update pass an empty string to detach it"
+    )]
+    pub goal: Option<String>,
+    #[property(
         description = "Who takes it: an email from users_list, or the literal `AI` when an agent does it. Never a first name — a name here names nobody. Omit to leave it unassigned"
     )]
     pub assignee: Option<String>,
@@ -84,6 +88,7 @@ impl McpToolCall<TasksCreateInput, TaskWriteResponse> for TasksCreateHandler {
         let handle = crate::scripts::create_task(
             &self.app,
             NewTask {
+                goal: model.goal.clone(),
                 project_prefix: model.project,
                 text: model.text,
                 kind: model.kind,
@@ -118,6 +123,10 @@ pub struct TasksUpdateInput {
         description = "Reclassify it, by kind id. Pass an empty string to clear the kind; omit to leave it alone"
     )]
     pub kind: Option<String>,
+    #[property(
+        description = "The goal this task is part of, by the goal id from goals_list. A goal is a container — an epic. Omit to leave the task standalone; on an update pass an empty string to detach it"
+    )]
+    pub goal: Option<String>,
     #[property(
         description = "Reassign it — an email, or `AI`. Pass an empty string to clear the assignee; omit to leave it as it is"
     )]
@@ -177,6 +186,7 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
             &self.app,
             &model.id,
             TaskPatch {
+                goal: model.goal.clone(),
                 text: model.text,
                 status: model.status,
                 kind: model.kind,

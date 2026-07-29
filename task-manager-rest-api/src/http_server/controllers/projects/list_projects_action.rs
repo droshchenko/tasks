@@ -9,8 +9,8 @@ use crate::mappers::project_to_response;
 use_my_http_server!();
 
 #[http_route(
-    method: "GET",
-    route: "/api/projects/v1",
+    method: "POST",
+    route: "/api/projects/v1/list",
     controller: "Projects",
     summary: "The projects I may see",
     description: "Feeds the project dropdown on Home and the list in Projects setup. Membership decides what comes back; an admin sees every project without being a member of any. Someone who is a member of nothing gets an empty list rather than a 403 — the UI shows them a note to ask an admin.",

@@ -52,6 +52,8 @@ pub struct TaskDto {
     pub task_text: String,
     pub status: String,
     pub kind: Option<String>,
+    // Which goal this task is part of. `None` for a standalone task.
+    pub goal_id: Option<String>,
     pub assignee: Option<String>,
     #[sql_type("jsonb")]
     #[json]

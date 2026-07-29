@@ -9,7 +9,7 @@ use super::{authed, handle_http_empty, handle_http_response, handle_http_respons
 /// redirect URI, neither of which this side has any business knowing.
 pub async fn get_google_auth_url() -> Result<GoogleAuthUrlResponse, RequestError> {
     let response = FlUrl::new("/api/auth/v1/google-url")
-        .execute_request(HttpVerb::Get, EmptyRequestModel)
+        .execute_request(HttpVerb::Post, EmptyRequestModel)
         .await;
 
     handle_http_response(response).await
@@ -24,8 +24,9 @@ pub async fn finish_google_login(
         state: state.to_string(),
     };
 
+    // POST with a body: a `+` in a query value reads as a space, and both of these regularly contain one.
     let response = FlUrl::new("/api/auth/v1/google-callback")
-        .execute_request(HttpVerb::Get, request)
+        .execute_request(HttpVerb::Post, request)
         .await;
 
     handle_http_response(response).await
@@ -33,7 +34,7 @@ pub async fn finish_google_login(
 
 /// `Ok(None)` means no session — the shell then shows the login screen instead of an error.
 pub async fn get_me() -> Result<Option<MeResponse>, RequestError> {
-    let response = authed("/api/auth/v1/me", HttpVerb::Get, EmptyRequestModel).await;
+    let response = authed("/api/auth/v1/me", HttpVerb::Post, EmptyRequestModel).await;
 
     handle_http_response_opt(response).await
 }

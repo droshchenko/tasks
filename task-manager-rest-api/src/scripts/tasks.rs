@@ -19,6 +19,8 @@ pub struct TaskPatch {
     pub text: Option<String>,
     pub status: Option<String>,
     pub kind: Option<String>,
+    /// Move it under a goal, by goal id. An empty string detaches it; `None` leaves it where it is.
+    pub goal: Option<String>,
     pub assignee: Option<String>,
     pub add_labels: Vec<String>,
     pub remove_labels: Vec<String>,
@@ -36,6 +38,7 @@ impl TaskPatch {
         self.text.is_none()
             && self.status.is_none()
             && self.kind.is_none()
+            && self.goal.is_none()
             && self.assignee.is_none()
             && self.add_labels.is_empty()
             && self.remove_labels.is_empty()
@@ -136,6 +139,8 @@ pub struct NewTask {
     pub project_prefix: String,
     pub text: String,
     pub kind: Option<String>,
+    /// Which goal this task is part of, by goal id. `None` leaves it standalone.
+    pub goal: Option<String>,
     pub assignee: Option<String>,
     pub labels: Vec<String>,
     pub depends_on: Vec<String>,
@@ -168,6 +173,10 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     })?;
 
     let now = DateTimeAsMicroseconds::now();
+    // Validated against the project rather than accepted blindly: a goal id from another board would draw
+    // the task under a goal nobody on this one can see.
+    let goal_id = resolve_goal(&board, &project.id, new_task.goal.as_deref())?;
+
     let task = TaskModel {
         project_id: project.id.clone(),
         number,
@@ -175,6 +184,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
         // Always Todo. Moving it on is tasks_update's job, which is where the Done rule lives.
         status: COLUMN_ID_TODO.to_string(),
         kind,
+        goal_id,
         assignee: normalise_assignee(new_task.assignee.as_deref()),
         labels,
         depends_on,
@@ -253,6 +263,29 @@ fn normalise_actor(src: &str) -> String {
     src.to_lowercase()
 }
 
+/// The goal id to store, validated against the project the task is on.
+///
+/// `Ok(None)` for "no goal" — either nothing was passed or an empty string was, which is how a caller
+/// detaches a task. A goal that does not exist, or belongs to another project, is refused: accepting it
+/// would file the task under a goal nobody on this board can see.
+fn resolve_goal(
+    board: &crate::board::BoardInner,
+    project_id: &str,
+    goal: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(goal) = goal.map(str::trim).filter(|itm| !itm.is_empty()) else {
+        return Ok(None);
+    };
+
+    match board.get_goal(goal) {
+        Some(found) if found.project_id == project_id => Ok(Some(found.id.clone())),
+        Some(_) => Err(format!(
+            "goal '{goal}' belongs to another project — a task can only be part of a goal on its own board"
+        )),
+        None => Err(format!("no goal with id '{goal}'")),
+    }
+}
+
 /// An assignee, normalised by [`normalise_actor`]. Blank means nobody.
 fn normalise_assignee(src: Option<&str>) -> Option<String> {
     let src = src?.trim();
@@ -311,6 +344,10 @@ pub async fn update_task(
 
     if let Some(kind) = &patch.kind {
         task.kind = validate_kind(&project, kind)?;
+    }
+
+    if let Some(goal) = &patch.goal {
+        task.goal_id = resolve_goal(&board, &project.id, Some(goal))?;
     }
 
     if let Some(assignee) = &patch.assignee {

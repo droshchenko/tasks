@@ -315,17 +315,26 @@ vanished loses the middle of its board and every task sitting there reads as Tod
 milder — a task pointing at one that is gone reads as having no type — but it still changes every following
 project at once, so both are made deliberately rather than discovered.
 
-### No path parameters at all — every mutation is a POST with a body
+### Everything is a POST with a body — no path parameters, no query values
 
 `#[http_path]` fields are **appended** to the url in declaration order — `append_path_segment`, no `{name}`
 substitution. So `/api/projects/v1/{projectId}/columns` is unreachable from the generated client: it can
 only build `/api/projects/v1/{projectId}`, and the server answers 404. Seven of the ten project endpoints
 were written that way and every one of them was dead on arrival.
 
-So there is no `#[http_path]` anywhere in this repo. Every mutation is a `POST` to a **static** url with
-everything in the body — `/api/column-templates/v1/save`, `/api/projects/v1/kinds/set` — which is also the
-shape every other house service uses (`/promo-codes/save`, `/individual-offers/assign`). Reads stay `GET`
-with query parameters, which have no such problem.
+So there is no `#[http_path]` anywhere in this repo. And no `#[http_query]` either, because a query value
+has its own way of being mangled: **`+` in a query means a space.** Both halves of the OAuth callback are
+base64-ish and regularly contain one, so sending them as query parameters silently corrupted the CSRF state
+on roughly six sign-ins in ten — the ones whose state happened to contain a `+` — and surfaced as a 401 that
+looked random and cleared itself on a retry.
+
+Every endpoint the client calls is therefore a `POST` to a static url with everything in a JSON body, which
+carries bytes verbatim. Reads too: `/api/projects/v1/list`, `/api/tasks/v1/list`. The lists live at `/list`
+rather than at the collection root because create already owns the root as a POST, and two POST handlers on
+one route is a collision.
+
+One exception: `GET /api/system/v1/ping`. It is an infrastructure liveness probe reached by is-alive and the
+proxy, not by the client — making it a POST would silently break the health check.
 
 Sign-in is one button: `/api/auth/v1/google-url` → Google → back to `/authorized`, which exchanges the
 code, stores the token and replaces the URL so a reload cannot re-submit a spent code. Signing out
