@@ -3,6 +3,8 @@ use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO, ProjectResponse};
 use task_manager_shared::tasks::TaskResponse;
 
+use dioxus_utils::{DataState, RenderState};
+
 use crate::states::AppState;
 
 /// The board.
@@ -14,89 +16,40 @@ use crate::states::AppState;
 pub fn RenderHome() -> Element {
     let app_state = consume_context::<Signal<AppState>>();
 
-    let mut projects = use_signal(Vec::<ProjectResponse>::new);
-    let mut selected = use_signal(String::new);
-    let mut error = use_signal(String::new);
-    let mut loading = use_signal(|| true);
-    let mut search = use_signal(String::new);
-    // Empty means "any". Kept as ids rather than indexes so a board that changes under a filter cannot
-    // silently move it to a different type.
-    let mut kind_filter = use_signal(String::new);
-    let mut assignee_filter = use_signal(String::new);
+    let mut cs = use_signal(ComponentState::default);
+    let cs_ra = cs.read();
 
-    // The project list is read once. It changes only through Projects setup, which is a page navigation
-    // away — and any change to it also bumps the board revision, which re-reads below.
-    use_future(move || async move {
-        match crate::api::get_projects().await {
-            Ok(response) => {
-                let remembered = crate::web::storage::get_last_project();
-
-                let initial = remembered
-                    .filter(|id| response.projects.iter().any(|itm| &itm.id == id))
-                    .or_else(|| response.projects.first().map(|itm| itm.id.clone()))
-                    .unwrap_or_default();
-
-                projects.set(response.projects);
-                selected.set(initial);
-                loading.set(false);
-            }
-            Err(err) => {
-                error.set(err.message);
-                loading.set(false);
-            }
-        }
-    });
-
-    // `use_resource`, NOT `use_future`. This is the whole reason the board was empty: `use_future` spawns
-    // its task once through `use_hook` and tracks nothing, so reading `selected` inside it did not subscribe
-    // to anything — the read happened once, at mount, when the selection was still empty, and never again.
-    // `use_resource` runs its closure inside a `ReactiveContext` and restarts when what it read changes.
-    //
-    // The reads are in the CLOSURE body rather than the async block on purpose: that is the part the
-    // reactive context definitely covers, so the dependency cannot be lost to a polling detail.
-    let tasks = use_resource(move || {
-        let project_id = selected.read().clone();
-        // Bumped by the WebSocket when the server says this board changed. Reading it here is what makes a
-        // push repaint the board.
+    // A WebSocket push says "this board changed". Resetting the `DataState` is what re-reads it — an
+    // effect rather than a read inside the loader, because `use_effect` IS reactive where `use_future` is
+    // not, and this is the whole invalidation mechanism on this side.
+    use_effect(move || {
         let _revision = app_state.read().board_revision;
 
-        async move {
-            if project_id.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            crate::api::get_tasks(&project_id)
-                .await
-                .map(|response| response.tasks)
+        if cs.peek().tasks.has_value() {
+            cs.write().tasks.reset();
         }
     });
 
-    // Tell the socket which board to push about. Sent on every change of selection, which is also what
-    // makes switching projects not need a reconnect.
+    // Side effects of a selection, in an effect because that is what `use_effect` is for and because it IS
+    // reactive: remember the choice for the next visit, and tell the socket which board to push about.
+    // Sending the subscription on every change is also what makes switching projects not need a reconnect.
     use_effect(move || {
-        let project_id = selected.read().clone();
+        let project_id = cs.read().selected.clone();
 
         if !project_id.is_empty() {
             crate::web::storage::save_last_project(&project_id);
-            crate::views::home::watch_project(&project_id);
+            crate::web::watch_project(&project_id);
         }
     });
 
-    let projects_ra = projects.read();
-    let selected_id = selected.read().clone();
-    let error_text = error.read().clone();
-    let ws_live = app_state.read().ws_live;
-    let search_text = search.read().clone();
-    let kind_wanted = kind_filter.read().clone();
-    let assignee_wanted = assignee_filter.read().clone();
+    // Loaded first, and the one thing the rest of the screen cannot do without. `Err` carries what to show
+    // instead — a spinner or the failure — so the body below stays a straight line.
+    let projects = match get_projects(cs, &cs_ra) {
+        Ok(projects) => projects,
+        Err(element) => return element,
+    };
 
-    if *loading.read() {
-        return rsx! {
-            div { class: "loading-note", "Loading…" }
-        };
-    }
-
-    if projects_ra.is_empty() {
+    if projects.is_empty() {
         return rsx! {
             div { class: "page-header",
                 h1 { class: "page-title", "Home" }
@@ -107,10 +60,12 @@ pub fn RenderHome() -> Element {
         };
     }
 
-    let current = projects_ra
+    let selected_id = cs_ra.selected.clone();
+
+    let current = projects
         .iter()
         .find(|itm| itm.id == selected_id)
-        .or_else(|| projects_ra.first());
+        .or_else(|| projects.first());
 
     let Some(current) = current else {
         return rsx! {
@@ -118,14 +73,30 @@ pub fn RenderHome() -> Element {
         };
     };
 
-    // Absent means the first read is still in flight; an error is shown rather than swallowed into an
-    // empty board, which would read as "no work here".
-    let tasks_read = tasks.read();
-    let (tasks_ra, tasks_error): (Vec<TaskResponse>, String) = match tasks_read.as_ref() {
-        None => (Vec::new(), String::new()),
-        Some(Ok(list)) => (list.clone(), String::new()),
-        Some(Err(err)) => (Vec::new(), err.message.clone()),
+    // Keyed on the selection: picking another board resets this, which is what makes the next render load
+    // it. See `ComponentState::select`.
+    //
+    // While it loads the header stays up — hiding the project picker mid-switch makes the screen jump.
+    let tasks_ra: Vec<TaskResponse> = match get_tasks(cs, &cs_ra) {
+        Ok(tasks) => tasks.to_vec(),
+        Err(element) => {
+            return rsx! {
+                div { class: "board-page",
+                    RenderHeader {
+                        projects: projects.to_vec(),
+                        current: current.clone(),
+                        cs,
+                        assignees: Vec::new(),
+                    }
+                    {element}
+                }
+            };
+        }
     };
+
+    let search_text = cs_ra.search.clone();
+    let kind_wanted = cs_ra.kind_filter.clone();
+    let assignee_wanted = cs_ra.assignee_filter.clone();
 
     // Every filter narrows the same list, so they compose: a type AND an assignee AND some text. A task id
     // is the exception and narrows nothing — the answer to an id may be on another board or off this one
@@ -152,98 +123,15 @@ pub fn RenderHome() -> Element {
     // of its columns can scroll on its own.
     rsx! {
         div { class: "board-page",
-            div { class: "page-header",
-                h1 { class: "page-title", "Home" }
-                div { class: "project-picker",
-                    // `selected` on the matching option, not `value` on the select: HTML decides a
-                    // dropdown's shown item from the option's attribute, so the remembered project was
-                    // restored into the signal but the control still displayed the first entry.
-                    select {
-                        onchange: move |event| selected.set(event.value()),
-                        for project in projects_ra.iter() {
-                            option {
-                                value: "{project.id}",
-                                selected: project.id == selected_id,
-                                "{project.prefix} · {project.name}"
-                            }
-                        }
-                    }
-                    select {
-                        onchange: move |event| kind_filter.set(event.value()),
-                        option { value: "", selected: kind_wanted.is_empty(), "Any type" }
-                        for kind in current.kinds.iter() {
-                            option {
-                                value: "{kind.id}",
-                                selected: kind.id == kind_wanted,
-                                "{kind.name}"
-                            }
-                        }
-                    }
-                    select {
-                        onchange: move |event| assignee_filter.set(event.value()),
-                        option { value: "", selected: assignee_wanted.is_empty(), "Anyone" }
-                        option {
-                            value: "{UNASSIGNED}",
-                            selected: assignee_wanted == UNASSIGNED,
-                            "Unassigned"
-                        }
-                        for who in assignees.iter() {
-                            option {
-                                value: "{who.0}",
-                                selected: who.0 == assignee_wanted,
-                                "{who.1}"
-                            }
-                        }
-                    }
-                    input {
-                        class: "board-search",
-                        r#type: "text",
-                        placeholder: "Search, or a task id — RMS-42",
-                        value: "{search_text}",
-                        oninput: move |event| search.set(event.value()),
-                        // Enter is what commits a lookup. A search that fired per keystroke would ask the
-                        // server about `R`, `RM`, `RMS`… on the way to a handle, and every one of those is
-                        // a miss it would then have to explain.
-                        onkeydown: move |event| {
-                            if event.key() == Key::Enter {
-                                let query = search.read().trim().to_string();
-
-                                if looks_like_a_task_id(&query) {
-                                    spawn(async move {
-                                        match crate::api::find_task(&query).await {
-                                            Ok(found) => {
-                                                crate::dialogs::open(
-                                                    crate::dialogs::DialogState::ViewTask { found },
-                                                );
-                                            }
-                                            Err(err) => error.set(err.message),
-                                        }
-                                    });
-                                }
-                            }
-                        },
-                    }
-                    span {
-                        class: if ws_live { "ws-dot live" } else { "ws-dot" },
-                        title: if ws_live {
-                            "Live — the board repaints when it changes"
-                        } else {
-                            "Not live — reload to see changes"
-                        },
-                    }
-                }
+            RenderHeader {
+                projects: projects.to_vec(),
+                current: current.clone(),
+                cs,
+                assignees,
             }
 
             if !current.description.trim().is_empty() {
                 p { class: "page-note", "{current.description}" }
-            }
-
-            if !error_text.is_empty() {
-                div { class: "error-banner", "{error_text}" }
-            }
-
-            if !tasks_error.is_empty() {
-                div { class: "error-banner", "{tasks_error}" }
             }
 
             div { class: "board",
@@ -357,6 +245,228 @@ fn matches_text(task: &TaskResponse, needle: &str) -> bool {
             .assignee_name
             .as_ref()
             .is_some_and(|itm| itm.to_lowercase().contains(needle))
+}
+
+/// Everything this screen holds, in one struct behind one signal — the house shape.
+///
+/// The two `DataState`s are why the board works at all now. They are read in the RENDER body, which is what
+/// subscribes the component to them; the previous version read its dependencies inside `use_future`, which
+/// spawns once and tracks nothing, so the board loaded exactly never.
+#[derive(Default)]
+struct ComponentState {
+    projects: DataState<Vec<ProjectResponse>>,
+    /// Keyed on `selected`: choosing another board resets this, and the next render loads it.
+    tasks: DataState<Vec<TaskResponse>>,
+    selected: String,
+    search: String,
+    /// Empty means "any". Ids rather than indexes, so a board changing under a filter cannot silently move
+    /// it to a different type.
+    kind_filter: String,
+    assignee_filter: String,
+}
+
+impl ComponentState {
+    /// Switch boards. One method because the two halves are coupled: leaving `tasks` alone would show the
+    /// previous project's cards under the new project's name.
+    fn select(&mut self, project_id: String) {
+        if self.selected == project_id {
+            return;
+        }
+
+        self.selected = project_id;
+        self.tasks.reset();
+    }
+}
+
+/// The projects this person may see, loading them on first render.
+///
+/// The socket starts HERE, once the list is in hand — not in the shell on the way past. Until a project is
+/// known there is nothing to subscribe to, and the shell was starting it during render, which is a write to
+/// a signal in the render body and the one thing `dioxus-design-patterns` §16 says never to do.
+fn get_projects(
+    mut cs: Signal<ComponentState>,
+    cs_ra: &ComponentState,
+) -> Result<&[ProjectResponse], Element> {
+    match cs_ra.projects.as_ref() {
+        RenderState::None => {
+            spawn(async move {
+                cs.write().projects.set_loading();
+
+                match crate::api::get_projects().await {
+                    Ok(response) => {
+                        // The remembered project is matched against what actually came back, so a board
+                        // somebody lost access to falls through to the first one they can see rather than
+                        // leaving the screen on nothing.
+                        let remembered = crate::web::storage::get_last_project();
+
+                        let initial = remembered
+                            .filter(|id| response.projects.iter().any(|itm| &itm.id == id))
+                            .or_else(|| response.projects.first().map(|itm| itm.id.clone()))
+                            .unwrap_or_default();
+
+                        let mut write = cs.write();
+                        write.selected = initial;
+                        write.projects.set_loaded(response.projects);
+                        drop(write);
+
+                        // Data is in. Now the sockets.
+                        crate::start_ws();
+                    }
+                    Err(err) => cs.write().projects.set_error(err.message),
+                }
+            });
+
+            Err(render_loading())
+        }
+        RenderState::Loading => Err(render_loading()),
+        RenderState::Loaded(projects) => Ok(projects.as_slice()),
+        RenderState::Error(err) => Err(render_error(err)),
+    }
+}
+
+/// The selected board's tasks.
+///
+/// Nothing to load until a project is chosen, which is an empty board rather than a spinner — the picker is
+/// already on screen and a spinner there would suggest something is coming.
+fn get_tasks(
+    mut cs: Signal<ComponentState>,
+    cs_ra: &ComponentState,
+) -> Result<&[TaskResponse], Element> {
+    if cs_ra.selected.is_empty() {
+        return Ok(&[]);
+    }
+
+    match cs_ra.tasks.as_ref() {
+        RenderState::None => {
+            let project_id = cs_ra.selected.clone();
+
+            spawn(async move {
+                cs.write().tasks.set_loading();
+
+                match crate::api::get_tasks(&project_id).await {
+                    Ok(response) => cs.write().tasks.set_loaded(response.tasks),
+                    Err(err) => cs.write().tasks.set_error(err.message),
+                }
+            });
+
+            Err(render_loading())
+        }
+        RenderState::Loading => Err(render_loading()),
+        RenderState::Loaded(tasks) => Ok(tasks.as_slice()),
+        RenderState::Error(err) => Err(render_error(err)),
+    }
+}
+
+fn render_loading() -> Element {
+    rsx! {
+        div { class: "loading-note", "Loading…" }
+    }
+}
+
+fn render_error(message: &str) -> Element {
+    rsx! {
+        div { class: "error-banner", "{message}" }
+    }
+}
+
+/// The title, the project picker and the filters. Its own component so the loading path and the loaded path
+/// draw the same header — otherwise the screen jumps every time a board is switched.
+#[component]
+fn RenderHeader(
+    projects: Vec<ProjectResponse>,
+    current: ProjectResponse,
+    cs: Signal<ComponentState>,
+    assignees: Vec<(String, String)>,
+) -> Element {
+    let app_state = consume_context::<Signal<AppState>>();
+    let ws_live = app_state.read().ws_live;
+
+    let cs_ra = cs.read();
+    let selected_id = cs_ra.selected.clone();
+    let search_text = cs_ra.search.clone();
+    let kind_wanted = cs_ra.kind_filter.clone();
+    let assignee_wanted = cs_ra.assignee_filter.clone();
+    drop(cs_ra);
+
+    let mut cs = cs;
+
+    rsx! {
+        div { class: "page-header",
+            h1 { class: "page-title", "Home" }
+            div { class: "project-picker",
+                // `selected` on the matching option, not `value` on the select: HTML decides a dropdown's
+                // shown item from the option's attribute, so the remembered project was restored into the
+                // state but the control still displayed the first entry.
+                select {
+                    onchange: move |event| cs.write().select(event.value()),
+                    for project in projects.iter() {
+                        option {
+                            value: "{project.id}",
+                            selected: project.id == selected_id,
+                            "{project.prefix} · {project.name}"
+                        }
+                    }
+                }
+                select {
+                    onchange: move |event| cs.write().kind_filter = event.value(),
+                    option { value: "", selected: kind_wanted.is_empty(), "Any type" }
+                    for kind in current.kinds.iter() {
+                        option {
+                            value: "{kind.id}",
+                            selected: kind.id == kind_wanted,
+                            "{kind.name}"
+                        }
+                    }
+                }
+                select {
+                    onchange: move |event| cs.write().assignee_filter = event.value(),
+                    option { value: "", selected: assignee_wanted.is_empty(), "Anyone" }
+                    option {
+                        value: "{UNASSIGNED}",
+                        selected: assignee_wanted == UNASSIGNED,
+                        "Unassigned"
+                    }
+                    for who in assignees.iter() {
+                        option {
+                            value: "{who.0}",
+                            selected: who.0 == assignee_wanted,
+                            "{who.1}"
+                        }
+                    }
+                }
+                input {
+                    class: "board-search",
+                    r#type: "text",
+                    placeholder: "Search, or a task id — RMS-42",
+                    value: "{search_text}",
+                    oninput: move |event| cs.write().search = event.value(),
+                    onkeydown: move |event| {
+                        if event.key() == Key::Enter {
+                            let query = cs.peek().search.trim().to_string();
+
+                            if looks_like_a_task_id(&query) {
+                                spawn(async move {
+                                    if let Ok(found) = crate::api::find_task(&query).await {
+                                        crate::dialogs::open(
+                                            crate::dialogs::DialogState::ViewTask { found },
+                                        );
+                                    }
+                                });
+                            }
+                        }
+                    },
+                }
+                span {
+                    class: if ws_live { "ws-dot live" } else { "ws-dot" },
+                    title: if ws_live {
+                        "Live — the board repaints when it changes"
+                    } else {
+                        "Not live — reload to see changes"
+                    },
+                }
+            }
+        }
+    }
 }
 
 /// One column as the board draws it, anchors included.

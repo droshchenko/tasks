@@ -16,18 +16,11 @@ pub fn RenderAuthCallback(code: String, state: String, error: String) -> Element
     let mut failure = use_signal(String::new);
 
     use_future(move || {
-        // Decoded here, because nothing before this point does it: the router splits the raw query on
-        // `&` and `=` and hands the slice over untouched, and `location.search()` is the encoded query by
-        // definition. What comes in is `4%2F0A…` and `fYpZ…%2F%2BsXa…`.
-        //
-        // Passing those on would not fail here — it would fail one hop later and blame Google. The
-        // server hands the code to FlUrl's `UrlEncodedBody`, which escapes `%` as `%25`, so a code left
-        // encoded reaches Google as `4%252F0A…`; Google decodes one layer, sees `4%2F0A…`, and answers
-        // `invalid_grant`. The state would fail its own check just as quietly, being base64 with `/` and
-        // `+` in it.
-        let code = decode_callback_value(&code);
-        let state = decode_callback_value(&state);
-        let error = decode_callback_value(&error);
+        // Taken verbatim. The router has already percent-decoded the query by the time these reach a
+        // prop, so there is nothing left here to undo — see `callback_value`.
+        let code = callback_value(&code);
+        let state = callback_value(&state);
+        let error = callback_value(&error);
 
         async move {
             // Google's own refusal, and the ordinary case of it is somebody pressing Cancel on the
@@ -82,19 +75,24 @@ pub fn RenderAuthCallback(code: String, state: String, error: String) -> Element
     }
 }
 
-/// Undo the encoding an OAuth callback parameter arrives in.
+/// An OAuth callback parameter, exactly as it arrived.
 ///
-/// `+` becomes a space before percent-decoding, which is not a generic-URI rule but is the right one
-/// here: RFC 6749 §4.1.2 says the callback's query is `application/x-www-form-urlencoded`, and in that
-/// format `+` IS a space. The order matters — a `+` recovered from `%2B` must not then be read as a
-/// space, and our own `state` is base64 that regularly contains one.
-fn decode_callback_value(src: &str) -> String {
-    let with_spaces = src.replace('+', " ");
-
-    percent_encoding::percent_decode_str(&with_spaces)
-        .decode_utf8_lossy()
-        .trim()
-        .to_string()
+/// Trimmed and otherwise untouched, and the *untouched* is the whole point. This decoded before, on the
+/// belief that the router hands over the raw query slice. It does not — by the time a query segment is a
+/// route prop the router has already percent-decoded it, so decoding again was one layer too many:
+/// `%2B` came out of the router as `+`, and the second pass — reading `+` as a space, which is the right
+/// rule for a form-encoded query and the wrong one for a value already decoded — turned it into a space.
+///
+/// That destroyed the `state`, which is base64 and carries a `+` about six times in ten. It surfaced as
+/// a 401 that cleared on a retry, i.e. as something intermittent and server-side, which is what made it
+/// worth three attempts to find. What it actually looked like, in the request body:
+///
+/// ```text
+/// "state":"xUBhAVFTuzudAnTp oXf7jW1/S…"
+///                          ^ was a +
+/// ```
+fn callback_value(src: &str) -> String {
+    src.trim().to_string()
 }
 
 /// Drop the query string without reloading, so the spent code is not left sitting in the address bar.
@@ -114,40 +112,32 @@ fn wasm_state() -> js_sys::JsString {
 mod tests {
     use super::*;
 
-    /// The values off the real failed callback. Both carry `/`, the state also a `+` — the characters
-    /// that made the first version fail.
+    /// The router hands these over ALREADY decoded, so this must not touch them.
+    ///
+    /// The previous version of these tests asserted the opposite — that `%2F` became `/` here — which is
+    /// exactly the extra layer that destroyed the state. Kept as a test rather than deleted: it is the one
+    /// assertion that would catch somebody adding the decode back.
     #[test]
-    fn a_real_callback_decodes() {
+    fn a_callback_value_is_passed_through_untouched() {
         assert_eq!(
-            decode_callback_value(
-                "4%2F0AXEQxICCHfSoVEzGIlLkSCcJCyFfMob0TPBZpldYie1En6hAs8eAl-FFdMgcPU6ekDH1Cg"
-            ),
-            "4/0AXEQxICCHfSoVEzGIlLkSCcJCyFfMob0TPBZpldYie1En6hAs8eAl-FFdMgcPU6ekDH1Cg"
+            callback_value("xUBhAVFTuzudAnTp+oXf7jW1/S"),
+            "xUBhAVFTuzudAnTp+oXf7jW1/S",
+            "a + and a / are what a decoded base64 state looks like — both must survive"
         );
 
         assert_eq!(
-            decode_callback_value(
-                "fYpZzi9qlF%2FNRoFG0329QdzBp2WJfTE9QuHE7f6Dpeucmj9H21%2F%2BsXa4SuOf8FvJ"
-            ),
-            "fYpZzi9qlF/NRoFG0329QdzBp2WJfTE9QuHE7f6Dpeucmj9H21/+sXa4SuOf8FvJ"
+            callback_value("4/0AXEQxICCHfSoVEzGIlLkSCcJ"),
+            "4/0AXEQxICCHfSoVEzGIlLkSCcJ"
         );
+
+        // A percent sequence that arrives here is a literal, not something to decode: the router is done.
+        assert_eq!(callback_value("a%2Bb"), "a%2Bb");
     }
 
-    /// `%2B` has to survive as `+`, and a bare `+` has to become a space. Swapping the two steps breaks
-    /// the first case, and the base64 state would then fail to decrypt — which surfaces as "sign in
-    /// again", not as a bug.
+    /// Only the trimming survives, so an absent parameter still reads as absent.
     #[test]
-    fn an_encoded_plus_stays_a_plus_and_a_bare_one_is_a_space() {
-        assert_eq!(decode_callback_value("a%2Bb"), "a+b");
-        assert_eq!(decode_callback_value("a+b"), "a b");
-    }
-
-    /// An absent parameter is an empty prop, not a missing one — the caller distinguishes "no code" from
-    /// "a code", so whitespace must not read as present.
-    #[test]
-    fn nothing_decodes_to_nothing() {
-        assert!(decode_callback_value("").is_empty());
-        assert!(decode_callback_value("+").is_empty());
-        assert!(decode_callback_value("%20").is_empty());
+    fn nothing_reads_as_nothing() {
+        assert!(callback_value("").is_empty());
+        assert!(callback_value("   ").is_empty());
     }
 }

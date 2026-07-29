@@ -111,11 +111,6 @@ fn Shell(active: &'static str, children: Element) -> Element {
             crate::views::login::RenderLogin {}
         },
         SignedIn::Yes(_) => {
-            if !app_state.read().ws_started {
-                app_state.write().ws_started = true;
-                kick_off_ws(app_state);
-            }
-
             rsx! {
                 crate::templates::ContentPanel { active, {children} }
                 // Last, and outside the content panel: a dialog is an overlay over whatever screen
@@ -190,13 +185,32 @@ fn Logout() -> Element {
     }
 }
 
-/// Hold the WebSocket open and bump `board_revision` when the server says a board changed.
+/// Open the WebSocket, once, and hold it for the session.
 ///
-/// One socket for the whole session, opened once the first signed-in screen renders. It carries the
-/// session token as a query parameter because the browser WebSocket API cannot send headers.
+/// Called by Home when its projects have arrived rather than by the shell on the way past. Two reasons: the
+/// shell had to write `ws_started` during render to guard against a second socket, which is the signal write
+/// in the render body that §16 of the design patterns forbids; and until a project is known there is nothing
+/// to subscribe to, so starting earlier only opened a socket that had nothing to say.
 ///
-/// No reconnect loop yet: a dropped socket leaves the board static until the page is reloaded, and the
-/// dot in the header goes grey so that is visible rather than silent.
+/// Idempotent: the `ws_started` flag is checked and set inside, so calling it on every load of the board is
+/// safe.
+pub fn start_ws() {
+    let mut app_state = consume_context::<Signal<AppState>>();
+
+    if app_state.peek().ws_started {
+        return;
+    }
+
+    app_state.write().ws_started = true;
+    kick_off_ws(app_state);
+}
+
+/// Hold the socket open and bump `board_revision` when the server says a board changed.
+///
+/// It carries the session token as a query parameter because the browser WebSocket API cannot send headers.
+///
+/// No reconnect loop yet: a dropped socket leaves the board static until the page is reloaded, and the dot
+/// in the header goes grey so that is visible rather than silent.
 fn kick_off_ws(mut app_state: Signal<AppState>) {
     spawn(async move {
         let token = crate::web::storage::get_session_token().unwrap_or_default();
