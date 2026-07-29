@@ -35,13 +35,20 @@ markdown = { version = "1" }
 serde = { version = "*", features = ["derive"] }
 serde_json = { version = "*" }
 
+# Decoding the OAuth callback's query arguments. Nothing upstream does it: dioxus-web builds the route
+# from `location.search()` verbatim, and the router's generated parse is a plain `split('&')` +
+# `split_once('=')` onto `String::from_str`. So an authorization code arrives as `4%2F0A…` and our base64
+# state as `…%2F%2BsXa…`. Hand-rolling the decode would mean a UTF-8-correct percent decoder for two
+# values that merely happen to be ASCII — a trap for whoever touches it next.
+percent-encoding = "*"
+
 web-sys = { version = "*", features = [
     "Storage",
     "Window",
     "console",
-    # Reading `?code=`/`?state=` off the OAuth callback and the `?task=` share link, and replacing the
-    # URL afterwards so a reload does not re-submit a spent code.
+    # Leaving the origin for Google's consent screen — a cross-origin navigation, so not a router push.
     "Location",
+    # Replacing the URL after the OAuth callback, so a reload does not re-submit a spent code.
     "History",
 ] }
 js-sys = { version = "*" }

@@ -21,8 +21,20 @@ pub enum AppRoute {
     //
     // A route rather than a server redirect so the token exchange and storing the token happen in the same
     // place the rest of the client lives.
-    #[route("/authorized")]
-    AuthCallback {},
+    //
+    // The query arguments MUST be declared here, and they arrive as PROPS — reading
+    // `window.location().search()` in a hook is too late. A route that does not name them gets the query
+    // stripped: the address bar ends up at a bare `/authorized` and the search string comes back empty,
+    // which reads exactly like "Google sent nothing". That is what the first version did.
+    //
+    // Google also appends `iss`, `scope`, `authuser` and `prompt`, which we neither send nor read —
+    // undeclared query arguments are ignored, so they are harmless.
+    #[route("/authorized?:code&:state&:error")]
+    AuthCallback {
+        code: String,
+        state: String,
+        error: String,
+    },
     #[route("/projects-setup")]
     ProjectsSetup {},
     #[route("/users")]
@@ -139,9 +151,9 @@ fn Settings() -> Element {
 
 /// Not wrapped in `Shell`: it runs before there is a session, and asking `/me` first would only fail.
 #[component]
-fn AuthCallback() -> Element {
+fn AuthCallback(code: String, state: String, error: String) -> Element {
     rsx! {
-        crate::views::auth_callback::RenderAuthCallback {}
+        crate::views::auth_callback::RenderAuthCallback { code, state, error }
     }
 }
 
