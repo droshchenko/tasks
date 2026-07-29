@@ -548,9 +548,6 @@ fn RenderHeader(
     cs: Signal<ComponentState>,
     assignees: Vec<(String, String)>,
 ) -> Element {
-    let app_state = consume_context::<Signal<AppState>>();
-    let ws_live = app_state.read().ws_live;
-
     let cs_ra = cs.read();
     let selected_id = cs_ra.selected.clone();
     let search_text = cs_ra.search.clone();
@@ -609,48 +606,38 @@ fn RenderHeader(
                     }
                 }
             }
-            // Held at the right edge. The selects on the left say which board and which slice of it; this
-            // says what is being looked for, which is a different question and reads better apart from them.
-            div { class: "board-header-right",
-                input {
-                    class: "board-search",
-                    r#type: "text",
-                    placeholder: "Search, or a task id — RMS-42",
-                    value: "{search_text}",
-                    oninput: move |event| {
-                        let value = event.value();
-                        set_search(&mut cs.write(), value.clone(), &projects_for_search);
-                        // `replace`, not `push`: a keystroke is not somewhere the Back button should have to
-                        // walk through. The URL is a projection of the box — the box was already set above.
-                        navigator()
-                            .replace(crate::AppRoute::Home {
-                                search: url_search(&value),
-                            });
-                    },
-                    onkeydown: move |event| {
-                        if event.key() == Key::Enter {
-                            let query = cs.peek().search.trim().to_string();
+            // Held at the right edge, on its own. The selects on the left say which board and which slice of
+            // it; this says what is being looked for, which is a different question.
+            input {
+                class: "board-search",
+                r#type: "text",
+                placeholder: "Search, or a task id — RMS-42",
+                value: "{search_text}",
+                oninput: move |event| {
+                    let value = event.value();
+                    set_search(&mut cs.write(), value.clone(), &projects_for_search);
+                    // `replace`, not `push`: a keystroke is not somewhere the Back button should have to
+                    // walk through. The URL is a projection of the box — the box was already set above.
+                    navigator()
+                        .replace(crate::AppRoute::Home {
+                            search: url_search(&value),
+                        });
+                },
+                onkeydown: move |event| {
+                    if event.key() == Key::Enter {
+                        let query = cs.peek().search.trim().to_string();
 
-                            if looks_like_a_task_id(&query) {
-                                spawn(async move {
-                                    if let Ok(found) = crate::api::find_task(&query).await {
-                                        crate::dialogs::open(
-                                            crate::dialogs::DialogState::ViewTask { found },
-                                        );
-                                    }
-                                });
-                            }
+                        if looks_like_a_task_id(&query) {
+                            spawn(async move {
+                                if let Ok(found) = crate::api::find_task(&query).await {
+                                    crate::dialogs::open(
+                                        crate::dialogs::DialogState::ViewTask { found },
+                                    );
+                                }
+                            });
                         }
-                    },
-                }
-                span {
-                    class: if ws_live { "ws-dot live" } else { "ws-dot" },
-                    title: if ws_live {
-                        "Live — the board repaints when it changes"
-                    } else {
-                        "Not live — reload to see changes"
-                    },
-                }
+                    }
+                },
             }
         }
     }

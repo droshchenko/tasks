@@ -215,8 +215,9 @@ pub fn start_ws() {
 ///
 /// It carries the session token as a query parameter because the browser WebSocket API cannot send headers.
 ///
-/// No reconnect loop yet: a dropped socket leaves the board static until the page is reloaded, and the dot
-/// in the header goes grey so that is visible rather than silent.
+/// No reconnect loop yet: a dropped socket leaves the board static until the page is reloaded, and since the
+/// live dot came off the header there is nothing on screen that says so — only a line in the console. If that
+/// starts biting, the fix is a reconnect, not putting the dot back.
 fn kick_off_ws(mut app_state: Signal<AppState>) {
     spawn(async move {
         let token = crate::web::storage::get_session_token().unwrap_or_default();
@@ -244,8 +245,6 @@ fn kick_off_ws(mut app_state: Signal<AppState>) {
 
         match WebSocket::open(&ws_url) {
             Ok(ws) => {
-                app_state.write().ws_live = true;
-
                 // Split so sending and receiving are independent: the read half blocks on the server, and
                 // a `watch` must not have to wait behind it.
                 let (mut write, mut read) = ws.split();
@@ -286,7 +285,8 @@ fn kick_off_ws(mut app_state: Signal<AppState>) {
                     }
                 }
 
-                app_state.write().ws_live = false;
+                // The socket is gone. Nothing on screen says so — see `kick_off_ws`.
+                crate::web::console_log("ws closed");
             }
             Err(err) => {
                 crate::web::console_log(format!("cannot open ws: {err:?}").as_str());

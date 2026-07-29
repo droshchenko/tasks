@@ -200,18 +200,6 @@
   gap: 8px;
 }
 
-.ws-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  display: inline-block;
-}
-
-.ws-dot.live {
-  background: #198754;
-}
-
 /* The icon inside a task-type tag. `brightness(0) invert(1)` paints any SVG white regardless of the
    colours it shipped with, so one icon set reads correctly on all eight tag backgrounds — the alternative
    is editing every file's fill. */
@@ -224,18 +212,13 @@
   filter: brightness(0) invert(1);
 }
 
-/* The search box and the live dot, held at the right edge of the header. `margin-left: auto` rather than
-   ordering, so they stay there whatever the row to their left ends up holding — and on a narrow window,
-   where `.page-header` wraps, the box wraps onto its own line still right-aligned. */
-.board-header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
 /* The board's search box. Wide enough for a sentence, because most of what gets typed here is words — a
-   task id is short and fits either way. */
+   task id is short and fits either way.
+
+   `margin-left: auto` holds it at the right edge of the header rather than ordering doing it, so it stays
+   there whatever the row to its left ends up holding — and on a narrow window, where `.page-header` wraps,
+   it wraps onto its own line still right-aligned. */
 .board-search {
   width: 260px;
+  margin-left: auto;
 }

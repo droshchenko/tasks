@@ -28,7 +28,6 @@ pub struct AppState {
     /// any screen and outlives all of them: it has no way to reach a component's signal, and Home watching
     /// this is the same shape as Home watching the revision counter it replaces.
     pub board_push: Option<BoardSnapshot>,
-    pub ws_live: bool,
 }
 
 impl Default for AppState {
@@ -38,7 +37,6 @@ impl Default for AppState {
             ws_started: false,
             board_revision: 0,
             board_push: None,
-            ws_live: false,
         }
     }
 }
