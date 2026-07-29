@@ -1,0 +1,146 @@
+/* Home. Read-only by design — nothing here is dragged, clicked to edit, or double-clicked. */
+.board {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 10px;
+}
+
+.board-column {
+  background: #ebecf0;
+  border-radius: var(--radius-lg);
+  min-width: 268px;
+  max-width: 268px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.board-column-header {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 2px 4px 4px 4px;
+}
+
+.board-column-name {
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.board-column-count {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.board-column-description {
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 0 4px 2px 4px;
+}
+
+.sticker {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 10px 11px;
+  border-left: 3px solid transparent;
+}
+
+.sticker.blocked {
+  background: #fffaf0;
+}
+
+.sticker-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.sticker-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.sticker-kind {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.sticker-blocked-flag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9a6700;
+  background: #fff3cd;
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.sticker-text {
+  font-size: 14px;
+}
+
+.sticker-text p {
+  margin: 0 0 6px 0;
+}
+
+.sticker-text p:last-child {
+  margin-bottom: 0;
+}
+
+.sticker-text ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.sticker-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sticker-assignee {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sticker-deps {
+  font-size: 12px;
+  color: #9a6700;
+  margin-top: 6px;
+}
+
+.project-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  display: inline-block;
+}
+
+.ws-dot.live {
+  background: #198754;
+}

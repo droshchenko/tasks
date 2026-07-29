@@ -1,0 +1,30 @@
+# A copy of what is registered in settings-service under
+#   product_id  = task-manager-mcp
+#   template_id = task-manager-rest-api
+#
+# The live one is the source of truth; this file is here so the shape is reviewable in a diff.
+#
+# The YAML is FLAT — one key per field of `SettingsModel`, no wrapper object. That is how every other
+# template on these hosts is written (`trading/admin-rest-api`, `mt-risks/dashboards-rest-api`), and it is
+# what `my_settings_reader` deserialises. A nested `TaskManagerRestApi:` wrapper does not parse.
+#
+# `${...}` placeholders are secret ids in the product scope. They are kebab-case with no product prefix —
+# the product scope already namespaces them, so `logger`, not `task-manager-logger`. Same convention as
+# `trading`.
+#
+# `my_telemetry` is deliberately absent: it is `Option<String>` on the model, and a missing field reads as
+# None. Every other template here omits it too.
+#
+# `admins` stays a literal list rather than a secret — it is a list rather than a scalar, and an admin
+# email is not a credential. It is still load-bearing: if it is empty AND the `users` table is empty,
+# nobody can sign in at all.
+
+seq_conn_string: ${logger}
+postgres_conn_string: ${postgres-conn-string}
+google_client_id: ${google-client-id}
+google_client_secret: ${google-client-secret}
+google_redirect_uri: ${google-redirect-uri}
+session_encryption_key: ${session-encryption-key}
+admins:
+- andreymigin@mxtm.ai
+- amigin@gmail.com

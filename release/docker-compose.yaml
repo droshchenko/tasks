@@ -1,0 +1,63 @@
+# Stack for the `task-manager-mcp` product on HETZNER.
+#
+# Both services publish a TCP port because a browser reaches them: the UI calls the REST API on relative
+# `/api/...` URLs and opens `/ws` on the same origin, so the reverse proxy has to put both behind ONE
+# host. Everything else follows the standard single-VM unix-socket layout.
+#
+# Host ports come from the 31500+ range reserved for this product. Container ports are not arbitrary:
+# service-sdk's HTTP server listens on 8000 (8888 is its second, technical port), and `web-app-host`
+# serves static files on 9001 — the same as my-logger-ui, settings-ui and versions-control-ui.
+services:
+  task-manager-rest-api:
+    image: ghcr.io/myjettools/task-manager-rest-api:0.1.0
+    hostname: task-manager-rest-api
+    container_name: task-manager-rest-api
+    restart: always
+    environment:
+    - SETTINGS_URL=http+unix://root/system-sockets/settings.http-sock:/settings/task-manager-mcp/task-manager-rest-api
+    - ENV_INFO=HOME
+    - UNIX_SOCKET=1
+    ports:
+    - 31500:8000
+    volumes:
+    - ~/unix-sockets/task-manager-mcp/http:/root/http
+    - ~/unix-sockets/task-manager-mcp/grpc:/root/grpc
+    - ~/unix-sockets/task-manager-mcp/system:/root/product-system-sockets
+    - ~/unix-sockets/system:/root/system-sockets
+    deploy:
+      resources:
+        limits:
+          # Above the 64Mb default on purpose: this service holds every project, task, comment and user
+          # in memory, and each write replaces a snapshot wholesale. 64Mb would be a restart loop as
+          # soon as a board grew.
+          memory: 256Mb
+    logging:
+      options:
+        max-size: "512Kb"
+        max-file: "1"
+    networks:
+    - docker_net
+
+  # A static bundle: wasm, html, js and css, served by web-app-host. It never knows a base URL — there is
+  # nothing to configure in it, which is also why it has no settings and no unix sockets.
+  task-manager-ui:
+    image: ghcr.io/myjettools/task-manager-ui:0.1.0
+    hostname: task-manager-ui
+    container_name: task-manager-ui
+    restart: always
+    ports:
+    - 31501:9001
+    deploy:
+      resources:
+        limits:
+          memory: 64Mb
+    logging:
+      options:
+        max-size: "512Kb"
+        max-file: "1"
+    networks:
+    - docker_net
+
+networks:
+  docker_net:
+    external: true

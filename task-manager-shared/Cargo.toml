@@ -1,0 +1,27 @@
+[package]
+name = "task-manager-shared"
+version = "0.1.0"
+edition = "2024"
+
+# The wire contract between the two sides, defined once:
+#   * task-manager-ui      (wasm) — MyHttpInput gives the FlUrl request builder
+#   * task-manager-rest-api        — the same structs feed #[http_route(input_data: ...)]
+#
+# my-http-utils is wasm-safe (serde + rust-extensions, no hyper/tokio), so the default build
+# compiles to wasm32. The `server` feature turns on my-http-utils' own server feature, which
+# makes MyHttpInput additionally emit the synchronous `parse` / `READS_BODY` the server needs.
+# It stays wasm-safe, so the browser client simply leaves it off.
+[features]
+default = []
+server = ["my-http-utils/server"]
+
+[dependencies]
+my-http-utils = { tag = "0.1.0", git = "https://github.com/MyJetTools/my-http-utils.git" }
+# AsStr / FromStr on the shared enums, and it is what dioxus-admin-ui-kit's EnumIterator
+# bound is written against. Direct dependency because service-sdk is not on the wasm side.
+rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
+
+serde = { version = "*", features = ["derive"] }
+# The MyHttpInput / MyHttpObjectStructure derives expand to `serde_json::…`, so it has to be a
+# direct dependency of any crate using them.
+serde_json = "*"

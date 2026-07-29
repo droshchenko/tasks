@@ -1,0 +1,65 @@
+[package]
+name = "task-manager-rest-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# `postgres` brings my-postgres in and makes SdkSettingsTraits emit the PostgresSettings impl.
+# `websockets` puts a WebSocket surface on the same HTTP server, which is how Home learns that a
+# project changed. No `grpc` and no `my-service-bus`: there is nothing to talk to — this service is
+# the whole product's backend, and the MCP mutation and the WS fan-out happen in one process.
+service-sdk = { tag = "0.5.0", git = "https://github.com/MyJetTools/service-sdk.git", features = [
+    "macros",
+    "postgres",
+    "websockets",
+] }
+
+# The wire contract, shared verbatim with task-manager-ui. `server` makes MyHttpInput additionally
+# emit the synchronous `parse` used by #[http_route(input_data: ...)].
+task-manager-shared = { path = "../task-manager-shared", features = ["server"] }
+
+# MCP server, mounted on the service-sdk HTTP server at /mcp alongside the REST controllers.
+# `my-ai-agent` is a direct dependency because the `ApplyJsonSchema` derive expands to paths
+# rooted at `my_ai_agent::`.
+mcp-server-middleware = { tag = "0.9.0", git = "https://github.com/my-ai-utils/mcp-server-middleware.git" }
+my-ai-agent = { tag = "0.1.0", git = "https://github.com/my-ai-utils/my-ai-agent.git", features = [
+    "agent",
+] }
+
+# `SortableId` for project ids. Direct dependency rather than through service-sdk because
+# task-manager-shared names the same crate and the two must not resolve to different versions.
+rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
+
+# The Google OAuth code->token exchange and the userinfo read. FlUrl is the only HTTP client
+# allowed in MyJetTools projects — reqwest is not.
+flurl = { tag = "0.7.0", git = "https://github.com/MyJetTools/fl-url.git" }
+
+# The whole product state is held in memory and read on every request while being written at
+# human/agent rate — the textbook ArcSwap case. `parking_lot` serialises writers (a plain
+# Mutex<()>, never held across an await); `ahash` is the default for internal keys.
+arc-swap = "*"
+parking_lot = "*"
+ahash = "*"
+
+# A session is a protobuf model encrypted with a key from settings, carried entirely inside the token —
+# so it survives a restart, needs no table and no in-memory map, and does not pin the service to one
+# instance. Same shape as `mt-rest-api`'s refresh token.
+encryption = { tag = "0.1.1", git = "https://github.com/MyJetTools/encryption.git" }
+prost = "*"
+
+# The nonce inside a login `state`, so two sign-ins started in the same second differ.
+uuid = { version = "*", features = ["v4"] }
+
+tokio = { version = "*", features = ["full"] }
+async-trait = "*"
+serde = { version = "*", features = ["derive"] }
+serde_derive = "*"
+serde_json = "*"
+serde_yaml = "*"
+# The whole board lives in memory and every write replaces a snapshot wholesale, so the process
+# allocates and frees the same shapes over and over while never holding much at once. jemalloc hands
+# that memory back instead of letting the arena settle at the high-water mark, which is what the
+# default allocator would do.
+tikv-jemallocator = { version = "*", features = [
+    "unprefixed_malloc_on_supported_platforms",
+] }
