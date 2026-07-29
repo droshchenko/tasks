@@ -606,38 +606,57 @@ fn RenderHeader(
                     }
                 }
             }
-            // Held at the right edge, on its own. The selects on the left say which board and which slice of
-            // it; this says what is being looked for, which is a different question.
-            input {
-                class: "board-search",
-                r#type: "text",
-                placeholder: "Search, or a task id — RMS-42",
-                value: "{search_text}",
-                oninput: move |event| {
-                    let value = event.value();
-                    set_search(&mut cs.write(), value.clone(), &projects_for_search);
-                    // `replace`, not `push`: a keystroke is not somewhere the Back button should have to
-                    // walk through. The URL is a projection of the box — the box was already set above.
-                    navigator()
-                        .replace(crate::AppRoute::Home {
-                            search: url_search(&value),
-                        });
-                },
-                onkeydown: move |event| {
-                    if event.key() == Key::Enter {
-                        let query = cs.peek().search.trim().to_string();
-
-                        if looks_like_a_task_id(&query) {
-                            spawn(async move {
-                                if let Ok(found) = crate::api::find_task(&query).await {
-                                    crate::dialogs::open(
-                                        crate::dialogs::DialogState::ViewTask { found },
-                                    );
-                                }
+            // Held at the right edge. The selects on the left say which board and which slice of it; this
+            // says what is being looked for, which is a different question.
+            div { class: "board-search-box",
+                input {
+                    class: "board-search",
+                    r#type: "text",
+                    placeholder: "Search, or a task id — RMS-42",
+                    value: "{search_text}",
+                    oninput: move |event| {
+                        let value = event.value();
+                        set_search(&mut cs.write(), value.clone(), &projects_for_search);
+                        // `replace`, not `push`: a keystroke is not somewhere the Back button should have to
+                        // walk through. The URL is a projection of the box — the box was already set above.
+                        navigator()
+                            .replace(crate::AppRoute::Home {
+                                search: url_search(&value),
                             });
+                    },
+                    onkeydown: move |event| {
+                        if event.key() == Key::Enter {
+                            let query = cs.peek().search.trim().to_string();
+
+                            if looks_like_a_task_id(&query) {
+                                spawn(async move {
+                                    if let Ok(found) = crate::api::find_task(&query).await {
+                                        crate::dialogs::open(
+                                            crate::dialogs::DialogState::ViewTask { found },
+                                        );
+                                    }
+                                });
+                            }
                         }
+                    },
+                }
+                // Only when there is something to clear. A cross over an empty box is a button that does
+                // nothing, sitting where the eye looks first.
+                if !search_text.is_empty() {
+                    button {
+                        class: "board-search-clear",
+                        r#type: "button",
+                        title: "Clear the search",
+                        onclick: move |_| {
+                            // Written straight rather than through `set_search`: that one exists to follow a
+                            // handle to its board, and an empty box names no handle and no board. The board
+                            // stays where it is — clearing the search is not leaving the project.
+                            cs.write().search = String::new();
+                            navigator().replace(crate::AppRoute::Home { search: None });
+                        },
+                        "×"
                     }
-                },
+                }
             }
         }
     }

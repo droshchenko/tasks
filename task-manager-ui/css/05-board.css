@@ -212,13 +212,46 @@
   filter: brightness(0) invert(1);
 }
 
-/* The board's search box. Wide enough for a sentence, because most of what gets typed here is words — a
-   task id is short and fits either way.
-
-   `margin-left: auto` holds it at the right edge of the header rather than ordering doing it, so it stays
-   there whatever the row to its left ends up holding — and on a narrow window, where `.page-header` wraps,
-   it wraps onto its own line still right-aligned. */
-.board-search {
-  width: 260px;
+/* The search box and the cross that clears it. `position: relative` is what the cross is positioned
+   against, and `margin-left: auto` holds the pair at the right edge of the header rather than ordering
+   doing it — so it stays there whatever the row to its left ends up holding, and on a narrow window, where
+   `.page-header` wraps, it wraps onto its own line still right-aligned. */
+.board-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
   margin-left: auto;
+}
+
+/* Wide enough for a sentence, because most of what gets typed here is words — a task id is short and fits
+   either way. The right padding is the cross's room: without it a long query runs underneath it.
+
+   `input[type="text"].board-search` rather than the bare class, and that is not decoration: the generic
+   rule in `03-forms.css` sets the whole `padding` SHORTHAND and outranks a lone class, so `padding-right`
+   would be silently reset to 9px and the query would run under the cross. Winning on specificity rather
+   than on load order, which is what the `.sticker-assignee.unassigned` note further up learned the hard
+   way. */
+input[type="text"].board-search {
+  width: 260px;
+  padding-right: 26px;
+}
+
+/* Inside the box, over the input's right edge. Dimmed until wanted, like the eye on a card — it is a way
+   out of a search, not something to look at while typing one. */
+.board-search-clear {
+  position: absolute;
+  right: 7px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.board-search-clear:hover,
+.board-search-clear:focus-visible {
+  opacity: 1;
 }

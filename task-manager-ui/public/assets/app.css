@@ -614,18 +614,6 @@ input[readonly] {
   gap: 8px;
 }
 
-.ws-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  display: inline-block;
-}
-
-.ws-dot.live {
-  background: #198754;
-}
-
 /* The icon inside a task-type tag. `brightness(0) invert(1)` paints any SVG white regardless of the
    colours it shipped with, so one icon set reads correctly on all eight tag backgrounds — the alternative
    is editing every file's fill. */
@@ -638,20 +626,48 @@ input[readonly] {
   filter: brightness(0) invert(1);
 }
 
-/* The search box and the live dot, held at the right edge of the header. `margin-left: auto` rather than
-   ordering, so they stay there whatever the row to their left ends up holding — and on a narrow window,
-   where `.page-header` wraps, the box wraps onto its own line still right-aligned. */
-.board-header-right {
+/* The search box and the cross that clears it. `position: relative` is what the cross is positioned
+   against, and `margin-left: auto` holds the pair at the right edge of the header rather than ordering
+   doing it — so it stays there whatever the row to its left ends up holding, and on a narrow window, where
+   `.page-header` wraps, it wraps onto its own line still right-aligned. */
+.board-search-box {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
   margin-left: auto;
 }
 
-/* The board's search box. Wide enough for a sentence, because most of what gets typed here is words — a
-   task id is short and fits either way. */
-.board-search {
+/* Wide enough for a sentence, because most of what gets typed here is words — a task id is short and fits
+   either way. The right padding is the cross's room: without it a long query runs underneath it.
+
+   `input[type="text"].board-search` rather than the bare class, and that is not decoration: the generic
+   rule in `03-forms.css` sets the whole `padding` SHORTHAND and outranks a lone class, so `padding-right`
+   would be silently reset to 9px and the query would run under the cross. Winning on specificity rather
+   than on load order, which is what the `.sticker-assignee.unassigned` note further up learned the hard
+   way. */
+input[type="text"].board-search {
   width: 260px;
+  padding-right: 26px;
+}
+
+/* Inside the box, over the input's right edge. Dimmed until wanted, like the eye on a card — it is a way
+   out of a search, not something to look at while typing one. */
+.board-search-clear {
+  position: absolute;
+  right: 7px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.board-search-clear:hover,
+.board-search-clear:focus-visible {
+  opacity: 1;
 }
 
 .full-screen {
