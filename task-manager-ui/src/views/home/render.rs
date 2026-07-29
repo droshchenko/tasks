@@ -554,18 +554,24 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
         .as_ref()
         .and_then(|kind_id| project.kinds.iter().find(|itm| &itm.id == kind_id));
 
-    // The type survives on the face of the card as the colour of its left edge and nothing more. It costs
-    // no room, so it does not compete with the title the way a badge would.
-    let border = kind
-        .map(|itm| {
-            format!(
-                "border-left-color: {}",
-                KindColor::parse_or_default(&itm.color).hex()
-            )
-        })
+    let kind_color = kind
+        .map(|itm| KindColor::parse_or_default(&itm.color))
         .unwrap_or_default();
 
-    let title = task_title(&task.text);
+    // The type is on the card twice, on purpose: as its label beside the handle, which is what you read, and
+    // as the colour of the left edge, which is what you see without reading — a column of edges tells you how
+    // the work is made up before you have looked at a single card.
+    let border = kind
+        .map(|_| format!("border-left-color: {}", kind_color.hex()))
+        .unwrap_or_default();
+
+    let title = task_manager_shared::task_title::task_title(&task.text);
+
+    let assignee = task
+        .assignee_name
+        .clone()
+        .or_else(|| task.assignee.clone())
+        .unwrap_or_else(|| "Unassigned".to_string());
 
     // Built here rather than fetched: this side already holds the whole task and the project it is on, so
     // the card opens instantly and without a round trip. `archived` is false by definition — a card that is
@@ -588,6 +594,19 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
 
             div { class: "sticker-top",
                 span { class: "sticker-id", "{task.id}" }
+                if let Some(kind) = kind {
+                    span {
+                        class: "sticker-kind",
+                        style: "background: {kind_color.hex()}",
+                        title: "{kind.description}",
+                        // Only when this build actually has the file: a name stored before an icon was
+                        // renamed away draws as no icon rather than as a broken image.
+                        if crate::web::icon_exists(&kind.icon) {
+                            img { class: "sticker-kind-icon", src: "{crate::web::icon_url(&kind.icon)}", alt: "" }
+                        }
+                        "{kind.name}"
+                    }
+                }
                 button {
                     class: "sticker-view",
                     title: "View the task",
@@ -601,6 +620,32 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
             }
 
             div { class: "sticker-title", "{title}" }
+
+            // Under the title, because the title is what the card is FOR and who has it is the next question
+            // — and it is the same question on every card, so it belongs in the same place on every card.
+            //
+            // The counters say only HOW MANY. What they count is in the dialog, and a card that listed the ids
+            // it waits on was one of the things that made a column unreadable.
+            div { class: "sticker-bottom",
+                span { class: "sticker-assignee", "{assignee}" }
+                div { class: "sticker-counters",
+                    if !task.comments.is_empty() {
+                        span { title: "{task.comments.len()} comments", "💬 {task.comments.len()}" }
+                    }
+                    if !task.depends_on.is_empty() {
+                        span {
+                            title: "Waiting on {task.depends_on.len()} task(s): {task.depends_on.join(\", \")}",
+                            "⬇ {task.depends_on.len()}"
+                        }
+                    }
+                    if !task.blocks.is_empty() {
+                        span {
+                            title: "{task.blocks.len()} task(s) waiting on this one: {task.blocks.join(\", \")}",
+                            "⬆ {task.blocks.len()}"
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -615,84 +660,6 @@ fn found_locally(task: &TaskResponse, project: &ProjectResponse) -> FindTaskResp
         archived: false,
         not_found: String::new(),
     }
-}
-
-/// The first line of the text, as the card's title.
-///
-/// A task has no title field — agents write one body, and its first line is the sentence they lead with.
-/// So the title is read out of the text rather than stored, which also means nothing has to be migrated and
-/// a task written before this screen changed still has one.
-///
-/// The Markdown that line may be wrapped in is taken off: a heading's `#`, a bullet's dash, a quote's `>`,
-/// and emphasis around the whole line. What is left is shown as plain text, never rendered — a title is one
-/// line, and the point of the card is that it is not a document.
-fn task_title(text: &str) -> String {
-    for line in text.lines() {
-        let line = strip_markdown_markers(line.trim());
-
-        if !line.is_empty() {
-            return line.to_string();
-        }
-    }
-
-    "(no text)".to_string()
-}
-
-fn strip_markdown_markers(line: &str) -> &str {
-    let mut line = line;
-
-    // Repeated, because a line can carry more than one of these at once — `> ## Title` is a heading inside
-    // a quote, and both have to come off before the text starts.
-    loop {
-        let stripped = strip_one_marker(line);
-
-        if stripped == line {
-            break;
-        }
-
-        line = stripped;
-    }
-
-    // Emphasis wrapping the WHOLE line only. Trimming these characters anywhere would eat the underscores
-    // out of a crate name and the backticks off an identifier that is only part of the sentence.
-    for marker in ["**", "__", "*", "_", "`"] {
-        if line.len() > marker.len() * 2 && line.starts_with(marker) && line.ends_with(marker) {
-            line = &line[marker.len()..line.len() - marker.len()];
-            break;
-        }
-    }
-
-    line.trim()
-}
-
-/// One block marker off the front, or the line unchanged.
-///
-/// A bullet is only a bullet when whitespace follows it — otherwise `**Ship it**` would lose its opening
-/// asterisks to the list rule and never reach the emphasis rule.
-fn strip_one_marker(line: &str) -> &str {
-    if let Some(rest) = line.strip_prefix('>') {
-        return rest.trim_start();
-    }
-
-    let hashes = line.chars().take_while(|c| *c == '#').count();
-
-    if hashes > 0 {
-        let rest = &line[hashes..];
-
-        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-            return rest.trim_start();
-        }
-    }
-
-    for bullet in ['-', '*', '+'] {
-        if let Some(rest) = line.strip_prefix(bullet) {
-            if rest.starts_with(char::is_whitespace) {
-                return rest.trim_start();
-            }
-        }
-    }
-
-    line
 }
 
 #[cfg(test)]
@@ -719,58 +686,6 @@ mod tests {
             updated_unix_seconds: 0,
             closed_unix_seconds: None,
         }
-    }
-
-    /// The card's whole face comes out of this, so what it does to a first line is worth pinning.
-    #[test]
-    fn the_title_is_the_first_line_of_the_text() {
-        assert_eq!(
-            task_title("Fix the login redirect\n\nIt drops the return url."),
-            "Fix the login redirect"
-        );
-
-        assert_eq!(
-            task_title("\n\n  Fix the login redirect  \n"),
-            "Fix the login redirect",
-            "leading blank lines are skipped and the line is trimmed"
-        );
-
-        assert_eq!(task_title(""), "(no text)");
-        assert_eq!(task_title("\n \n"), "(no text)");
-    }
-
-    /// Agents write Markdown, so the first line arrives wrapped in whatever they lead with.
-    #[test]
-    fn the_title_comes_out_of_its_markdown() {
-        assert_eq!(
-            task_title("# Fix the login redirect"),
-            "Fix the login redirect"
-        );
-        assert_eq!(task_title("### Fix it"), "Fix it");
-        assert_eq!(task_title("- Fix it"), "Fix it");
-        assert_eq!(task_title("* Fix it"), "Fix it");
-        assert_eq!(task_title("> ## Fix it"), "Fix it", "both markers come off");
-        assert_eq!(task_title("**Fix it**"), "Fix it");
-        assert_eq!(task_title("`Fix it`"), "Fix it");
-    }
-
-    /// The characters emphasis is made of also appear inside ordinary text, and taking them out anywhere
-    /// would mangle a crate name or a multiplication.
-    #[test]
-    fn the_title_keeps_markers_that_are_not_markers() {
-        assert_eq!(
-            task_title("Rename my_jet_tools to something else"),
-            "Rename my_jet_tools to something else"
-        );
-        assert_eq!(
-            task_title("*emphasis* only at the start is not a wrapper"),
-            "*emphasis* only at the start is not a wrapper"
-        );
-        assert_eq!(
-            task_title("Publish task-manager-ui 0.1.13"),
-            "Publish task-manager-ui 0.1.13",
-            "a dash inside a word is not a bullet"
-        );
     }
 
     /// Which of the two things the box does is decided here, so the shapes are worth pinning.

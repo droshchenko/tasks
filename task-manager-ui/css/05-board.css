@@ -148,8 +148,34 @@
   padding: 1px 6px;
 }
 
-/* No longer on a card — the board shows a title and nothing else. Kept because the task-type tag is drawn
-   by Settings and by project setup, where a type is being picked and its colour is the whole point. */
+/* Who has it, and how much is hanging off it. Under the title: the title is what the card is for, and this
+   is the same follow-up question on every card, so it sits in the same place on every card. */
+.sticker-bottom {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sticker-assignee {
+  font-weight: 600;
+  color: var(--text);
+  /* The name gives way first: a long address must push the counters off the card, not out of it. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sticker-counters {
+  margin-left: auto;
+  display: flex;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+/* Also drawn by Settings and by project setup, where a type is being picked and its colour is the point. */
 .sticker-kind {
   font-size: 11px;
   font-weight: 600;

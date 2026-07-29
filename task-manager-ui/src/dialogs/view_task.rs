@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use task_manager_shared::projects::COLUMN_ID_DONE;
+use task_manager_shared::task_title::task_title;
 use task_manager_shared::tasks::{FindTaskResponse, TaskResponse};
 
 /// One task, shown in full.
@@ -32,7 +33,10 @@ pub fn ViewTaskDialog(found: FindTaskResponse) -> Element {
         );
     };
 
-    let title = format!("{} · {}", task.id, found.project_name);
+    // The handle and the title, which is what a person calls this task when they talk about it. The project
+    // was here instead and is now an attribute — it is the same project for every card you open off a board,
+    // so it was paying for the one line that identifies the task.
+    let title = format!("{} · {}", task.id, task_title(&task.text));
     let content = render_task(&task, &found);
 
     // Its own size class rather than `modal-lg`: this one takes 95% of the window. A dialog sized to its
@@ -115,6 +119,13 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                 div { "{assignee}" }
             }
 
+            // Which board this is on. Worth saying because a dependency can name a task on ANOTHER project,
+            // and following one is then the only way to notice you have left the board you came from.
+            div { class: "task-view-attr",
+                div { class: "task-view-attr-label", "Project" }
+                div { "{found.project_prefix} · {found.project_name}" }
+            }
+
             if let Some(goal) = task.goal_name.as_ref().or(task.goal_id.as_ref()) {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Goal" }
@@ -142,14 +153,14 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
             if !task.depends_on.is_empty() {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Waiting on" }
-                    div { class: "mono", "{task.depends_on.join(\", \")}" }
+                    {render_links(&task.depends_on)}
                 }
             }
 
             if !task.blocks.is_empty() {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Blocking" }
-                    div { class: "mono", "{task.blocks.join(\", \")}" }
+                    {render_links(&task.blocks)}
                 }
             }
 
@@ -169,6 +180,56 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
             }
         }
     }
+}
+
+/// A list of task handles, each one a way into that task.
+///
+/// One per line rather than comma-separated: they are targets to hit with a mouse, and in a 200px column a
+/// wrapped run of ids gives you no idea where one ends and the next begins.
+fn render_links(ids: &[String]) -> Element {
+    rsx! {
+        div { class: "task-view-links",
+            for id in ids.iter() {
+                button {
+                    class: "task-view-link",
+                    key: "{id}",
+                    title: "Open {id}",
+                    onclick: {
+                        let id = id.clone();
+                        move |_| show(id.clone())
+                    },
+                    "{id}"
+                }
+            }
+        }
+    }
+}
+
+/// Replace what this dialog is showing with another task.
+///
+/// The same window, deliberately: following a dependency is reading around the task you are on, not opening a
+/// second thing — a stack of dialogs would bury the board under windows nobody asked for.
+///
+/// It goes through the server rather than the board that is loaded behind it, because a dependency can name a
+/// task on another project or one closed long enough ago to be off the board entirely — the two cases where
+/// the loaded board has no answer. A failure is shown the same way a missing id is: as the dialog's own
+/// "Not found", carrying what went wrong.
+fn show(id: String) {
+    spawn(async move {
+        let found = match crate::api::find_task(&id).await {
+            Ok(found) => found,
+            Err(err) => FindTaskResponse {
+                task: None,
+                project_id: String::new(),
+                project_prefix: String::new(),
+                project_name: String::new(),
+                archived: false,
+                not_found: err.message,
+            },
+        };
+
+        crate::dialogs::open(crate::dialogs::DialogState::ViewTask { found });
+    });
 }
 
 /// The bottom half: what people have said, oldest first.

@@ -208,10 +208,13 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  /* Halves, and the same halves whatever the task holds. `minmax(0, 1fr)` rather than `1fr`, because `1fr`
-     is `minmax(auto, 1fr)` — its automatic minimum is the content, so forty comments would take more than
-     half and push the text up. Zero as the minimum is what makes the split independent of what is in it. */
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  /* The same split whatever the task holds — `minmax(0, …)` rather than a bare `fr`, because a bare `fr` is
+     `minmax(auto, 1fr)` and takes its minimum from the content, so forty comments would push the text up.
+     Zero as the minimum is what makes the proportion independent of what is in it.
+
+     Three fifths to the text and two to the thread: the text is what the reader came for, and a thread is
+     read a comment at a time rather than all at once. */
+  grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
   gap: 14px;
 }
 
@@ -257,6 +260,30 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* A dependency is a way into that task, so it is drawn as one: a handle you can hit. One per line, because in
+   a 200px column a wrapped run of ids gives no clue where one ends and the next starts. */
+.task-view-links {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.task-view-link {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--accent);
+  text-align: left;
+}
+
+.task-view-link:hover {
+  text-decoration: underline;
 }
 
 /* The lower half. The header stays put and only the thread under it moves, so which list you are scrolling
