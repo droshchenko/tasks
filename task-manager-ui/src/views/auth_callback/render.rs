@@ -44,7 +44,7 @@ pub fn RenderAuthCallback(code: String, state: String, error: String) -> Element
                 Ok(response) => {
                     crate::web::storage::save_session_token(&response.token);
                     replace_url_with_root();
-                    navigator().push(AppRoute::Home {});
+                    navigator().push(AppRoute::Home { search: None });
                 }
                 Err(err) => failure.set(err.message),
             }
@@ -65,7 +65,7 @@ pub fn RenderAuthCallback(code: String, state: String, error: String) -> Element
                         class: "btn btn-primary btn-google",
                         onclick: move |_| {
                             replace_url_with_root();
-                            navigator().push(AppRoute::Home {});
+                            navigator().push(AppRoute::Home { search: None });
                         },
                         "Try again"
                     }

@@ -15,8 +15,14 @@ use states::{AppState, SignedIn};
 
 #[derive(Routable, PartialEq, Clone)]
 pub enum AppRoute {
-    #[route("/")]
-    Home {},
+    // The board, and what is being looked for on it. The search is in the URL so a board somebody is staring
+    // at can be handed over as a link — including `?search=RMS-42`, which lands on that task's project
+    // whatever the recipient was last looking at.
+    //
+    // `Option<String>` rather than `String`: nothing to search for writes no argument at all, so the bare
+    // board stays `/?` instead of `/?search=`.
+    #[route("/?:search")]
+    Home { search: Option<String> },
     // Where Google sends the browser back. The path is NOT free to choose: it has to match the
     // `google-redirect-uri` secret, which in turn has to match the Google console byte for byte.
     //
@@ -122,10 +128,10 @@ fn Shell(active: &'static str, children: Element) -> Element {
 }
 
 #[component]
-fn Home() -> Element {
+fn Home(search: Option<String>) -> Element {
     rsx! {
         Shell { active: "home",
-            crate::views::home::RenderHome {}
+            crate::views::home::RenderHome { search }
         }
     }
 }

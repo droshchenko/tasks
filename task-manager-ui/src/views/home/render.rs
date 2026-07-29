@@ -13,10 +13,66 @@ use crate::states::AppState;
 /// to a task arrives through `/mcp`. What this screen owes the reader is an accurate picture, which is
 /// why it repaints from a WebSocket push rather than hoping somebody reloads.
 #[component]
-pub fn RenderHome() -> Element {
+pub fn RenderHome(search: Option<String>) -> Element {
     let app_state = consume_context::<Signal<AppState>>();
 
-    let mut cs = use_signal(ComponentState::default);
+    let seeded = search.clone().unwrap_or_default();
+
+    // The URL seeds the box, and from there the box is what the screen reads: every keystroke replaces the
+    // URL, not the other way round. That direction matters — the router's query parser splits on `&` AFTER
+    // percent-decoding, so a search containing one cannot survive a round trip, and a lossy address bar must
+    // not cost the filter its text.
+    let mut cs = use_signal({
+        let seeded = seeded.clone();
+        move || ComponentState::with_search(seeded)
+    });
+
+    // The other direction, for the times the URL changes from OUTSIDE this box: the Home tab points at a
+    // board with nothing searched, and Back can land on a different `?search=`. Adopting a URL that has got
+    // out of step is what stops the address bar and the box telling two different stories.
+    //
+    // `use_reactive!` because a prop is not a signal — a plain `use_effect` closes over the first render's
+    // value and never sees another. Compared trimmed, so a space being typed at the end of a word is not a
+    // disagreement and cannot snatch the caret back.
+    use_effect(use_reactive!(|search| {
+        let from_url = search.unwrap_or_default();
+
+        let projects = {
+            let cs_ra = cs.peek();
+
+            if from_url.trim() == cs_ra.search.trim() {
+                return;
+            }
+
+            match cs_ra.projects.as_ref() {
+                RenderState::Loaded(projects) => projects.clone(),
+                _ => Vec::new(),
+            }
+        };
+
+        set_search(&mut cs.write(), from_url, &projects);
+    }));
+
+    // A link that names a task opens it. From the URL only, and only at mount: this is what somebody handed
+    // `/?search=RMS-42` came for. The lookup goes through the server because it is the only side that can
+    // turn a handle into a task — it knows which prefixes exist and which have moved — and `not_found` is
+    // left closed, since "nothing there" is not worth a dialog nobody asked for.
+    use_future(move || {
+        let seeded = seeded.clone();
+
+        async move {
+            if !looks_like_a_task_id(seeded.trim()) {
+                return;
+            }
+
+            if let Ok(found) = crate::api::find_task(seeded.trim()).await {
+                if found.task.is_some() {
+                    crate::dialogs::open(crate::dialogs::DialogState::ViewTask { found });
+                }
+            }
+        }
+    });
+
     let cs_ra = cs.read();
 
     // A WebSocket push arrives carrying the board. Applying it is a `set_loaded` — no request, no `Loading…`,
@@ -117,18 +173,10 @@ pub fn RenderHome() -> Element {
     let kind_wanted = cs_ra.kind_filter.clone();
     let assignee_wanted = cs_ra.assignee_filter.clone();
 
-    // Every filter narrows the same list, so they compose: a type AND an assignee AND some text. A task id
-    // is the exception and narrows nothing — the answer to an id may be on another board or off this one
-    // entirely, so it goes through the server and opens as a card.
-    let needle = if looks_like_a_task_id(search_text.trim()) {
-        String::new()
-    } else {
-        search_text.trim().to_lowercase()
-    };
-
+    // Every filter narrows the same list, so they compose: a type AND an assignee AND whatever is in the box.
     let visible: Vec<TaskResponse> = tasks_ra
         .iter()
-        .filter(|task| needle.is_empty() || matches_text(task, &needle))
+        .filter(|task| matches_search(task, &search_text))
         .filter(|task| matches_kind(task, &kind_wanted))
         .filter(|task| matches_assignee(task, &assignee_wanted))
         .cloned()
@@ -226,22 +274,103 @@ fn assignees_on_board(tasks: &[TaskResponse]) -> Vec<(String, String)> {
     result
 }
 
-/// Whether this looks like a task handle rather than something to search for.
+/// A task handle split into the prefix that names a board and the digits that name a task on it.
 ///
 /// A shape test, not a parse: `PREFIX-42`. The server does the authoritative parse — it is the only side
 /// that knows which prefixes exist and which have moved — so all this decides is which of the two things
 /// to do with what was typed.
-fn looks_like_a_task_id(query: &str) -> bool {
-    let Some((prefix, number)) = query.rsplit_once('-') else {
-        return false;
-    };
+fn task_id_parts(query: &str) -> Option<(&str, &str)> {
+    let (prefix, number) = query.rsplit_once('-')?;
 
-    !prefix.is_empty()
+    let ok = !prefix.is_empty()
         && prefix
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
         && !number.is_empty()
-        && number.chars().all(|c| c.is_ascii_digit())
+        && number.chars().all(|c| c.is_ascii_digit());
+
+    if ok { Some((prefix, number)) } else { None }
+}
+
+/// Whether this looks like a task handle rather than something to search for.
+fn looks_like_a_task_id(query: &str) -> bool {
+    task_id_parts(query).is_some()
+}
+
+/// The project a prefix names: the one holding it NOW first, and only then one that used to.
+///
+/// The order is the whole point. A prefix can be renamed away and then taken by a different project, so
+/// history that outranked the present would send `RMS-42` to the board that used to be RMS rather than the
+/// one that is.
+fn project_by_prefix<'a>(
+    projects: &'a [ProjectResponse],
+    prefix: &str,
+) -> Option<&'a ProjectResponse> {
+    projects
+        .iter()
+        .find(|itm| itm.prefix.eq_ignore_ascii_case(prefix))
+        .or_else(|| {
+            projects.iter().find(|itm| {
+                itm.prefix_history
+                    .iter()
+                    .any(|old| old.eq_ignore_ascii_case(prefix))
+            })
+        })
+}
+
+/// Which board to open on: the one a handle in the box names, then the one this browser was last on, then
+/// the first there is.
+///
+/// A link carrying a handle beats the remembered board, because the handle is what the link is for. The
+/// remembered id is matched against what actually came back, so a board somebody lost access to falls
+/// through rather than leaving the screen on nothing.
+fn initial_project(
+    projects: &[ProjectResponse],
+    search: &str,
+    remembered: Option<String>,
+) -> String {
+    if let Some((prefix, _)) = task_id_parts(search.trim()) {
+        if let Some(project) = project_by_prefix(projects, prefix) {
+            return project.id.clone();
+        }
+    }
+
+    remembered
+        .filter(|id| projects.iter().any(|itm| &itm.id == id))
+        .or_else(|| projects.first().map(|itm| itm.id.clone()))
+        .unwrap_or_default()
+}
+
+/// One box, two ways of narrowing, decided by the shape of what is in it.
+///
+/// A handle narrows by its digits as they are typed, on the board its prefix has already switched to.
+/// Anything else is text matched against the face of a card.
+fn matches_search(task: &TaskResponse, search: &str) -> bool {
+    let search = search.trim();
+
+    if search.is_empty() {
+        return true;
+    }
+
+    match task_id_parts(search) {
+        Some((_, number)) => id_number_starts_with(&task.id, number),
+        None => matches_text(task, &search.to_lowercase()),
+    }
+}
+
+/// Whether a task's number begins with the digits typed so far.
+///
+/// Leading zeros come off both sides first. A task is stored padded — `RMS-000042` — and nobody types the
+/// padding, so comparing as written would match nothing until all six digits were in, which is the opposite
+/// of narrowing as you type.
+fn id_number_starts_with(task_id: &str, digits: &str) -> bool {
+    let Some((_, number)) = task_id.rsplit_once('-') else {
+        return false;
+    };
+
+    number
+        .trim_start_matches('0')
+        .starts_with(digits.trim_start_matches('0'))
 }
 
 /// Everything on a card that is worth searching: its id, its text, its labels and who has it.
@@ -285,6 +414,14 @@ struct ComponentState {
 }
 
 impl ComponentState {
+    /// Everything default except the box, which the URL seeds.
+    fn with_search(search: String) -> Self {
+        Self {
+            search,
+            ..Default::default()
+        }
+    }
+
     /// Switch boards. One method because the two halves are coupled: leaving `tasks` alone would show the
     /// previous project's cards under the new project's name.
     fn select(&mut self, project_id: String) {
@@ -294,6 +431,22 @@ impl ComponentState {
 
         self.selected = project_id;
         self.tasks.reset();
+    }
+}
+
+/// What was typed, plus the board it implies.
+///
+/// Not a method on `ComponentState`: the projects come from a `DataState` the state does not own, and this
+/// reads them. A handle carries the answer to "which board" in its prefix, and following it is the
+/// difference between `RMS-42` finding the task and finding nothing because the wrong board was on screen.
+fn set_search(cs: &mut ComponentState, search: String, projects: &[ProjectResponse]) {
+    cs.search = search;
+
+    if let Some((prefix, _)) = task_id_parts(cs.search.trim()) {
+        if let Some(project) = project_by_prefix(projects, prefix) {
+            let project_id = project.id.clone();
+            cs.select(project_id);
+        }
     }
 }
 
@@ -313,15 +466,12 @@ fn get_projects(
 
                 match crate::api::get_projects().await {
                     Ok(response) => {
-                        // The remembered project is matched against what actually came back, so a board
-                        // somebody lost access to falls through to the first one they can see rather than
-                        // leaving the screen on nothing.
                         let remembered = crate::web::storage::get_last_project();
+                        // The box may already hold a handle — the URL seeds it before anything is loaded —
+                        // and then it, not the remembered board, decides where this lands.
+                        let search = cs.peek().search.clone();
 
-                        let initial = remembered
-                            .filter(|id| response.projects.iter().any(|itm| &itm.id == id))
-                            .or_else(|| response.projects.first().map(|itm| itm.id.clone()))
-                            .unwrap_or_default();
+                        let initial = initial_project(&response.projects, &search, remembered);
 
                         let mut write = cs.write();
                         write.selected = initial;
@@ -409,6 +559,10 @@ fn RenderHeader(
 
     let mut cs = cs;
 
+    // The handler owns its copy: the list below is borrowed by the rsx loop, and an event handler outlives
+    // the render that built it.
+    let projects_for_search = projects.clone();
+
     rsx! {
         div { class: "page-header",
             h1 { class: "page-title", "Home" }
@@ -453,12 +607,25 @@ fn RenderHeader(
                         }
                     }
                 }
+            }
+            // Held at the right edge. The selects on the left say which board and which slice of it; this
+            // says what is being looked for, which is a different question and reads better apart from them.
+            div { class: "board-header-right",
                 input {
                     class: "board-search",
                     r#type: "text",
                     placeholder: "Search, or a task id — RMS-42",
                     value: "{search_text}",
-                    oninput: move |event| cs.write().search = event.value(),
+                    oninput: move |event| {
+                        let value = event.value();
+                        set_search(&mut cs.write(), value.clone(), &projects_for_search);
+                        // `replace`, not `push`: a keystroke is not somewhere the Back button should have to
+                        // walk through. The URL is a projection of the box — the box was already set above.
+                        navigator()
+                            .replace(crate::AppRoute::Home {
+                                search: url_search(&value),
+                            });
+                    },
                     onkeydown: move |event| {
                         if event.key() == Key::Enter {
                             let query = cs.peek().search.trim().to_string();
@@ -485,6 +652,19 @@ fn RenderHeader(
                 }
             }
         }
+    }
+}
+
+/// What the box holds, as the URL should carry it: nothing at all when there is nothing to search for.
+///
+/// `None` rather than an empty string so a board nobody is searching stays `/?` instead of `/?search=`.
+fn url_search(value: &str) -> Option<String> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
     }
 }
 
@@ -736,6 +916,135 @@ mod tests {
     #[test]
     fn a_prefix_may_not_contain_a_dash() {
         assert!(!looks_like_a_task_id("in-progress-2"));
+    }
+
+    fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectResponse {
+        ProjectResponse {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            prefix: prefix.to_string(),
+            prefix_history: history.iter().map(|itm| itm.to_string()).collect(),
+            columns: Vec::new(),
+            column_template_id: None,
+            column_template_name: None,
+            kinds: Vec::new(),
+            kind_template_id: None,
+            kind_template_name: None,
+            members: Vec::new(),
+            tasks_amount: 0,
+        }
+    }
+
+    /// The order is the point: a prefix a project holds NOW beats one it used to hold, because a freed
+    /// prefix can be taken by somebody else and history would then send the reader to the wrong board.
+    #[test]
+    fn the_present_prefix_outranks_a_historical_one() {
+        let projects = vec![
+            project("old", "TM", &["RMS"]),
+            project("now", "RMS", &["PROTO"]),
+        ];
+
+        assert_eq!(
+            project_by_prefix(&projects, "RMS").map(|itm| itm.id.as_str()),
+            Some("now"),
+            "the project holding RMS today"
+        );
+
+        assert_eq!(
+            project_by_prefix(&projects, "PROTO").map(|itm| itm.id.as_str()),
+            Some("now"),
+            "history answers when nobody holds it now"
+        );
+
+        assert_eq!(
+            project_by_prefix(&projects, "rms").map(|itm| itm.id.as_str()),
+            Some("now"),
+            "a prefix is typed in whatever case comes to hand"
+        );
+
+        assert!(project_by_prefix(&projects, "NOPE").is_none());
+    }
+
+    /// Which board a page load lands on. A handle in the URL beats the remembered board — the handle is what
+    /// the link was sent for.
+    #[test]
+    fn a_handle_in_the_url_decides_the_board() {
+        let projects = vec![project("a", "AAA", &[]), project("b", "BBB", &["OLD"])];
+
+        assert_eq!(
+            initial_project(&projects, "BBB-42", Some("a".to_string())),
+            "b"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "OLD-42", Some("a".to_string())),
+            "b",
+            "a renamed prefix still names its board"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "", Some("b".to_string())),
+            "b",
+            "nothing typed: the remembered board"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "login bug", Some("b".to_string())),
+            "b",
+            "a plain search says nothing about which board"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "ZZZ-1", Some("b".to_string())),
+            "b",
+            "a prefix nobody holds falls through rather than emptying the screen"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "", Some("gone".to_string())),
+            "a",
+            "a board somebody lost access to falls through to the first they can see"
+        );
+
+        assert_eq!(initial_project(&projects, "", None), "a");
+        assert_eq!(initial_project(&[], "AAA-1", None), "");
+    }
+
+    /// Typing a handle narrows the board digit by digit. The padding is what makes this need saying: the
+    /// stored id is `RMS-000042` and nobody types the zeros.
+    #[test]
+    fn a_handle_narrows_by_number_as_it_is_typed() {
+        let one = task("RMS-000042", "Fix the login redirect", &[], None);
+        let two = task("RMS-000004", "Something else", &[], None);
+        let three = task("RMS-000420", "And another", &[], None);
+
+        assert!(matches_search(&one, "RMS-4"));
+        assert!(matches_search(&two, "RMS-4"));
+        assert!(matches_search(&three, "RMS-4"));
+
+        assert!(matches_search(&one, "RMS-42"));
+        assert!(!matches_search(&two, "RMS-42"));
+        assert!(matches_search(&three, "RMS-42"));
+
+        assert!(matches_search(&one, "RMS-000042"), "the padded form as well");
+        assert!(!matches_search(&one, "RMS-43"));
+
+        // The prefix chooses the board, not the cards on it: an id looked up by a prefix the project has
+        // since renamed away from must still find its task, whose id now carries the new prefix.
+        assert!(matches_search(&one, "OLD-42"));
+
+        assert!(matches_search(&one, ""), "an empty box narrows nothing");
+    }
+
+    /// Text and handles are the same box, and the two must not bleed into each other.
+    #[test]
+    fn text_is_still_matched_as_text() {
+        let one = task("RMS-000042", "Fix the login redirect", &["auth"], None);
+
+        assert!(matches_search(&one, "login"));
+        assert!(matches_search(&one, "AUTH"));
+        assert!(!matches_search(&one, "logout"));
     }
 
     #[test]

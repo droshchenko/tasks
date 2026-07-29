@@ -41,7 +41,9 @@ pub fn TopBar(active: &'static str) -> Element {
         header { class: "topbar",
             div { class: "topbar-brand", "Task Manager" }
             nav { class: "topbar-tabs",
-                Link { class: class_of("home"), to: AppRoute::Home {}, "Home" }
+                // Nothing to search for, so the tab goes to the bare board — never to whatever is in the box
+                // on the board somebody is already looking at.
+                Link { class: class_of("home"), to: AppRoute::Home { search: None }, "Home" }
                 if is_admin {
                     Link {
                         class: class_of("projects"),
