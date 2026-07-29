@@ -1,8 +1,9 @@
 name: Release task-manager-ui
+# Triggered by a published GitHub release, not by a bare tag push: a release is a deliberate act with
+# notes attached, whereas a tag can be pushed by accident and is silently rewritable.
 on:
-  push:
-    tags:
-      - "task-manager-ui-*"
+  release:
+    types: [published]
 
 env:
   DIR: task-manager-ui
@@ -11,6 +12,9 @@ env:
 
 jobs:
   build:
+    # The trigger cannot filter by tag, so the job does: a release of the other service must not rebuild
+    # this one.
+    if: startsWith(github.event.release.tag_name, 'task-manager-ui-')
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/myjettools/dioxus-docker:0.7.9
@@ -23,7 +27,7 @@ jobs:
       - name: Get the version
         id: get_version
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${{ github.event.release.tag_name }}"
           VERSION="${TAG##*-}"
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -49,6 +53,7 @@ jobs:
           curl -X 'POST' $FILE_NAME -H 'accept: */*' -H 'Content-Type: multipart/form-data' -F 'file=@data.zip;type=application/zip'
 
   publish:
+    if: startsWith(github.event.release.tag_name, 'task-manager-ui-')
     runs-on: ubuntu-22.04
     needs: build
     steps:
@@ -65,7 +70,7 @@ jobs:
       - name: Get the version
         id: get_version
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${{ github.event.release.tag_name }}"
           VERSION="${TAG##*-}"
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
