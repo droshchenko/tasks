@@ -22,6 +22,7 @@ fn kind_template() -> KindTemplateModel {
             name: "Bug".to_string(),
             description: String::new(),
             color: KindColor::Red,
+            icon: "bug".to_string(),
         }],
         created: DateTimeAsMicroseconds::new(0),
     }

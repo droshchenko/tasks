@@ -48,6 +48,10 @@ pub struct KindModel {
     pub name: String,
     pub description: String,
     pub color: KindColor,
+    // An icon name without extension, or empty for none. Not validated against a list: the icons are
+    // files in the UI bundle and the server has no business knowing which ones shipped — an unknown name
+    // draws as no icon, the same leniency a colour gets.
+    pub icon: String,
 }
 
 /// A project, in memory.

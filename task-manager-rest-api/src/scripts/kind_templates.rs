@@ -48,6 +48,7 @@ pub async fn save_kind_template(
             name: kind.name.trim().to_string(),
             description: kind.description.trim().to_string(),
             color: super::parse_kind_color(&kind.color)?,
+            icon: kind.icon.trim().to_string(),
         });
     }
 

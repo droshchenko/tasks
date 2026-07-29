@@ -45,6 +45,8 @@ impl From<&ProjectKindJsonModel> for KindModel {
             // A colour this build does not recognise is decoration that failed to load, not a
             // corrupt row — it draws as the default swatch.
             color: KindColor::parse_or_default(&src.color),
+            // The dead per-project shape predates icons and never carried one.
+            icon: String::new(),
         }
     }
 }
@@ -146,6 +148,7 @@ pub fn project_to_response(
                 name: itm.name.clone(),
                 description: itm.description.clone(),
                 color: itm.color.as_str().to_string(),
+                icon: itm.icon.clone(),
             })
             .collect(),
         members: src.members.iter().cloned().collect(),
@@ -169,6 +172,7 @@ impl From<&KindTemplateKindJsonModel> for KindModel {
             // A colour this build does not recognise is decoration that failed to load, not a corrupt
             // row — it draws as the default swatch.
             color: KindColor::parse_or_default(&src.color),
+            icon: src.icon.clone(),
         }
     }
 }
@@ -180,6 +184,7 @@ impl From<&KindModel> for KindTemplateKindJsonModel {
             name: src.name.clone(),
             description: src.description.clone(),
             color: src.color.as_str().to_string(),
+            icon: src.icon.clone(),
         }
     }
 }
@@ -221,12 +226,15 @@ pub fn kind_template_to_response(
         kinds: src
             .kinds
             .iter()
-            .map(|itm| task_manager_shared::kind_templates::KindTemplateKind {
-                id: itm.id.clone(),
-                name: itm.name.clone(),
-                description: itm.description.clone(),
-                color: itm.color.as_str().to_string(),
-            })
+            .map(
+                |itm| task_manager_shared::kind_templates::KindTemplateKind {
+                    id: itm.id.clone(),
+                    name: itm.name.clone(),
+                    description: itm.description.clone(),
+                    color: itm.color.as_str().to_string(),
+                    icon: itm.icon.clone(),
+                },
+            )
             .collect(),
         used_by: used_by as i32,
     }

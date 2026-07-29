@@ -271,6 +271,11 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
                         class: "sticker-kind",
                         style: "background: {kind_color.hex()}",
                         title: "{kind.description}",
+                        // Only when this build actually has the file: a name stored before an icon was
+                        // renamed away draws as no icon rather than as a broken image.
+                        if crate::web::icon_exists(&kind.icon) {
+                            img { class: "sticker-kind-icon", src: "{crate::web::icon_url(&kind.icon)}", alt: "" }
+                        }
                         "{kind.name}"
                     }
                 }

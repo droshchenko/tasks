@@ -176,3 +176,15 @@
 .ws-dot.live {
   background: #198754;
 }
+
+/* The icon inside a task-type tag. `brightness(0) invert(1)` paints any SVG white regardless of the
+   colours it shipped with, so one icon set reads correctly on all eight tag backgrounds — the alternative
+   is editing every file's fill. */
+.sticker-kind-icon {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+  margin-right: 4px;
+  vertical-align: -2px;
+  filter: brightness(0) invert(1);
+}

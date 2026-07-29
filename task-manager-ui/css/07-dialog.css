@@ -132,3 +132,44 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* The icon picker: the icons themselves, laid out to be clicked. Wraps and scrolls rather than stretching
+   the dialog, because how many icons shipped is not something this layout should depend on. */
+.icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 210px;
+  max-height: 76px;
+  overflow-y: auto;
+}
+
+.icon-choice {
+  width: 30px;
+  height: 30px;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--text-faint);
+  font-size: 13px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+}
+
+.icon-choice:hover {
+  background: var(--surface-2);
+}
+
+.icon-choice.active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.icon-choice img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}

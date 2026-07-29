@@ -108,6 +108,7 @@ fn RenderRow(
                             key: "{kind.id}",
                             name: kind.name.clone(),
                             color: kind.color.clone(),
+                            icon: kind.icon.clone(),
                         }
                     }
                 }
@@ -151,11 +152,16 @@ fn RenderRow(
 
 /// A type as it appears on a sticker, so this table and the board agree on what one looks like.
 #[component]
-fn RenderKindTag(name: String, color: String) -> Element {
+fn RenderKindTag(name: String, color: String, icon: String) -> Element {
     let hex = KindColor::parse_or_default(&color).hex();
 
     rsx! {
-        span { class: "sticker-kind", style: "background: {hex}; margin-right: 4px", "{name}" }
+        span { class: "sticker-kind", style: "background: {hex}; margin-right: 4px",
+            if crate::web::icon_exists(&icon) {
+                img { class: "sticker-kind-icon", src: "{crate::web::icon_url(&icon)}", alt: "" }
+            }
+            "{name}"
+        }
     }
 }
 

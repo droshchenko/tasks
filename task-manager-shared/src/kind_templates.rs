@@ -14,6 +14,13 @@ pub struct KindTemplateKind {
     pub name: String,
     pub description: String,
     pub color: String,
+    // The name of an icon, without extension — `bug`, `tech-debt`. Empty for none.
+    //
+    // A plain string, not an enum, for the same reason a colour is one: the icons are files in the UI
+    // bundle, so a name this build has never heard of must render as no icon rather than fail a read of
+    // the whole board.
+    #[serde(default)]
+    pub icon: String,
 }
 
 // A named set of task types, defined once and assigned to any number of projects.

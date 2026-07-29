@@ -42,6 +42,9 @@ pub struct ProjectKindResponse {
     pub name: String,
     pub description: String,
     pub color: String,
+    // An icon name without extension, or empty. Unknown to this build reads as no icon.
+    #[serde(default)]
+    pub icon: String,
 }
 
 // A project as the UI and the MCP tools see it.

@@ -34,6 +34,7 @@ struct NewKind {
     name: String,
     description: String,
     color: String,
+    icon: String,
 }
 
 impl Default for NewKind {
@@ -43,6 +44,7 @@ impl Default for NewKind {
             name: String::new(),
             description: String::new(),
             color: KindColor::default().as_str().to_string(),
+            icon: String::new(),
         }
     }
 }
@@ -96,9 +98,10 @@ impl ComponentState {
             name: self.new_kind.name.trim().to_string(),
             description: self.new_kind.description.trim().to_string(),
             color: self.new_kind.color.clone(),
+            icon: self.new_kind.icon.clone(),
         });
 
-        // The colour is kept: picking one and then adding several is the usual way round.
+        // The colour and the icon are kept: picking them and then adding several is the usual way round.
         self.new_kind.id = String::new();
         self.new_kind.name = String::new();
         self.new_kind.description = String::new();
@@ -123,6 +126,12 @@ impl ComponentState {
     fn set_color(&mut self, id: &str, value: String) {
         if let Some(kind) = self.draft.kinds.iter_mut().find(|itm| itm.id == id) {
             kind.color = value;
+        }
+    }
+
+    fn set_icon(&mut self, id: &str, value: String) {
+        if let Some(kind) = self.draft.kinds.iter_mut().find(|itm| itm.id == id) {
+            kind.icon = value;
         }
     }
 }
@@ -215,6 +224,7 @@ pub fn EditKindTemplateDialog(
                             th { "Id" }
                             th { "Name" }
                             th { "Description" }
+                            th { style: "width: 210px", "Icon" }
                             th { style: "width: 150px", "Colour" }
                             th { style: "width: 90px" }
                         }
@@ -245,6 +255,15 @@ pub fn EditKindTemplateDialog(
                                             move |event: Event<FormData>| {
                                                 cs.write().set_description(&id, event.value());
                                             }
+                                        },
+                                    }
+                                }
+                                td {
+                                    RenderIconPicker {
+                                        value: kind.icon.clone(),
+                                        on_pick: {
+                                            let id = kind.id.clone();
+                                            move |value| cs.write().set_icon(&id, value)
                                         },
                                     }
                                 }
@@ -301,6 +320,13 @@ pub fn EditKindTemplateDialog(
                 }
             }
             div { class: "form-row",
+                label { "Icon" }
+                RenderIconPicker {
+                    value: new_kind.icon.clone(),
+                    on_pick: move |value| cs.write().new_kind.icon = value,
+                }
+            }
+            div { class: "form-row",
                 label { "Colour" }
                 RenderColorPicker {
                     value: new_kind.color.clone(),
@@ -326,6 +352,44 @@ pub fn EditKindTemplateDialog(
     };
 
     super::dialog_template_ex(&title, content, ok_button, Some("modal-xl"))
+}
+
+/// The icons that shipped in this bundle, drawn rather than named.
+///
+/// Same argument as the colour swatches: a picker that shows the thing beats one that spells it. The list
+/// comes from `build.rs` reading `public/assets/images/task-icons`, so adding an icon is dropping an SVG
+/// in that directory.
+///
+/// The first cell clears the choice — a type without an icon is normal, so "none" has to be reachable
+/// rather than a state you can only leave.
+#[component]
+fn RenderIconPicker(value: String, on_pick: EventHandler<String>) -> Element {
+    let picked = value.clone();
+
+    rsx! {
+        div { class: "icon-picker",
+            button {
+                r#type: "button",
+                class: if picked.is_empty() { "icon-choice active" } else { "icon-choice" },
+                title: "No icon",
+                onclick: move |_| on_pick.call(String::new()),
+                "—"
+            }
+            for name in crate::web::TASK_ICONS.iter() {
+                button {
+                    key: "{name}",
+                    r#type: "button",
+                    class: if picked == *name { "icon-choice active" } else { "icon-choice" },
+                    title: "{name}",
+                    onclick: {
+                        let name = name.to_string();
+                        move |_| on_pick.call(name.clone())
+                    },
+                    img { src: "{crate::web::icon_url(name)}", alt: "{name}" }
+                }
+            }
+        }
+    }
 }
 
 /// Swatches rather than a dropdown of colour names.
@@ -389,6 +453,7 @@ mod tests {
                 name: "Bug".to_string(),
                 description: String::new(),
                 color: "red".to_string(),
+                icon: "bug".to_string(),
             }],
             used_by: 2,
         }
@@ -448,6 +513,11 @@ mod tests {
             KindColor::default().as_str(),
             "the picked colour survives an add"
         );
+
+        // Choosing an icon is a change like any other, and it survives an add too.
+        cs.set_icon("bug", "tech-debt".to_string());
+        assert_eq!(cs.draft.kinds[0].icon, "tech-debt");
+        assert!(cs.is_changed());
     }
 
     #[test]

@@ -22,6 +22,10 @@ pub struct KindTemplateKindJsonModel {
     pub name: String,
     pub description: String,
     pub color: String,
+    // An icon name without extension, or empty. `default` so a row written before icons existed still
+    // deserialises.
+    #[serde(default)]
+    pub icon: String,
 }
 
 // A named set of task types, shared by any number of projects.
