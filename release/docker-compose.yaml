@@ -1,12 +1,20 @@
 # Stack for the `task-manager-mcp` product on HETZNER.
 #
+# Run by hand:
+#
+#   docker compose -f docker-compose.yaml up -d
+#
+# Volume paths use `${HOME}` rather than `~`. release-mcp expands `~` itself via HOST_HOME, but
+# `docker compose` does not — it hands the path to the daemon verbatim, and the daemon has no idea what
+# `~` means. `${HOME}` is substituted by Compose and works either way.
+#
 # Both services publish a TCP port because a browser reaches them: the UI calls the REST API on relative
 # `/api/...` URLs and opens `/ws` on the same origin, so the reverse proxy has to put both behind ONE
-# host. Everything else follows the standard single-VM unix-socket layout.
+# host. Host ports come from the 31500+ range reserved for this product.
 #
-# Host ports come from the 31500+ range reserved for this product. Container ports are not arbitrary:
-# service-sdk's HTTP server listens on 8000 (8888 is its second, technical port), and `web-app-host`
-# serves static files on 9001 — the same as my-logger-ui, settings-ui and versions-control-ui.
+# Container ports are not arbitrary: service-sdk's HTTP server listens on 8000 (8888 is its second,
+# technical port), and `web-app-host` serves static files on 9001 — the same as my-logger-ui,
+# settings-ui and versions-control-ui on these hosts.
 services:
   task-manager-rest-api:
     image: ghcr.io/myjettools/task-manager-rest-api:0.1.0
@@ -14,16 +22,18 @@ services:
     container_name: task-manager-rest-api
     restart: always
     environment:
+    # If the settings unix socket is not present on this host, the TCP form works too:
+    #   SETTINGS_URL=http://<host>:9898/settings/task-manager-mcp/task-manager-rest-api
     - SETTINGS_URL=http+unix://root/system-sockets/settings.http-sock:/settings/task-manager-mcp/task-manager-rest-api
     - ENV_INFO=HOME
     - UNIX_SOCKET=1
     ports:
     - 31500:8000
     volumes:
-    - ~/unix-sockets/task-manager-mcp/http:/root/http
-    - ~/unix-sockets/task-manager-mcp/grpc:/root/grpc
-    - ~/unix-sockets/task-manager-mcp/system:/root/product-system-sockets
-    - ~/unix-sockets/system:/root/system-sockets
+    - ${HOME}/unix-sockets/task-manager-mcp/http:/root/http
+    - ${HOME}/unix-sockets/task-manager-mcp/grpc:/root/grpc
+    - ${HOME}/unix-sockets/task-manager-mcp/system:/root/product-system-sockets
+    - ${HOME}/unix-sockets/system:/root/system-sockets
     deploy:
       resources:
         limits:
