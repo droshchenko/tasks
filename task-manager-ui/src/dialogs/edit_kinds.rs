@@ -5,7 +5,11 @@ use rust_extensions::AsStr;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{ProjectKindResponse, ProjectResponse};
 
-/// The kinds of work a task can be, per project.
+/// The types of work a task can be, per project.
+///
+/// Called a "task type" on screen and a `kind` in the code, the API and the MCP tools. Deliberate: the
+/// wire name is a contract with every agent already calling `tasks_create` with `kind`, and renaming it
+/// to match a label would break them for nothing.
 #[derive(Clone, Default)]
 struct ComponentState {
     new_id: String,
@@ -86,14 +90,14 @@ pub fn EditKindsDialog(project: Rc<ProjectResponse>, on_saved: EventHandler<()>)
 
     let content = rsx! {
         div { class: "field-hint",
-            "A kind is optional on a task. The description is what an agent reads before classifying one, so write the rule for applying it rather than a synonym of the name."
+            "A task type is optional on a task. The description is what an agent reads before classifying one, so write the rule for applying it rather than a synonym of the name."
         }
         if !error.is_empty() {
             div { class: "error-banner", style: "margin-top: 10px", "{error}" }
         }
 
         if project.kinds.is_empty() {
-            div { class: "empty-note", style: "margin-top: 12px", "No kinds yet." }
+            div { class: "empty-note", style: "margin-top: 12px", "No task types yet." }
         } else {
             div { class: "table-responsive", style: "margin-top: 12px",
                 table { class: "table",
@@ -153,12 +157,12 @@ pub fn EditKindsDialog(project: Rc<ProjectResponse>, on_saved: EventHandler<()>)
                     on_pick: move |value| cs.write().new_color = value,
                 }
             }
-            button { class: "btn btn-primary", disabled: !can_add, onclick: add, "Add kind" }
+            button { class: "btn btn-primary", disabled: !can_add, onclick: add, "Add task type" }
         }
     };
 
     super::dialog_template_ex(
-        &format!("Kinds · {}", project.prefix),
+        &format!("Task types · {}", project.prefix),
         content,
         rsx! {},
         Some("modal-xl"),

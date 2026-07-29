@@ -65,7 +65,7 @@ fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
                             th { "Description" }
                             th { class: "num", "Tasks" }
                             th { "Columns" }
-                            th { "Kinds" }
+                            th { "Task types" }
                             th { class: "num", "Members" }
                             th { style: "width: 300px" }
                         }
@@ -149,7 +149,7 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
                             let project = for_kinds.clone();
                             open(data, |on_saved| DialogState::EditKinds { project, on_saved });
                         },
-                        "Kinds"
+                        "Task types"
                     }
                     button {
                         class: "btn btn-sm",

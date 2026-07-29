@@ -22,9 +22,16 @@ services:
     container_name: task-manager-rest-api
     restart: always
     environment:
-    # If the settings unix socket is not present on this host, the TCP form works too:
-    #   SETTINGS_URL=http://<host>:9898/settings/task-manager-mcp/task-manager-rest-api
-    - SETTINGS_URL=http+unix://root/system-sockets/settings.http-sock:/settings/task-manager-mcp/task-manager-rest-api
+    # TCP, not the unix socket, because the settings-service holding this product is on ANOTHER machine.
+    # HETZNER has a settings-service of its own — an older 0.3.0 — and it does not know this product:
+    # pointing at its socket returns `404 - Not Found`, which the service cannot parse as its
+    # SettingsModel, so it panics and restart-loops. That is not a misconfigured template, it is the
+    # wrong settings-service.
+    #
+    # The host comes from `${SETTINGS_IP}` rather than a literal, so the address lives in one place —
+    # release-mcp resolves it from its own process environment, and `docker compose` run by hand takes it
+    # from the shell.
+    - SETTINGS_URL=http://${SETTINGS_IP}:9898/settings/task-manager-mcp/task-manager-rest-api
     - ENV_INFO=HOME
     - UNIX_SOCKET=1
     ports:
@@ -51,7 +58,7 @@ services:
   # A static bundle: wasm, html, js and css, served by web-app-host. It never knows a base URL — there is
   # nothing to configure in it, which is also why it has no settings and no unix sockets.
   task-manager-ui:
-    image: ghcr.io/my-ai-utils/task-manager-ui:0.1.3
+    image: ghcr.io/my-ai-utils/task-manager-ui:0.1.4
     hostname: task-manager-ui
     container_name: task-manager-ui
     restart: always
