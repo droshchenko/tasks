@@ -224,9 +224,18 @@ The ideas port; the text does not.
 
 ## UI
 
-Dioxus CSR — a static bundle. Left menu of product areas, work area on the right. Everything below the
-router goes through one `Shell` component, which owns the single question every screen needs answered
-first (is anybody signed in) so no view has to handle "not asked yet" and none can forget to.
+Dioxus CSR — a static bundle. One bar of product areas across the top, work area under it at the full
+width of the window. Across the top rather than down the left side because of Home: the board is a row of
+columns and the only thing it wants is horizontal room, and a left menu costs that room on every screen
+to be visible on the one screen where the vertical space was free anyway.
+
+Everything below the router goes through one `Shell` component, which owns the single question every
+screen needs answered first (is anybody signed in) so no view has to handle "not asked yet" and none can
+forget to.
+
+The stylesheet is **generated**: `build.rs` concatenates `css/*.css` into `public/assets/app.css` through
+`ci_utils::css::CssCompiler`. Edit the numbered sources — an edit to `app.css` survives exactly until the
+next build.
 
 | Area | |
 |---|---|

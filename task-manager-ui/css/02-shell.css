@@ -1,69 +1,101 @@
-/* The admin shell: a fixed menu of product areas on the left, the work area on the right. */
+/* The admin shell: one bar of product areas across the top, the work area under it at the full width of
+   the window. Nothing takes horizontal room from the board. */
 #main-panel {
   min-height: 100vh;
 }
 
-.sidebar {
-  position: fixed;
+/* Sticky rather than static: the setup screens scroll vertically, and the tabs are how you leave a
+   screen — they should not need scrolling back up to reach. */
+.topbar {
+  position: sticky;
   top: 0;
-  left: 0;
-  bottom: 0;
-  width: var(--sidebar-width);
-  background: var(--sidebar-bg);
+  z-index: 20;
   display: flex;
-  flex-direction: column;
-  padding: 14px 0;
+  align-items: stretch;
+  gap: 18px;
+  height: var(--topbar-height);
+  padding: 0 18px;
+  background: var(--topbar-bg);
+  box-shadow: var(--shadow-card);
 }
 
-.sidebar-logo {
+.topbar-brand {
+  display: flex;
+  align-items: center;
   color: #fff;
   font-weight: 600;
   font-size: 15px;
-  padding: 4px 18px 16px 18px;
   letter-spacing: 0.2px;
+  white-space: nowrap;
 }
 
-.sidebar-nav {
+/* Scrolls rather than wraps: the bar is a fixed height, so a wrapped tab would be clipped instead of
+   pushing the page down. */
+.topbar-tabs {
   display: flex;
-  flex-direction: column;
+  align-items: stretch;
   gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.sidebar-link {
-  color: var(--sidebar-text);
-  padding: 9px 18px;
+.topbar-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.topbar-tab {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  color: var(--topbar-text);
   font-size: 14px;
-  border-left: 3px solid transparent;
+  white-space: nowrap;
+  /* Transparent, not absent: the underline on the active tab must not change any tab's height. */
+  border-bottom: 3px solid transparent;
 }
 
-.sidebar-link:hover {
-  color: var(--sidebar-text-active);
-  background: rgba(255, 255, 255, 0.05);
+.topbar-tab:hover {
+  color: var(--topbar-text-active);
+  background: rgba(255, 255, 255, 0.06);
   text-decoration: none;
 }
 
-.sidebar-link.active {
-  color: var(--sidebar-text-active);
-  background: rgba(255, 255, 255, 0.08);
-  border-left-color: var(--accent);
+.topbar-tab.active {
+  color: var(--topbar-text-active);
+  background: rgba(255, 255, 255, 0.09);
+  border-bottom-color: var(--accent);
 }
 
-.sidebar-bottom {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+/* `min-width: 0` so the truncation below can happen at all — a flex item defaults to the width of its
+   content, and a long name · email would push the tabs off the bar instead of shortening itself. */
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+  min-width: 0;
 }
 
-.sidebar-whoami {
-  color: var(--text-faint);
+.topbar-whoami {
+  color: var(--topbar-text);
   font-size: 12px;
-  padding: 6px 18px 2px 18px;
-  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-signout {
+  color: var(--topbar-text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.topbar-signout:hover {
+  color: var(--topbar-text-active);
 }
 
 .main-content {
-  margin-left: var(--sidebar-width);
-  padding: 22px 26px;
+  padding: 20px 18px;
 }
 
 .page-header {

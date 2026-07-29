@@ -11,14 +11,14 @@
   --accent: #0d6efd;
   --accent-dark: #0b5ed7;
   --danger: #dc3545;
-  --sidebar-bg: #1f2733;
-  --sidebar-text: #c6cedb;
-  --sidebar-text-active: #ffffff;
+  --topbar-bg: #1f2733;
+  --topbar-text: #c6cedb;
+  --topbar-text-active: #ffffff;
   --radius: 6px;
   --radius-lg: 10px;
   --shadow-card: 0 1px 2px rgba(9, 30, 66, 0.12);
   --shadow-raised: 0 4px 12px rgba(9, 30, 66, 0.15);
-  --sidebar-width: 216px;
+  --topbar-height: 46px;
 }
 
 * {
