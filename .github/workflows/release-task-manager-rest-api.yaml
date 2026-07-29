@@ -17,6 +17,11 @@ jobs:
         with:
           toolchain: stable
 
+      # Not about our own protos — we have none. service-sdk pulls in `my-telemetry-writer`, whose build
+      # script runs prost-build, so protoc is required regardless.
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Get the version
         id: get_version
         run: |
