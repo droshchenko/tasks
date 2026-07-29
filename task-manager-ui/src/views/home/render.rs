@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO, ProjectResponse};
+use task_manager_shared::task_id::task_id_display;
 use task_manager_shared::tasks::{FindTaskResponse, TaskResponse};
 
 use dioxus_utils::{DataState, RenderState};
@@ -792,7 +793,7 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
             },
 
             div { class: "sticker-top",
-                span { class: "sticker-id", "{task.id}" }
+                span { class: "sticker-id", "{task_id_display(&task.id)}" }
                 if let Some(kind) = kind {
                     span {
                         class: "sticker-kind",
@@ -836,13 +837,13 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
                     }
                     if !task.depends_on.is_empty() {
                         span {
-                            title: "Waiting on {task.depends_on.len()} task(s): {task.depends_on.join(\", \")}",
+                            title: "Waiting on {task.depends_on.len()} task(s): {handles(&task.depends_on)}",
                             "⬇ {task.depends_on.len()}"
                         }
                     }
                     if !task.blocks.is_empty() {
                         span {
-                            title: "{task.blocks.len()} task(s) waiting on this one: {task.blocks.join(\", \")}",
+                            title: "{task.blocks.len()} task(s) waiting on this one: {handles(&task.blocks)}",
                             "⬆ {task.blocks.len()}"
                         }
                     }
@@ -850,6 +851,14 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
             }
         }
     }
+}
+
+/// A list of handles as a tooltip reads them — shown short, like every other handle on the card.
+fn handles(ids: &[String]) -> String {
+    ids.iter()
+        .map(|itm| task_id_display(itm))
+        .collect::<Vec<String>>()
+        .join(", ")
 }
 
 /// The task exactly as a lookup by id would have answered it, assembled from what is already on screen.

@@ -22,6 +22,7 @@ pub mod kind_color;
 pub mod kind_templates;
 pub mod projects;
 pub mod system;
+pub mod task_id;
 pub mod task_title;
 pub mod tasks;
 pub mod users;
