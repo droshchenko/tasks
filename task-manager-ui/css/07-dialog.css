@@ -192,8 +192,13 @@
 }
 
 /* Four areas at fixed proportions, so nothing on this screen is reached by scrolling past something else.
-   The body stops scrolling and each half does its own — see `.task-view-text` and `.task-view-thread`. */
+   The body stops scrolling and each half does its own — see `.task-view-text` and `.task-view-thread`.
+
+   `flex: 1` and not just `overflow: hidden`: a flex item's default is to size to its content, so without it
+   the body would be as tall as the task happens to be and the halves below would be halves of that rather
+   than of the dialog. */
 .modal-task .modal-body {
+  flex: 1;
   overflow: hidden;
   display: flex;
   min-height: 0;
@@ -203,8 +208,10 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  /* Halves, deliberately: the text and the conversation about it are worth the same room. */
-  grid-template-rows: 1fr 1fr;
+  /* Halves, and the same halves whatever the task holds. `minmax(0, 1fr)` rather than `1fr`, because `1fr`
+     is `minmax(auto, 1fr)` — its automatic minimum is the content, so forty comments would take more than
+     half and push the text up. Zero as the minimum is what makes the split independent of what is in it. */
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
 }
 

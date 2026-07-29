@@ -17,6 +17,35 @@ pub fn dialog_template_ex(
     btn_success: Element,
     extra_class: Option<&str>,
 ) -> Element {
+    let footer = rsx! {
+        div { class: "modal-footer",
+            button { class: "btn", onclick: move |_| close(), "Cancel" }
+            {btn_success}
+        }
+    };
+
+    render_modal(title, content, Some(footer), extra_class)
+}
+
+/// A dialog with no footer at all — for one that only shows something.
+///
+/// Cancel is a way out of an edit, and a dialog with nothing to save has no edit to get out of: it left the
+/// reader looking for the difference between Cancel and the cross, of which there is none. The cross in the
+/// header stays, and so does clicking the backdrop, so there are still two ways to close.
+pub fn dialog_template_read_only(
+    title: &str,
+    content: Element,
+    extra_class: Option<&str>,
+) -> Element {
+    render_modal(title, content, None, extra_class)
+}
+
+fn render_modal(
+    title: &str,
+    content: Element,
+    footer: Option<Element>,
+    extra_class: Option<&str>,
+) -> Element {
     let modal_class = match extra_class {
         Some(extra) => format!("modal {extra}"),
         None => "modal".to_string(),
@@ -38,9 +67,8 @@ pub fn dialog_template_ex(
                     button { class: "modal-close", title: "Close", onclick: move |_| close(), "×" }
                 }
                 div { class: "modal-body", {content} }
-                div { class: "modal-footer",
-                    button { class: "btn", onclick: move |_| close(), "Cancel" }
-                    {btn_success}
+                if let Some(footer) = footer {
+                    {footer}
                 }
             }
         }

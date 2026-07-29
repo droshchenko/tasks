@@ -23,12 +23,12 @@ pub fn ViewTaskDialog(found: FindTaskResponse) -> Element {
             found.not_found.clone()
         };
 
-        return super::dialog_template(
+        return super::dialog_template_read_only(
             "Not found",
             rsx! {
                 div { class: "empty-note", "{reason}" }
             },
-            rsx! {},
+            None,
         );
     };
 
@@ -38,7 +38,9 @@ pub fn ViewTaskDialog(found: FindTaskResponse) -> Element {
     // Its own size class rather than `modal-lg`: this one takes 95% of the window. A dialog sized to its
     // content has no height for the two halves to be halves OF, and a task is the one thing on this side
     // worth the whole screen.
-    super::dialog_template_ex(&title, content, rsx! {}, Some("modal-task"))
+    //
+    // No footer either — there is nothing to save, so there is nothing for Cancel to cancel.
+    super::dialog_template_read_only(&title, content, Some("modal-task"))
 }
 
 /// "Closed today" / "Closed 3 days ago" — the age, not the timestamp.
