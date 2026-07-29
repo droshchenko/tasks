@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 
 use super::board_inner::BoardInner;
-use super::models::{ProjectModel, TaskModel, UserModel};
+use super::models::{ColumnTemplateModel, ProjectModel, TaskModel, UserModel};
 
 /// The product state, held entirely in memory.
 ///
@@ -60,6 +60,16 @@ impl Board {
 
     pub fn upsert_project(&self, project: ProjectModel) {
         self.mutate(|inner| inner.put_project(Arc::new(project)));
+    }
+
+    /// Save a template. Every project following it picks the change up in the same swap, because
+    /// `rebuild_indexes` re-resolves their columns.
+    pub fn upsert_column_template(&self, template: ColumnTemplateModel) {
+        self.mutate(|inner| inner.put_column_template(Arc::new(template)));
+    }
+
+    pub fn remove_column_template(&self, id: &str) {
+        self.mutate(|inner| inner.drop_column_template(id));
     }
 
     pub fn upsert_task(&self, task: TaskModel) {

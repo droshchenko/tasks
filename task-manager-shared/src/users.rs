@@ -46,7 +46,7 @@ pub struct CreateUserInputModel {
 // their old assignments deliberately keep pointing at the address that made them.
 #[derive(MyHttpInput)]
 pub struct UpdateUserInputModel {
-    #[http_path(name: "email", description: "Google account email")]
+    #[http_body(name: "email", description: "Google account email")]
     pub email: String,
     #[http_body(name: "name", description: "Name shown on the board", trim)]
     pub name: String,

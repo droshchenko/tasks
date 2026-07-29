@@ -59,6 +59,14 @@ pub struct ProjectDto {
     #[sql_type("jsonb")]
     #[json]
     pub prefix_history: Vec<String>,
+    // Which column template this project follows. `None` means it follows none and its board is
+    // Todo -> Done.
+    pub column_template_id: Option<String>,
+    // DEAD. Columns moved into `column_templates`; this is written empty and never read.
+    //
+    // Kept in the DTO rather than removed because the deployed table has the column NOT NULL, and an
+    // insert that stopped listing it would fail. Dropping it needs one `ALTER TABLE projects DROP
+    // COLUMN columns` against the live database — see TODO.md.
     #[sql_type("jsonb")]
     #[json]
     pub columns: Vec<ProjectColumnJsonModel>,

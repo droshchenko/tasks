@@ -64,10 +64,10 @@ fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
                             th { "Name" }
                             th { "Description" }
                             th { class: "num", "Tasks" }
-                            th { "Columns" }
+                            th { "Column template" }
                             th { "Task types" }
                             th { class: "num", "Members" }
-                            th { style: "width: 300px" }
+                            th { style: "width: 230px" }
                         }
                     }
                     tbody {
@@ -98,7 +98,6 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
         .join(" → ");
 
     let for_edit = project.clone();
-    let for_columns = project.clone();
     let for_kinds = project.clone();
     let for_members = project.clone();
 
@@ -109,10 +108,13 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
             td { class: "muted", "{project.description}" }
             td { class: "num", "{project.tasks_amount}" }
             td {
-                if columns.is_empty() {
-                    span { class: "muted", "Todo → Done" }
+                // The template's NAME, then what it resolves to. Which template a project follows is the
+                // thing you change; the column list is the thing you check afterwards.
+                if let Some(template) = project.column_template_name.as_ref() {
+                    div { "{template}" }
+                    div { class: "field-hint", "{columns}" }
                 } else {
-                    span { class: "muted", "{columns}" }
+                    span { class: "muted", "Todo → Done" }
                 }
             }
             td {
@@ -134,14 +136,6 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
                             open(data, |on_saved| DialogState::EditProject { project: Some(project), on_saved });
                         },
                         "Edit"
-                    }
-                    button {
-                        class: "btn btn-sm",
-                        onclick: move |_| {
-                            let project = for_columns.clone();
-                            open(data, |on_saved| DialogState::EditColumns { project, on_saved });
-                        },
-                        "Columns"
                     }
                     button {
                         class: "btn btn-sm",

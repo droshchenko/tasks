@@ -61,7 +61,14 @@ pub struct ProjectResponse {
     pub prefix: String,
     #[serde(default)]
     pub prefix_history: Vec<String>,
+    // Resolved from the column template this project follows, sorted, anchors excluded. Kept on the
+    // wire even though columns are now configured per template: every reader — the board, the MCP
+    // tools — wants this project's columns, and none of them should have to join a template list.
     pub columns: Vec<ProjectColumnResponse>,
+    // Which template those columns came from. Both `None` when the project follows none, in which case
+    // `columns` is empty and the board is Todo -> Done.
+    pub column_template_id: Option<String>,
+    pub column_template_name: Option<String>,
     pub kinds: Vec<ProjectKindResponse>,
     // Emails of the users who may see this project. An admin sees every project without appearing
     // here.
@@ -100,82 +107,39 @@ pub struct UpdateProjectInputModel {
     pub prefix: String,
 }
 
+// Which template a project follows. `column_template_id` empty means "none" — the board is then just
+// Todo -> Done, which is a legitimate state and not an error.
+//
+// There is deliberately no add-column / update-column / delete-column endpoint on a project any more.
+// Columns are configured once per template, in Settings, and a project only points at one.
 #[derive(MyHttpInput)]
-pub struct AddProjectColumnInputModel {
+pub struct SetProjectColumnTemplateInputModel {
     #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
-    // Typed in by hand and immutable from then on: tasks reference it as their status, and there
-    // is no rename — only delete.
-    #[http_body(name: "id", description: "Column id, e.g. in-progress", trim, to_lowercase)]
+    #[http_body(name: "columnTemplateId", description: "Column template id, or empty for none", trim, to_lowercase)]
+    pub column_template_id: String,
+}
+
+// A kind as it is sent back, inside the kinds snapshot.
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct ProjectKindInputItem {
     pub id: String,
-    #[http_body(name: "name", description: "Column name", trim)]
     pub name: String,
-    #[http_body(name: "description", description: "What sits in this column", trim)]
     pub description: String,
-    #[http_body(name: "order", description: "Position between Todo and Done")]
-    pub order: i32,
-}
-
-#[derive(MyHttpInput)]
-pub struct UpdateProjectColumnInputModel {
-    #[http_body(name: "projectId", description: "Project id")]
-    pub project_id: String,
-    #[http_body(name: "columnId", description: "Column id")]
-    pub column_id: String,
-    #[http_body(name: "name", description: "Column name", trim)]
-    pub name: String,
-    #[http_body(name: "description", description: "What sits in this column", trim)]
-    pub description: String,
-    #[http_body(name: "order", description: "Position between Todo and Done")]
-    pub order: i32,
-}
-
-// Deleting a column does NOT move its tasks: their stored status is left alone and they read as
-// Todo from then on. Re-creating a column with the same id brings them back to it.
-#[derive(MyHttpInput)]
-pub struct DeleteProjectColumnInputModel {
-    #[http_body(name: "projectId", description: "Project id")]
-    pub project_id: String,
-    #[http_body(name: "columnId", description: "Column id")]
-    pub column_id: String,
-}
-
-#[derive(MyHttpInput)]
-pub struct AddProjectKindInputModel {
-    #[http_body(name: "projectId", description: "Project id")]
-    pub project_id: String,
-    // Immutable once created, same as a column id.
-    #[http_body(name: "id", description: "Kind id, e.g. bug", trim, to_lowercase)]
-    pub id: String,
-    #[http_body(name: "name", description: "Kind name", trim)]
-    pub name: String,
-    #[http_body(name: "description", description: "What qualifies as this kind", trim)]
-    pub description: String,
-    #[http_body(name: "color", description: "One of the palette values, e.g. red", trim, to_lowercase)]
     pub color: String,
 }
 
+// The whole set of kinds in one call — a SNAPSHOT, like the column template.
+//
+// Replaces add/update/delete. The dialog builds the complete new list and sends it, so the server never
+// reconciles a sequence of small writes, a half-finished edit is never visible, and Cancel costs nothing
+// because nothing was sent.
 #[derive(MyHttpInput)]
-pub struct UpdateProjectKindInputModel {
+pub struct SetProjectKindsInputModel {
     #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
-    #[http_body(name: "kindId", description: "Kind id")]
-    pub kind_id: String,
-    #[http_body(name: "name", description: "Kind name", trim)]
-    pub name: String,
-    #[http_body(name: "description", description: "What qualifies as this kind", trim)]
-    pub description: String,
-    #[http_body(name: "color", description: "One of the palette values, e.g. red", trim, to_lowercase)]
-    pub color: String,
-}
-
-// A task pointing at a deleted kind reads as having no kind at all.
-#[derive(MyHttpInput)]
-pub struct DeleteProjectKindInputModel {
-    #[http_body(name: "projectId", description: "Project id")]
-    pub project_id: String,
-    #[http_body(name: "kindId", description: "Kind id")]
-    pub kind_id: String,
+    #[http_body(name: "kinds", description: "The complete list of kinds for this project")]
+    pub kinds: Vec<ProjectKindInputItem>,
 }
 
 // Membership is edited from the project's side — this is the whole set, replaced wholesale, so the

@@ -40,8 +40,12 @@ pub enum AppRoute {
     ProjectsSetup {},
     #[route("/users")]
     Users {},
+    // Bare `/settings` lands on the first section; the section is part of the route so every area is
+    // linkable and Back works between them.
     #[route("/settings")]
     Settings {},
+    #[route("/settings/:section")]
+    SettingsSection { section: String },
     #[route("/logout")]
     Logout {},
 }
@@ -69,6 +73,8 @@ fn Shell(active: &'static str, children: Element) -> Element {
 
     // A context of its own rather than a field of `AppState` — see `dialogs::DialogState` for why.
     use_context_provider(|| Signal::new(crate::dialogs::DialogState::None));
+    // How the last submit went, for the dialogs whose request the router makes — see `DialogFeedback`.
+    use_context_provider(|| Signal::new(crate::dialogs::DialogFeedback::default()));
 
     let signed_in = app_state.read().signed_in.clone();
 
@@ -143,6 +149,19 @@ fn Users() -> Element {
     rsx! {
         Shell { active: "users",
             crate::views::users::RenderUsers {}
+        }
+    }
+}
+
+#[component]
+fn SettingsSection(section: String) -> Element {
+    // The section is read off the route inside `RenderSettings`, so this only has to exist as a route
+    // target — declaring the prop is what stops the router stripping it.
+    let _ = section;
+
+    rsx! {
+        Shell { active: "settings",
+            crate::views::settings::RenderSettings {}
         }
     }
 }

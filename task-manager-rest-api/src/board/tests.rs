@@ -4,7 +4,37 @@ use rust_extensions::date_time::DateTimeAsMicroseconds;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO};
 
-use super::{ARCHIVE_AFTER, Board, ColumnModel, KindModel, ProjectModel, TaskModel, UserModel};
+use super::{
+    ARCHIVE_AFTER, Board, ColumnModel, ColumnTemplateModel, KindModel, ProjectModel, TaskModel,
+    UserModel,
+};
+
+const TEMPLATE_ID: &str = "tpl";
+
+fn template() -> ColumnTemplateModel {
+    ColumnTemplateModel {
+        id: TEMPLATE_ID.to_string(),
+        name: "Default".to_string(),
+        description: String::new(),
+        columns: vec![ColumnModel {
+            id: "in-progress".to_string(),
+            name: "In progress".to_string(),
+            description: String::new(),
+            order: 10,
+        }],
+        created: DateTimeAsMicroseconds::new(0),
+    }
+}
+
+/// A board with the fixture template already installed.
+///
+/// Every test that puts a project in needs it: a project's columns come from its template, so a board
+/// without the template gives every project a bare Todo -> Done board.
+fn board() -> Board {
+    let board = Board::new();
+    board.upsert_column_template(template());
+    board
+}
 
 fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
     ProjectModel {
@@ -13,12 +43,10 @@ fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
         description: String::new(),
         prefix: prefix.to_string(),
         prefix_history: history.iter().map(|itm| itm.to_string()).collect(),
-        columns: vec![ColumnModel {
-            id: "in-progress".to_string(),
-            name: "In progress".to_string(),
-            description: String::new(),
-            order: 10,
-        }],
+        column_template_id: Some(TEMPLATE_ID.to_string()),
+        // Left empty: the board resolves it from the template. Setting it here would be a lie the very
+        // first rebuild overwrites.
+        columns: Vec::new(),
         kinds: vec![KindModel {
             id: "bug".to_string(),
             name: "Bug".to_string(),
@@ -61,7 +89,7 @@ fn user(email: &str, name: &str) -> UserModel {
 /// The whole point of `blocked`: derived on every read, and true while any dependency is not Done.
 #[test]
 fn blocked_is_derived_against_the_current_statuses() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
     board.upsert_task(task("p", 1, COLUMN_ID_TODO, &[]));
     board.upsert_task(task("p", 2, COLUMN_ID_DONE, &[]));
@@ -82,7 +110,7 @@ fn blocked_is_derived_against_the_current_statuses() {
 /// as satisfied — frees a task because of a typo, silently.
 #[test]
 fn an_unknown_blocker_still_blocks() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
 
     assert!(
@@ -96,7 +124,7 @@ fn an_unknown_blocker_still_blocks() {
 /// "derived, never stored" buys.
 #[test]
 fn closing_the_last_blocker_unblocks_on_the_next_read() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
     board.upsert_task(task("p", 1, COLUMN_ID_TODO, &[]));
     board.upsert_task(task("p", 2, COLUMN_ID_TODO, &[1]));
@@ -114,7 +142,7 @@ fn closing_the_last_blocker_unblocks_on_the_next_read() {
 /// rules, and getting it wrong would mark work unblocked because a column was tidied away.
 #[test]
 fn a_blocker_whose_column_was_deleted_blocks_again() {
-    let board = Board::new();
+    let board = board();
     // `archived` is not among the project's columns, so a task sitting there reads as Todo.
     board.upsert_project(project("p", "RMS", &[]));
     board.upsert_task(task("p", 1, "archived", &[]));
@@ -124,7 +152,7 @@ fn a_blocker_whose_column_was_deleted_blocks_again() {
 
 #[test]
 fn blocks_is_the_reverse_edge_and_is_sorted() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
     board.upsert_task(task("p", 1, COLUMN_ID_TODO, &[]));
     board.upsert_task(task("p", 3, COLUMN_ID_TODO, &[1]));
@@ -143,7 +171,7 @@ fn blocks_is_the_reverse_edge_and_is_sorted() {
 /// left alone — so re-creating the column brings the task back to it.
 #[test]
 fn an_unknown_status_reads_as_todo_without_being_rewritten() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
     board.upsert_task(task("p", 1, "gone", &[]));
 
@@ -159,7 +187,7 @@ fn an_unknown_status_reads_as_todo_without_being_rewritten() {
 
 #[test]
 fn an_unknown_kind_reads_as_no_kind() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
 
     let project = board.read().get_project("p").unwrap();
@@ -173,7 +201,7 @@ fn an_unknown_kind_reads_as_no_kind() {
 /// is what `tasks_resolve_id` reads.
 #[test]
 fn a_prefix_resolves_to_its_current_holder_and_remembers_the_past_ones() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("a", "TM", &["RMS"]));
     board.upsert_project(project("b", "RMS", &[]));
 
@@ -195,7 +223,7 @@ fn a_prefix_resolves_to_its_current_holder_and_remembers_the_past_ones() {
 /// is precisely why a task's handle is composed on read rather than stored.
 #[test]
 fn a_prefix_only_in_history_is_free_to_take() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("a", "TM", &["RMS"]));
 
     let read = board.read();
@@ -208,7 +236,7 @@ fn a_prefix_only_in_history_is_free_to_take() {
 
 #[test]
 fn the_counter_only_moves_forward_and_is_per_project() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("a", "AAA", &[]));
     board.upsert_project(project("b", "BBB", &[]));
 
@@ -228,7 +256,7 @@ fn the_counter_only_moves_forward_and_is_per_project() {
 
 #[test]
 fn a_projects_labels_are_the_distinct_labels_its_tasks_carry() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
 
     let mut first = task("p", 1, COLUMN_ID_TODO, &[]);
@@ -253,7 +281,7 @@ fn a_projects_labels_are_the_distinct_labels_its_tasks_carry() {
 
 #[test]
 fn visibility_follows_membership_and_an_admin_sees_everything() {
-    let board = Board::new();
+    let board = board();
 
     let mut with_member = project("a", "AAA", &[]);
     with_member.members.insert("yuri@mxtm.ai".to_string());
@@ -280,7 +308,7 @@ fn visibility_follows_membership_and_an_admin_sees_everything() {
 /// rather than inventing one.
 #[test]
 fn a_display_name_resolves_only_for_a_known_user_with_a_name() {
-    let board = Board::new();
+    let board = board();
     board.upsert_user(user("yuri@mxtm.ai", "Yuri"));
     board.upsert_user(user("noname@mxtm.ai", ""));
 
@@ -299,7 +327,7 @@ fn a_display_name_resolves_only_for_a_known_user_with_a_name() {
 /// the board under years of finished tasks or hides work that is still live.
 #[test]
 fn only_work_closed_longer_ago_than_the_window_is_archived() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
 
     let now = DateTimeAsMicroseconds::now();
@@ -340,7 +368,7 @@ fn only_work_closed_longer_ago_than_the_window_is_archived() {
 /// written on the way in — but being lenient means a gap in the data cannot silently swallow work.
 #[test]
 fn done_without_a_close_moment_stays_visible() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
 
     let orphan = task("p", 1, COLUMN_ID_DONE, &[]);
@@ -354,7 +382,7 @@ fn done_without_a_close_moment_stays_visible() {
 /// as Todo and therefore cannot be archived — even if it still carries an old close moment.
 #[test]
 fn a_task_whose_column_was_deleted_is_not_archived() {
-    let board = Board::new();
+    let board = board();
     board.upsert_project(project("p", "RMS", &[]));
 
     let mut orphaned_column = task("p", 1, "gone", &[]);
@@ -363,4 +391,110 @@ fn a_task_whose_column_was_deleted_is_not_archived() {
     board.upsert_task(orphaned_column.clone());
 
     assert!(!board.read().is_archived(&orphaned_column));
+}
+
+/// Columns come from the template, and a project following none has a bare Todo -> Done board.
+///
+/// The whole point of the indirection, and the case that used to be impossible: a project with no
+/// columns configured is legitimate rather than broken.
+#[test]
+fn a_project_following_no_template_has_no_middle_columns() {
+    let board = board();
+
+    let mut without = project("p", "RMS", &[]);
+    without.column_template_id = None;
+    board.upsert_project(without);
+
+    let project = board.read().get_project("p").unwrap();
+
+    assert!(project.columns.is_empty());
+    assert!(project.has_column(COLUMN_ID_TODO));
+    assert!(project.has_column(COLUMN_ID_DONE));
+    assert!(!project.has_column("in-progress"));
+}
+
+/// Editing a template moves every project that follows it, in the same swap.
+///
+/// This is what the resolved-on-rebuild cache buys, and what would silently rot if a project kept its
+/// own copy of the columns instead.
+#[test]
+fn editing_a_template_changes_every_project_following_it() {
+    let board = board();
+    board.upsert_project(project("one", "AAA", &[]));
+    board.upsert_project(project("two", "BBB", &[]));
+
+    let mut edited = template();
+    edited.columns.push(ColumnModel {
+        id: "review".to_string(),
+        name: "Review".to_string(),
+        description: String::new(),
+        order: 20,
+    });
+    board.upsert_column_template(edited);
+
+    let read = board.read();
+
+    for id in ["one", "two"] {
+        let project = read.get_project(id).unwrap();
+
+        assert_eq!(
+            project
+                .columns
+                .iter()
+                .map(|itm| itm.id.as_str())
+                .collect::<Vec<&str>>(),
+            vec!["in-progress", "review"],
+            "project {id} should follow the edited template"
+        );
+    }
+}
+
+/// A task parked in a column the template no longer has reads as Todo, and its stored status survives —
+/// so putting the column back brings it home. Same rule a deleted column always had.
+#[test]
+fn dropping_a_column_from_a_template_parks_its_tasks_in_todo() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+    board.upsert_task(task("p", 1, "in-progress", &[]));
+
+    let mut emptied = template();
+    emptied.columns.clear();
+    board.upsert_column_template(emptied);
+
+    let read = board.read();
+    let project = read.get_project("p").unwrap();
+    let stored = read.get_task("p", 1).unwrap();
+
+    assert_eq!(
+        stored.status, "in-progress",
+        "the stored value must survive"
+    );
+    assert_eq!(project.effective_status(&stored.status), COLUMN_ID_TODO);
+
+    // Put it back: the task returns to the column it never actually left.
+    board.upsert_column_template(template());
+
+    let read = board.read();
+    let project = read.get_project("p").unwrap();
+    assert_eq!(project.effective_status("in-progress"), "in-progress");
+}
+
+/// The count that makes a template refusable to delete, and shows an edit's blast radius.
+#[test]
+fn a_template_knows_how_many_projects_follow_it() {
+    let board = board();
+    board.upsert_project(project("one", "AAA", &[]));
+    board.upsert_project(project("two", "BBB", &[]));
+
+    let mut alone = project("three", "CCC", &[]);
+    alone.column_template_id = None;
+    board.upsert_project(alone);
+
+    let read = board.read();
+
+    assert_eq!(read.count_projects_using_template(TEMPLATE_ID), 2);
+    assert_eq!(
+        read.count_projects_using_template("nothing-follows-this"),
+        0
+    );
 }

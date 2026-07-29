@@ -4,8 +4,11 @@ use rust_extensions::AsStr;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{ProjectColumnResponse, ProjectKindResponse, ProjectResponse};
 
-use crate::board::{ColumnModel, KindModel, ProjectModel};
-use crate::postgres::{ProjectColumnJsonModel, ProjectDto, ProjectKindJsonModel};
+use crate::board::{ColumnModel, ColumnTemplateModel, KindModel, ProjectModel};
+use crate::postgres::{
+    ColumnTemplateColumnJsonModel, ColumnTemplateDto, ProjectColumnJsonModel, ProjectDto,
+    ProjectKindJsonModel,
+};
 
 // Conversions are `From` rather than `Into`. The house style says "always an impl, never a standalone
 // `map_x_to_y` function", and `From` satisfies that while also giving `Into` for free — and clippy's
@@ -61,10 +64,6 @@ impl From<&KindModel> for ProjectKindJsonModel {
 /// empty and the loader fills it.
 impl From<&ProjectDto> for ProjectModel {
     fn from(src: &ProjectDto) -> Self {
-        let mut columns: Vec<ColumnModel> = src.columns.iter().map(|itm| itm.into()).collect();
-        // Sorted once here so every reader is already in board order.
-        columns.sort_by_key(|itm| itm.order);
-
         Self {
             id: src.id.clone(),
             name: src.name.clone(),
@@ -75,7 +74,10 @@ impl From<&ProjectDto> for ProjectModel {
                 .iter()
                 .map(|itm| itm.to_uppercase())
                 .collect(),
-            columns,
+            column_template_id: src.column_template_id.clone(),
+            // Left empty on purpose: `BoardInner::rebuild_indexes` fills it from the template. Reading
+            // the row's own (dead) column here would resurrect a value nothing maintains.
+            columns: Vec::new(),
             kinds: src.kinds.iter().map(|itm| itm.into()).collect(),
             members: BTreeSet::new(),
             last_task_number: src.last_task_number,
@@ -94,7 +96,9 @@ impl From<&ProjectModel> for ProjectDto {
             description: src.description.clone(),
             prefix: src.prefix.clone(),
             prefix_history: src.prefix_history.clone(),
-            columns: src.columns.iter().map(|itm| itm.into()).collect(),
+            column_template_id: src.column_template_id.clone(),
+            // The dead field. Written empty — the columns it used to hold live in the template now.
+            columns: Vec::new(),
             kinds: src.kinds.iter().map(|itm| itm.into()).collect(),
             last_task_number: src.last_task_number,
             created: src.created,
@@ -110,7 +114,11 @@ impl From<&ProjectModel> for ProjectDto {
 /// `tasks_amount` is derived against the board rather than read off the project, so it is passed in.
 /// There is no `labels` here on purpose: the UI configures projects and never tags anything, so the
 /// label vocabulary is an MCP-only concern and lives on the MCP view instead.
-pub fn project_to_response(src: &ProjectModel, tasks_amount: usize) -> ProjectResponse {
+pub fn project_to_response(
+    src: &ProjectModel,
+    tasks_amount: usize,
+    column_template: Option<&ColumnTemplateModel>,
+) -> ProjectResponse {
     ProjectResponse {
         id: src.id.clone(),
         name: src.name.clone(),
@@ -139,5 +147,86 @@ pub fn project_to_response(src: &ProjectModel, tasks_amount: usize) -> ProjectRe
             .collect(),
         members: src.members.iter().cloned().collect(),
         tasks_amount: tasks_amount as i32,
+        column_template_id: src.column_template_id.clone(),
+        // The NAME as well as the id, so the setup screen can say which template a project follows
+        // without holding the whole template list to look it up. `None` covers both "follows none" and
+        // "follows one that is gone" — which read the same way on a board, so they read the same here.
+        column_template_name: column_template.map(|itm| itm.name.clone()),
+    }
+}
+
+impl From<&ColumnTemplateColumnJsonModel> for ColumnModel {
+    fn from(src: &ColumnTemplateColumnJsonModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            name: src.name.clone(),
+            description: src.description.clone(),
+            order: src.column_order,
+        }
+    }
+}
+
+impl From<&ColumnModel> for ColumnTemplateColumnJsonModel {
+    fn from(src: &ColumnModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            name: src.name.clone(),
+            description: src.description.clone(),
+            column_order: src.order,
+        }
+    }
+}
+
+impl From<&ColumnTemplateDto> for ColumnTemplateModel {
+    fn from(src: &ColumnTemplateDto) -> Self {
+        let mut columns: Vec<ColumnModel> = src.columns.iter().map(|itm| itm.into()).collect();
+        // Sorted once here so every reader is already in board order.
+        columns.sort_by_key(|itm| itm.order);
+
+        Self {
+            id: src.id.clone(),
+            name: src.name.clone(),
+            description: src.description.clone(),
+            columns,
+            created: src.created,
+        }
+    }
+}
+
+impl From<&ColumnTemplateModel> for ColumnTemplateDto {
+    fn from(src: &ColumnTemplateModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            name: src.name.clone(),
+            description: src.description.clone(),
+            columns: src.columns.iter().map(|itm| itm.into()).collect(),
+            created: src.created,
+        }
+    }
+}
+
+/// Memory -> wire, with the count of projects following it passed in — it is derived against the whole
+/// board, which a template does not know about.
+pub fn column_template_to_response(
+    src: &ColumnTemplateModel,
+    used_by: usize,
+) -> task_manager_shared::column_templates::ColumnTemplateResponse {
+    task_manager_shared::column_templates::ColumnTemplateResponse {
+        id: src.id.clone(),
+        name: src.name.clone(),
+        description: src.description.clone(),
+        columns: src
+            .columns
+            .iter()
+            .map(
+                |itm| task_manager_shared::column_templates::ColumnTemplateColumn {
+                    id: itm.id.clone(),
+                    name: itm.name.clone(),
+                    description: itm.description.clone(),
+                    order: itm.order,
+                },
+            )
+            .collect(),
+        used_by: used_by as i32,
     }
 }

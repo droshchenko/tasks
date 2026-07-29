@@ -48,96 +48,39 @@ pub async fn update_project(
     handle_http_empty(authed("/api/projects/v1/update", HttpVerb::Post, request).await).await
 }
 
-pub async fn add_column(
+/// Point a project at a column template, or at none with an empty id.
+pub async fn set_column_template(
     project_id: &str,
-    id: &str,
-    name: &str,
-    description: &str,
-    order: i32,
+    column_template_id: &str,
 ) -> Result<(), RequestError> {
-    let request = AddProjectColumnInputModel {
+    let request = SetProjectColumnTemplateInputModel {
         project_id: project_id.to_string(),
-        id: id.to_string(),
-        name: name.to_string(),
-        description: description.to_string(),
-        order,
+        column_template_id: column_template_id.to_string(),
     };
 
-    handle_http_empty(authed("/api/projects/v1/columns/add", HttpVerb::Post, request).await).await
+    handle_http_empty(
+        authed(
+            "/api/projects/v1/column-template/set",
+            HttpVerb::Post,
+            request,
+        )
+        .await,
+    )
+    .await
 }
 
-pub async fn update_column(
+/// Replace a project's whole set of task types. A snapshot, not a delta — the dialog builds the complete
+/// list and sends it once.
+pub async fn set_kinds(
     project_id: &str,
-    column_id: &str,
-    name: &str,
-    description: &str,
-    order: i32,
+    kinds: Vec<ProjectKindInputItem>,
 ) -> Result<(), RequestError> {
-    let request = UpdateProjectColumnInputModel {
+    let request = SetProjectKindsInputModel {
         project_id: project_id.to_string(),
-        column_id: column_id.to_string(),
-        name: name.to_string(),
-        description: description.to_string(),
-        order,
+        kinds,
     };
 
-    handle_http_empty(authed("/api/projects/v1/columns/update", HttpVerb::Post, request).await)
-        .await
-}
-
-pub async fn delete_column(project_id: &str, column_id: &str) -> Result<(), RequestError> {
-    let request = DeleteProjectColumnInputModel {
-        project_id: project_id.to_string(),
-        column_id: column_id.to_string(),
-    };
-
-    handle_http_empty(authed("/api/projects/v1/columns/delete", HttpVerb::Post, request).await)
-        .await
-}
-
-pub async fn add_kind(
-    project_id: &str,
-    id: &str,
-    name: &str,
-    description: &str,
-    color: &str,
-) -> Result<(), RequestError> {
-    let request = AddProjectKindInputModel {
-        project_id: project_id.to_string(),
-        id: id.to_string(),
-        name: name.to_string(),
-        description: description.to_string(),
-        color: color.to_string(),
-    };
-
-    handle_http_empty(authed("/api/projects/v1/kinds/add", HttpVerb::Post, request).await).await
-}
-
-pub async fn update_kind(
-    project_id: &str,
-    kind_id: &str,
-    name: &str,
-    description: &str,
-    color: &str,
-) -> Result<(), RequestError> {
-    let request = UpdateProjectKindInputModel {
-        project_id: project_id.to_string(),
-        kind_id: kind_id.to_string(),
-        name: name.to_string(),
-        description: description.to_string(),
-        color: color.to_string(),
-    };
-
-    handle_http_empty(authed("/api/projects/v1/kinds/update", HttpVerb::Post, request).await).await
-}
-
-pub async fn delete_kind(project_id: &str, kind_id: &str) -> Result<(), RequestError> {
-    let request = DeleteProjectKindInputModel {
-        project_id: project_id.to_string(),
-        kind_id: kind_id.to_string(),
-    };
-
-    handle_http_empty(authed("/api/projects/v1/kinds/delete", HttpVerb::Post, request).await).await
+    handle_http_empty(authed("/api/projects/v1/kinds/set", HttpVerb::Post, request).await).await
 }
 
 /// Replaces the whole set — which is how the screen works, and means this side never has to diff.

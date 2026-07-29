@@ -1,10 +1,12 @@
 mod auth;
+mod column_templates;
 mod projects;
 mod system;
 mod tasks;
 mod users;
 
 pub use auth::*;
+pub use column_templates::*;
 pub use projects::*;
 pub use system::*;
 pub use tasks::*;

@@ -7,12 +7,25 @@ use task_manager_shared::kind_color::KindColor;
 ///
 /// The two anchors (`todo`, `done`) are not represented here — they exist by definition, and a
 /// reader adds them at either end. `order` places this column between them.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ColumnModel {
     pub id: String,
     pub name: String,
     pub description: String,
     pub order: i32,
+}
+
+/// A named set of columns, shared by any number of projects.
+///
+/// Columns live here rather than on a project. `columns` is kept sorted by `order` on write, so every
+/// read is already in board order.
+#[derive(Debug, Clone)]
+pub struct ColumnTemplateModel {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub columns: Vec<ColumnModel>,
+    pub created: DateTimeAsMicroseconds,
 }
 
 /// One kind of work, in memory. Unlike a column id, a kind is optional on a task.
@@ -39,7 +52,17 @@ pub struct ProjectModel {
     pub prefix: String,
     // Every prefix this project has carried before the current one, upper-cased, oldest first.
     pub prefix_history: Vec<String>,
-    // Sorted by `order`. Kept sorted on write so every read is already in board order.
+    // Which column template this project follows, and `None` for a project that follows none — whose
+    // board is then just Todo → Done. Not an error: creating a project would otherwise require creating
+    // a template first.
+    pub column_template_id: Option<String>,
+    // The columns resolved from that template, sorted by `order`.
+    //
+    // A CACHE, not the source of truth: `rebuild_indexes` recomputes it from the templates on every
+    // write, so it cannot drift — editing a template updates every project that follows it in the same
+    // swap. It exists because `has_column`, `effective_status`, the board read and the MCP tools all ask
+    // a project for its columns, and threading the template collection through every one of them would
+    // spread this indirection across the whole service instead of confining it to one function.
     pub columns: Vec<ColumnModel>,
     pub kinds: Vec<KindModel>,
     pub members: BTreeSet<String>,

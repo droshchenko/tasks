@@ -3,7 +3,9 @@ use std::sync::Arc;
 use encryption::aes::AesKey;
 
 use crate::board::Board;
-use crate::postgres::{ProjectMembersRepo, ProjectsRepo, TasksRepo, UsersRepo};
+use crate::postgres::{
+    ColumnTemplatesRepo, ProjectMembersRepo, ProjectsRepo, TasksRepo, UsersRepo,
+};
 use crate::settings::SettingsReader;
 use crate::subscribers::ProjectSubscribers;
 
@@ -18,6 +20,7 @@ pub struct AppContext {
     // Postgres is where the data is durable. Nothing reads through these repos except the startup
     // load and the write half of `scripts/` — every read serves from memory.
     pub projects_repo: ProjectsRepo,
+    pub column_templates_repo: ColumnTemplatesRepo,
     pub project_members_repo: ProjectMembersRepo,
     pub tasks_repo: TasksRepo,
     pub users_repo: UsersRepo,
@@ -60,6 +63,7 @@ impl AppContext {
 
         Self {
             projects_repo: ProjectsRepo::new(settings_reader.clone()).await,
+            column_templates_repo: ColumnTemplatesRepo::new(settings_reader.clone()).await,
             project_members_repo: ProjectMembersRepo::new(settings_reader.clone()).await,
             tasks_repo: TasksRepo::new(settings_reader.clone()).await,
             users_repo: UsersRepo::new(settings_reader.clone()).await,

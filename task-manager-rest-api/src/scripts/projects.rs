@@ -4,10 +4,9 @@ use rust_extensions::AsStr;
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use service_sdk::my_telemetry::MyTelemetryContext;
 use task_manager_shared::kind_color::KindColor;
-use task_manager_shared::projects::is_anchor_column;
 
 use crate::app::AppContext;
-use crate::board::{ColumnModel, KindModel, ProjectModel, is_valid_prefix};
+use crate::board::{KindModel, ProjectModel, is_valid_prefix};
 use crate::postgres::ProjectDto;
 
 fn validate_prefix(prefix: &str) -> Result<String, String> {
@@ -20,6 +19,12 @@ fn validate_prefix(prefix: &str) -> Result<String, String> {
     }
 
     Ok(prefix)
+}
+
+/// A column id, validated. Lives here next to the kind version and is shared with the column-template
+/// script, which applies the same rule to the same kind of hand-typed id.
+pub(super) fn validate_column_id(id: &str) -> Result<String, String> {
+    validate_config_id(id, "column")
 }
 
 /// An id typed in by a person for a column or a kind. Immutable once created, so it is worth being
@@ -84,6 +89,9 @@ pub async fn create_project(
         description: description.trim().to_string(),
         prefix,
         prefix_history: Vec::new(),
+        // No template to begin with: a new project's board is Todo -> Done until one is assigned.
+        // Requiring a template up front would mean you cannot create a project before creating one.
+        column_template_id: None,
         columns: Vec::new(),
         kinds: Vec::new(),
         members: BTreeSet::new(),
@@ -144,168 +152,81 @@ fn load(board: &crate::board::BoardInner, project_id: &str) -> Result<ProjectMod
         .ok_or_else(|| format!("no project with id '{project_id}'"))
 }
 
-/// Add a column between Todo and Done.
-pub async fn add_column(
-    app: &AppContext,
-    project_id: &str,
-    id: &str,
-    name: &str,
-    description: &str,
-    order: i32,
-) -> Result<(), String> {
-    let id = validate_config_id(id, "column")?;
-
-    if is_anchor_column(&id) {
-        return Err(format!(
-            "'{id}' is one of the two columns every project already has, and cannot be added"
-        ));
-    }
-
-    let board = app.board.read();
-    let mut project = load(&board, project_id)?;
-
-    if project.columns.iter().any(|itm| itm.id == id) {
-        return Err(format!("{} already has a column '{id}'", project.prefix));
-    }
-
-    project.columns.push(ColumnModel {
-        id,
-        name: name.trim().to_string(),
-        description: description.trim().to_string(),
-        order,
-    });
-    project.columns.sort_by_key(|itm| itm.order);
-
-    save(app, project).await;
-    Ok(())
-}
-
-/// Rename a column, or move it. The id is not touched — a column id is immutable, because tasks point
-/// at it as their status and there is no rename that would not have to rewrite them.
-pub async fn update_column(
-    app: &AppContext,
-    project_id: &str,
-    column_id: &str,
-    name: &str,
-    description: &str,
-    order: i32,
-) -> Result<(), String> {
-    let board = app.board.read();
-    let mut project = load(&board, project_id)?;
-
-    let column = project
-        .columns
-        .iter_mut()
-        .find(|itm| itm.id == column_id)
-        .ok_or_else(|| format!("{} has no column '{column_id}'", project.prefix))?;
-
-    column.name = name.trim().to_string();
-    column.description = description.trim().to_string();
-    column.order = order;
-
-    project.columns.sort_by_key(|itm| itm.order);
-
-    save(app, project).await;
-    Ok(())
-}
-
-/// Remove a column.
+/// Point a project at a column template, or at none.
 ///
-/// Its tasks are deliberately left alone: their stored status still names this column, and they read
-/// as Todo from now on. Re-creating a column with the same id brings them straight back to it.
-pub async fn delete_column(
+/// The whole of a project's column configuration. There is no add-column here: columns are configured in
+/// the template, and this only decides which template the project follows.
+///
+/// An empty id means "none" — a legitimate state whose board is Todo -> Done. A non-empty id naming a
+/// template that does not exist is refused: silently accepting it would leave the project looking
+/// configured while its board had nothing in the middle.
+pub async fn set_column_template(
     app: &AppContext,
     project_id: &str,
-    column_id: &str,
+    column_template_id: &str,
+) -> Result<(), String> {
+    let column_template_id = column_template_id.trim().to_lowercase();
+
+    let board = app.board.read();
+    let mut project = load(&board, project_id)?;
+
+    project.column_template_id = if column_template_id.is_empty() {
+        None
+    } else {
+        if board.get_column_template(&column_template_id).is_none() {
+            return Err(format!("no column template with id '{column_template_id}'"));
+        }
+
+        Some(column_template_id)
+    };
+
+    save(app, project).await;
+    Ok(())
+}
+
+/// Replace a project's whole set of kinds.
+///
+/// A snapshot, not a delta — see `SetProjectKindsInputModel`. Validated as a whole before anything is
+/// written, so a bad colour or a duplicate id fails the call and leaves the project exactly as it was
+/// rather than half-applied.
+///
+/// A task pointing at a kind that this call removed keeps its stored value and reads as having no kind.
+/// The value is left alone so re-adding the kind brings those tasks back to it.
+pub async fn set_kinds(
+    app: &AppContext,
+    project_id: &str,
+    kinds: &[task_manager_shared::projects::ProjectKindInputItem],
 ) -> Result<(), String> {
     let board = app.board.read();
     let mut project = load(&board, project_id)?;
 
-    let before = project.columns.len();
-    project.columns.retain(|itm| itm.id != column_id);
+    let mut next: Vec<KindModel> = Vec::with_capacity(kinds.len());
 
-    if project.columns.len() == before {
-        return Err(format!("{} has no column '{column_id}'", project.prefix));
+    for kind in kinds {
+        let id = validate_config_id(&kind.id, "kind")?;
+
+        if next.iter().any(|itm| itm.id == id) {
+            return Err(format!("kind '{id}' is listed twice"));
+        }
+
+        if kind.name.trim().is_empty() {
+            return Err(format!("kind '{id}' needs a name"));
+        }
+
+        next.push(KindModel {
+            id,
+            name: kind.name.trim().to_string(),
+            description: kind.description.trim().to_string(),
+            color: parse_color(&kind.color)?,
+        });
     }
 
-    save(app, project).await;
-    Ok(())
-}
-
-pub async fn add_kind(
-    app: &AppContext,
-    project_id: &str,
-    id: &str,
-    name: &str,
-    description: &str,
-    color: &str,
-) -> Result<(), String> {
-    let id = validate_config_id(id, "kind")?;
-    let color = parse_color(color)?;
-
-    let board = app.board.read();
-    let mut project = load(&board, project_id)?;
-
-    if project.kinds.iter().any(|itm| itm.id == id) {
-        return Err(format!("{} already has a kind '{id}'", project.prefix));
-    }
-
-    project.kinds.push(KindModel {
-        id,
-        name: name.trim().to_string(),
-        description: description.trim().to_string(),
-        color,
-    });
+    project.kinds = next;
 
     save(app, project).await;
     Ok(())
 }
 
-pub async fn update_kind(
-    app: &AppContext,
-    project_id: &str,
-    kind_id: &str,
-    name: &str,
-    description: &str,
-    color: &str,
-) -> Result<(), String> {
-    let color = parse_color(color)?;
-
-    let board = app.board.read();
-    let mut project = load(&board, project_id)?;
-
-    let kind = project
-        .kinds
-        .iter_mut()
-        .find(|itm| itm.id == kind_id)
-        .ok_or_else(|| format!("{} has no kind '{kind_id}'", project.prefix))?;
-
-    kind.name = name.trim().to_string();
-    kind.description = description.trim().to_string();
-    kind.color = color;
-
-    save(app, project).await;
-    Ok(())
-}
-
-/// Remove a kind. Tasks carrying it read as having no kind — the same leniency as a deleted column.
-pub async fn delete_kind(app: &AppContext, project_id: &str, kind_id: &str) -> Result<(), String> {
-    let board = app.board.read();
-    let mut project = load(&board, project_id)?;
-
-    let before = project.kinds.len();
-    project.kinds.retain(|itm| itm.id != kind_id);
-
-    if project.kinds.len() == before {
-        return Err(format!("{} has no kind '{kind_id}'", project.prefix));
-    }
-
-    save(app, project).await;
-    Ok(())
-}
-
-/// Unlike a column or a kind id, a colour is validated strictly: it is chosen from a fixed palette in
-/// the UI, so anything else is a caller bug rather than an old value to be lenient about.
 fn parse_color(color: &str) -> Result<KindColor, String> {
     color
         .trim()

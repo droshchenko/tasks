@@ -1,12 +1,13 @@
 use std::rc::Rc;
 
 use dioxus::prelude::*;
+use task_manager_shared::column_templates::ColumnTemplateResponse;
 use task_manager_shared::projects::ProjectResponse;
 
 mod dialog_template;
 pub use dialog_template::*;
-mod edit_columns;
-pub use edit_columns::*;
+mod edit_column_template;
+pub use edit_column_template::*;
 mod edit_kinds;
 pub use edit_kinds::*;
 mod edit_members;
@@ -21,9 +22,11 @@ pub use edit_project::*;
 /// re-read is one of them — it reads `board_revision` from there. A separate signal keeps opening a
 /// dialog from refetching a board.
 ///
-/// `on_saved` travels with the state so the page that opened the dialog decides what a save means. Every
-/// caller so far uses it to reset its `DataState`, which re-reads from the server rather than patching a
-/// local copy — a local patch can disagree with what was actually stored.
+/// **Every dialog follows one pattern**: it is handed a model, it builds a new model as you edit, its Save
+/// lights up only when the two differ, and pressing Save hands the new model out through an
+/// `EventHandler`. The handler — owned by the page, not the dialog — makes the request and refreshes.
+/// No dialog calls an API and none of them touch a page's state, which is why none of them can leave a
+/// half-applied edit behind: nothing is sent until Save, and what is sent is the whole thing.
 #[derive(Clone)]
 pub enum DialogState {
     None,
@@ -31,10 +34,6 @@ pub enum DialogState {
     /// call runs differ, so it is one dialog rather than two nearly identical ones.
     EditProject {
         project: Option<Rc<ProjectResponse>>,
-        on_saved: EventHandler<()>,
-    },
-    EditColumns {
-        project: Rc<ProjectResponse>,
         on_saved: EventHandler<()>,
     },
     EditKinds {
@@ -45,9 +44,18 @@ pub enum DialogState {
         project: Rc<ProjectResponse>,
         on_saved: EventHandler<()>,
     },
+    /// Columns are configured here — once per template, under Settings — and never on a project, which
+    /// only points at one. `template: None` creates.
+    EditColumnTemplate {
+        template: Option<Rc<ColumnTemplateResponse>>,
+        on_saved: EventHandler<()>,
+    },
 }
 
 /// Mounted once, at the top of the signed-in shell, so a dialog overlays whatever screen opened it.
+///
+/// This is also where a dialog's result is turned into a request: the submit handlers live here so the
+/// dialogs stay pure and every caller gets the same behaviour — save, close on success, report on failure.
 #[component]
 pub fn RenderDialog() -> Element {
     let state = consume_context::<Signal<DialogState>>().read().clone();
@@ -57,19 +65,90 @@ pub fn RenderDialog() -> Element {
         DialogState::EditProject { project, on_saved } => rsx! {
             EditProjectDialog { project, on_saved }
         },
-        DialogState::EditColumns { project, on_saved } => rsx! {
-            EditColumnsDialog { project, on_saved }
-        },
-        DialogState::EditKinds { project, on_saved } => rsx! {
-            EditKindsDialog { project, on_saved }
-        },
+        DialogState::EditKinds { project, on_saved } => {
+            let project_id = project.id.clone();
+
+            rsx! {
+                EditKindsDialog {
+                    project,
+                    on_submit: move |kinds| {
+                        let project_id = project_id.clone();
+                        begin_submit();
+                        spawn(async move {
+                            match crate::api::set_kinds(&project_id, kinds).await {
+                                Ok(()) => {
+                                    on_saved.call(());
+                                    close();
+                                }
+                                Err(err) => submit_failed(err.message),
+                            }
+                        });
+                    },
+                }
+            }
+        }
         DialogState::EditMembers { project, on_saved } => rsx! {
             EditMembersDialog { project, on_saved }
+        },
+        DialogState::EditColumnTemplate { template, on_saved } => rsx! {
+            EditColumnTemplateDialog {
+                template,
+                on_submit: move |submit: ColumnTemplateSubmit| {
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::save_column_template(
+                                &submit.id,
+                                &submit.name,
+                                &submit.description,
+                                submit.columns,
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                on_saved.call(());
+                                close();
+                            }
+                            Err(err) => submit_failed(err.message),
+                        }
+                    });
+                },
+            }
         },
     }
 }
 
+/// How a submit went, for the dialogs whose request is made by the router rather than by themselves.
+///
+/// Without this a failed save is invisible: the dialog has already disabled its Save button and has no way
+/// to learn the request came back, so it sits there looking busy for ever. The router writes the outcome
+/// here and the dialog reads it — which keeps the dialog free of API calls without making a failure
+/// disappear.
+#[derive(Clone, Default, PartialEq)]
+pub struct DialogFeedback {
+    pub saving: bool,
+    pub error: String,
+}
+
+pub fn feedback() -> DialogFeedback {
+    consume_context::<Signal<DialogFeedback>>().read().clone()
+}
+
+fn begin_submit() {
+    consume_context::<Signal<DialogFeedback>>().set(DialogFeedback {
+        saving: true,
+        error: String::new(),
+    });
+}
+
+fn submit_failed(message: String) {
+    consume_context::<Signal<DialogFeedback>>().set(DialogFeedback {
+        saving: false,
+        error: message,
+    });
+}
+
 /// Open a dialog from anywhere with a `Signal<DialogState>` in context.
 pub fn open(state: DialogState) {
+    consume_context::<Signal<DialogFeedback>>().set(DialogFeedback::default());
     consume_context::<Signal<DialogState>>().set(state);
 }

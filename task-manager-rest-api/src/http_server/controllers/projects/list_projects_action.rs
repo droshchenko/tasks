@@ -40,7 +40,21 @@ async fn handle_request(
     let projects = board
         .projects_visible_to(&user.email, user.is_admin)
         .iter()
-        .map(|project| project_to_response(project, board.tasks_amount(&project.id)))
+        .map(|project| {
+            // The template is looked up per project rather than passed as a map: the list is short, the
+            // lookup is a hash hit, and threading a collection through the mapper would make every
+            // caller know about templates.
+            let template = project
+                .column_template_id
+                .as_ref()
+                .and_then(|id| board.get_column_template(id));
+
+            project_to_response(
+                project,
+                board.tasks_amount(&project.id),
+                template.as_deref(),
+            )
+        })
         .collect();
 
     HttpOutput::as_json(ProjectsResponse { projects }).into_ok_result(true)

@@ -9,8 +9,8 @@ use crate::http_server::errors::bad_request;
 use_my_http_server!();
 
 #[http_route(
-    method: "PUT",
-    route: "/api/users/v1/{email}",
+    method: "POST",
+    route: "/api/users/v1/update",
     controller: "Users",
     summary: "Change a name, an admin flag or disable someone",
     description: "Admin only. The email is not editable — it is the identity, and every assignment and comment authorship points at it. Disabling ends their open sessions immediately rather than letting a live tab keep working, and leaves their tasks and comments exactly where they are.",

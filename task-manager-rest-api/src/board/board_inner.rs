@@ -4,7 +4,7 @@ use std::time::Duration;
 use ahash::{AHashMap, AHashSet};
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 
-use super::models::{ProjectModel, TaskModel, UserModel};
+use super::models::{ColumnTemplateModel, ProjectModel, TaskModel, UserModel};
 
 /// How long a finished task stays on the board before it counts as archived.
 ///
@@ -24,6 +24,9 @@ pub const ARCHIVE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 #[derive(Clone)]
 pub struct BoardInner {
     projects: AHashMap<String, Arc<ProjectModel>>,
+    /// Template id -> the named set of columns projects follow. Columns are configured here, not on a
+    /// project; a project carries only the id of the template it follows.
+    column_templates: AHashMap<String, Arc<ColumnTemplateModel>>,
     /// Upper-cased current prefix -> project id. One entry per project: two projects may not hold
     /// the same prefix at the same time, which is exactly what makes this a map and not a multimap.
     prefix_index: AHashMap<String, String>,
@@ -37,18 +40,21 @@ pub struct BoardInner {
     /// Cached whole lists so a "give me everything" read clones an `Arc` instead of allocating.
     projects_list: Arc<Vec<Arc<ProjectModel>>>,
     users_list: Arc<Vec<Arc<UserModel>>>,
+    column_templates_list: Arc<Vec<Arc<ColumnTemplateModel>>>,
 }
 
 impl BoardInner {
     pub fn new() -> Self {
         Self {
             projects: AHashMap::new(),
+            column_templates: AHashMap::new(),
             prefix_index: AHashMap::new(),
             historical_prefix_index: AHashMap::new(),
             tasks: AHashMap::new(),
             users: AHashMap::new(),
             projects_list: Arc::new(Vec::new()),
             users_list: Arc::new(Vec::new()),
+            column_templates_list: Arc::new(Vec::new()),
         }
     }
 
@@ -67,8 +73,15 @@ impl BoardInner {
         projects: Vec<ProjectModel>,
         tasks: Vec<TaskModel>,
         users: Vec<UserModel>,
+        column_templates: Vec<ColumnTemplateModel>,
     ) -> Self {
         let mut result = Self::new();
+
+        // Before the projects: `rebuild_indexes` resolves each project's columns against these, and a
+        // project loaded first would otherwise resolve to an empty board until the next write.
+        for template in column_templates {
+            result.put_column_template(Arc::new(template));
+        }
 
         let mut highest_number: AHashMap<&str, i64> = AHashMap::new();
         for task in &tasks {
@@ -112,6 +125,14 @@ impl BoardInner {
         self.projects.insert(project.id.clone(), project);
     }
 
+    pub(super) fn put_column_template(&mut self, template: Arc<ColumnTemplateModel>) {
+        self.column_templates.insert(template.id.clone(), template);
+    }
+
+    pub(super) fn drop_column_template(&mut self, id: &str) {
+        self.column_templates.remove(id);
+    }
+
     pub(super) fn put_task(&mut self, task: Arc<TaskModel>) {
         self.tasks
             .entry(task.project_id.clone())
@@ -134,6 +155,8 @@ impl BoardInner {
     pub(super) fn rebuild_indexes(&mut self) {
         self.prefix_index.clear();
         self.historical_prefix_index.clear();
+
+        self.resolve_project_columns();
 
         for project in self.projects.values() {
             self.prefix_index
@@ -166,9 +189,62 @@ impl BoardInner {
         let mut users: Vec<Arc<UserModel>> = self.users.values().cloned().collect();
         users.sort_by(|l, r| l.email.cmp(&r.email));
         self.users_list = Arc::new(users);
+
+        let mut templates: Vec<Arc<ColumnTemplateModel>> =
+            self.column_templates.values().cloned().collect();
+        templates.sort_by_key(|itm| itm.name.to_lowercase());
+        self.column_templates_list = Arc::new(templates);
+    }
+
+    /// Copy each project's columns down from the template it follows.
+    ///
+    /// The single place the template indirection is resolved. Everything downstream — `has_column`,
+    /// `effective_status`, the board read, the MCP tools — keeps asking a project for its own columns and
+    /// never learns templates exist.
+    ///
+    /// A project following no template, or one naming a template that is gone, gets an empty list: its
+    /// board is Todo → Done. Tasks parked in a column that just disappeared are not touched; they read as
+    /// Todo through `effective_status` and come back if the template returns. Same rule as a deleted
+    /// column has always had, which is why deleting a template in use is refused rather than silently
+    /// emptying boards.
+    fn resolve_project_columns(&mut self) {
+        for project in self.projects.values_mut() {
+            let resolved = project
+                .column_template_id
+                .as_ref()
+                .and_then(|id| self.column_templates.get(id))
+                .map(|template| template.columns.clone())
+                .unwrap_or_default();
+
+            if project.columns == resolved {
+                continue;
+            }
+
+            // `make_mut` clones only when this project is shared with a snapshot a reader still holds —
+            // so a rebuild that changes nothing copies nothing.
+            Arc::make_mut(project).columns = resolved;
+        }
     }
 
     // ---------------------------------------------------------------------------------- reading
+
+    pub fn get_column_template(&self, id: &str) -> Option<Arc<ColumnTemplateModel>> {
+        self.column_templates.get(id).cloned()
+    }
+
+    /// Every template, by name. Cheap — clones one `Arc`.
+    pub fn get_column_templates(&self) -> Arc<Vec<Arc<ColumnTemplateModel>>> {
+        self.column_templates_list.clone()
+    }
+
+    /// How many projects follow this template. What makes deleting it refusable, and what the setup
+    /// screen shows so an edit's blast radius is visible before you make it.
+    pub fn count_projects_using_template(&self, template_id: &str) -> usize {
+        self.projects
+            .values()
+            .filter(|itm| itm.column_template_id.as_deref() == Some(template_id))
+            .count()
+    }
 
     pub fn get_project(&self, project_id: &str) -> Option<Arc<ProjectModel>> {
         self.projects.get(project_id).cloned()

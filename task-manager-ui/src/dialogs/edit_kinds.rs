@@ -3,100 +3,148 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 use rust_extensions::AsStr;
 use task_manager_shared::kind_color::KindColor;
-use task_manager_shared::projects::{ProjectKindResponse, ProjectResponse};
+use task_manager_shared::projects::{ProjectKindInputItem, ProjectResponse};
 
-/// The types of work a task can be, per project.
+/// The types of work a task can be, per project — edited whole.
+///
+/// Same pattern as [`super::EditColumnTemplateDialog`]: model in, a draft built beside it, Save lit only
+/// when they differ, the new model handed out through `on_submit`.
 ///
 /// Called a "task type" on screen and a `kind` in the code, the API and the MCP tools. Deliberate: the
 /// wire name is a contract with every agent already calling `tasks_create` with `kind`, and renaming it
 /// to match a label would break them for nothing.
-#[derive(Clone, Default)]
+#[derive(Clone, PartialEq)]
 struct ComponentState {
-    new_id: String,
-    new_name: String,
-    new_description: String,
-    new_color: String,
-    error: String,
-    busy: bool,
+    original: Vec<ProjectKindInputItem>,
+    draft: Vec<ProjectKindInputItem>,
+    new_kind: NewKind,
+}
+
+#[derive(Clone, PartialEq)]
+struct NewKind {
+    id: String,
+    name: String,
+    description: String,
+    color: String,
+}
+
+impl Default for NewKind {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            description: String::new(),
+            color: KindColor::default().as_str().to_string(),
+        }
+    }
 }
 
 impl ComponentState {
-    fn new() -> Self {
+    fn new(project: &ProjectResponse) -> Self {
+        let draft: Vec<ProjectKindInputItem> = project
+            .kinds
+            .iter()
+            .map(|itm| ProjectKindInputItem {
+                id: itm.id.clone(),
+                name: itm.name.clone(),
+                description: itm.description.clone(),
+                color: itm.color.clone(),
+            })
+            .collect();
+
         Self {
-            new_color: KindColor::default().as_str().to_string(),
-            ..Default::default()
+            original: draft.clone(),
+            draft,
+            new_kind: NewKind::default(),
         }
     }
 
+    fn is_changed(&self) -> bool {
+        self.draft != self.original
+    }
+
+    /// Every type needs a name, checked here so an unsaveable set cannot be submitted and bounced.
+    fn can_save(&self) -> bool {
+        self.is_changed() && self.draft.iter().all(|itm| !itm.name.trim().is_empty())
+    }
+
     fn can_add(&self) -> bool {
-        !self.busy && !self.new_id.trim().is_empty()
+        let id = self.new_kind.id.trim();
+
+        !id.is_empty() && !self.draft.iter().any(|itm| itm.id == id)
     }
 
-    fn begin(&mut self) {
-        self.busy = true;
-        self.error = String::new();
+    fn add(&mut self) {
+        if !self.can_add() {
+            return;
+        }
+
+        self.draft.push(ProjectKindInputItem {
+            id: self.new_kind.id.trim().to_lowercase(),
+            name: self.new_kind.name.trim().to_string(),
+            description: self.new_kind.description.trim().to_string(),
+            color: self.new_kind.color.clone(),
+        });
+
+        // The colour is kept: picking one and then adding several is the usual way round.
+        self.new_kind.id = String::new();
+        self.new_kind.name = String::new();
+        self.new_kind.description = String::new();
     }
 
-    fn added(&mut self) {
-        self.busy = false;
-        self.new_id = String::new();
-        self.new_name = String::new();
-        self.new_description = String::new();
+    fn remove(&mut self, id: &str) {
+        self.draft.retain(|itm| itm.id != id);
     }
 
-    fn fail(&mut self, message: String) {
-        self.busy = false;
-        self.error = message;
+    fn set_name(&mut self, id: &str, value: String) {
+        if let Some(kind) = self.draft.iter_mut().find(|itm| itm.id == id) {
+            kind.name = value;
+        }
+    }
+
+    fn set_description(&mut self, id: &str, value: String) {
+        if let Some(kind) = self.draft.iter_mut().find(|itm| itm.id == id) {
+            kind.description = value;
+        }
+    }
+
+    fn set_color(&mut self, id: &str, value: String) {
+        if let Some(kind) = self.draft.iter_mut().find(|itm| itm.id == id) {
+            kind.color = value;
+        }
     }
 }
 
 #[component]
-pub fn EditKindsDialog(project: Rc<ProjectResponse>, on_saved: EventHandler<()>) -> Element {
-    let mut cs = use_signal(ComponentState::new);
+pub fn EditKindsDialog(
+    project: Rc<ProjectResponse>,
+    on_submit: EventHandler<Vec<ProjectKindInputItem>>,
+) -> Element {
+    let mut cs = use_signal(|| ComponentState::new(&project));
     let cs_ra = cs.read();
 
-    let add_project_id = project.id.clone();
-
-    let add = move |_| {
-        let project_id = add_project_id.clone();
-        let ra = cs.read();
-        let (id, name, description, color) = (
-            ra.new_id.trim().to_string(),
-            ra.new_name.trim().to_string(),
-            ra.new_description.trim().to_string(),
-            ra.new_color.clone(),
-        );
-        drop(ra);
-
-        cs.write().begin();
-
-        spawn(async move {
-            match crate::api::add_kind(&project_id, &id, &name, &description, &color).await {
-                Ok(()) => {
-                    cs.write().added();
-                    on_saved.call(());
-                }
-                Err(err) => cs.write().fail(err.message),
-            }
-        });
+    let submit = move |_| {
+        let draft = cs.read().draft.clone();
+        on_submit.call(draft);
     };
 
-    let new_id = cs_ra.new_id.as_str();
-    let new_name = cs_ra.new_name.as_str();
-    let new_description = cs_ra.new_description.as_str();
-    let new_color = cs_ra.new_color.clone();
-    let error = cs_ra.error.as_str();
+    let draft = cs_ra.draft.clone();
+    let new_kind = cs_ra.new_kind.clone();
+    // The submit outcome is the router's, not this dialog's — see `DialogFeedback`.
+    let feedback = super::feedback();
+    let error = feedback.error.clone();
+    let can_save = cs_ra.can_save() && !feedback.saving;
     let can_add = cs_ra.can_add();
 
     let content = rsx! {
         div { class: "field-hint",
-            "A task type is optional on a task. The description is what an agent reads before classifying one, so write the rule for applying it rather than a synonym of the name."
+            "A task type is optional on a task. The description is what an agent reads before classifying one, so write the rule for applying it rather than a synonym of the name. Nothing is sent until Save."
         }
         if !error.is_empty() {
             div { class: "error-banner", style: "margin-top: 10px", "{error}" }
         }
 
-        if project.kinds.is_empty() {
+        if draft.is_empty() {
             div { class: "empty-note", style: "margin-top: 12px", "No task types yet." }
         } else {
             div { class: "table-responsive", style: "margin-top: 12px",
@@ -107,16 +155,57 @@ pub fn EditKindsDialog(project: Rc<ProjectResponse>, on_saved: EventHandler<()>)
                             th { "Name" }
                             th { "Description" }
                             th { style: "width: 150px", "Colour" }
-                            th { style: "width: 150px" }
+                            th { style: "width: 90px" }
                         }
                     }
                     tbody {
-                        for kind in project.kinds.iter() {
-                            RenderKindRow {
-                                key: "{kind.id}",
-                                project_id: project.id.clone(),
-                                kind: kind.clone(),
-                                on_saved,
+                        for kind in draft.iter() {
+                            tr { key: "{kind.id}",
+                                td { class: "mono", "{kind.id}" }
+                                td {
+                                    input {
+                                        r#type: "text",
+                                        value: "{kind.name}",
+                                        oninput: {
+                                            let id = kind.id.clone();
+                                            move |event: Event<FormData>| {
+                                                cs.write().set_name(&id, event.value());
+                                            }
+                                        },
+                                    }
+                                }
+                                td {
+                                    input {
+                                        r#type: "text",
+                                        style: "width: 100%",
+                                        value: "{kind.description}",
+                                        oninput: {
+                                            let id = kind.id.clone();
+                                            move |event: Event<FormData>| {
+                                                cs.write().set_description(&id, event.value());
+                                            }
+                                        },
+                                    }
+                                }
+                                td {
+                                    RenderColorPicker {
+                                        value: kind.color.clone(),
+                                        on_pick: {
+                                            let id = kind.id.clone();
+                                            move |value| cs.write().set_color(&id, value)
+                                        },
+                                    }
+                                }
+                                td {
+                                    button {
+                                        class: "btn btn-sm btn-danger",
+                                        onclick: {
+                                            let id = kind.id.clone();
+                                            move |_| cs.write().remove(&id)
+                                        },
+                                        "Remove"
+                                    }
+                                }
                             }
                         }
                     }
@@ -130,121 +219,52 @@ pub fn EditKindsDialog(project: Rc<ProjectResponse>, on_saved: EventHandler<()>)
                 input {
                     r#type: "text",
                     placeholder: "bug",
-                    value: "{new_id}",
-                    oninput: move |event| cs.write().new_id = event.value().to_lowercase(),
+                    value: "{new_kind.id}",
+                    oninput: move |event| cs.write().new_kind.id = event.value().to_lowercase(),
                 }
             }
             div { class: "form-row",
                 label { "Name" }
                 input {
                     r#type: "text",
-                    value: "{new_name}",
-                    oninput: move |event| cs.write().new_name = event.value(),
+                    value: "{new_kind.name}",
+                    oninput: move |event| cs.write().new_kind.name = event.value(),
                 }
             }
             div { class: "form-row", style: "flex: 1 1 200px",
                 label { "Description" }
                 input {
                     r#type: "text",
-                    value: "{new_description}",
-                    oninput: move |event| cs.write().new_description = event.value(),
+                    value: "{new_kind.description}",
+                    oninput: move |event| cs.write().new_kind.description = event.value(),
                 }
             }
             div { class: "form-row",
                 label { "Colour" }
                 RenderColorPicker {
-                    value: new_color,
-                    on_pick: move |value| cs.write().new_color = value,
+                    value: new_kind.color.clone(),
+                    on_pick: move |value| cs.write().new_kind.color = value,
                 }
             }
-            button { class: "btn btn-primary", disabled: !can_add, onclick: add, "Add task type" }
+            button {
+                class: "btn",
+                disabled: !can_add,
+                onclick: move |_| cs.write().add(),
+                "Add task type"
+            }
         }
+    };
+
+    let ok_button = rsx! {
+        button { class: "btn btn-primary", disabled: !can_save, onclick: submit, "Save" }
     };
 
     super::dialog_template_ex(
         &format!("Task types · {}", project.prefix),
         content,
-        rsx! {},
+        ok_button,
         Some("modal-xl"),
     )
-}
-
-#[component]
-fn RenderKindRow(
-    project_id: String,
-    kind: ProjectKindResponse,
-    on_saved: EventHandler<()>,
-) -> Element {
-    let mut name = use_signal(|| kind.name.clone());
-    let mut description = use_signal(|| kind.description.clone());
-    let mut color = use_signal(|| kind.color.clone());
-
-    let save_ids = (project_id.clone(), kind.id.clone());
-
-    let save = move |_| {
-        let (project_id, kind_id) = save_ids.clone();
-        let (name_value, description_value, color_value) = (
-            name.read().clone(),
-            description.read().clone(),
-            color.read().clone(),
-        );
-
-        spawn(async move {
-            let _ = crate::api::update_kind(
-                &project_id,
-                &kind_id,
-                &name_value,
-                &description_value,
-                &color_value,
-            )
-            .await;
-            on_saved.call(());
-        });
-    };
-
-    let delete_ids = (project_id.clone(), kind.id.clone());
-
-    let delete = move |_| {
-        let (project_id, kind_id) = delete_ids.clone();
-
-        spawn(async move {
-            let _ = crate::api::delete_kind(&project_id, &kind_id).await;
-            on_saved.call(());
-        });
-    };
-
-    rsx! {
-        tr {
-            td { class: "mono", "{kind.id}" }
-            td {
-                input {
-                    r#type: "text",
-                    value: "{name}",
-                    oninput: move |event| name.set(event.value()),
-                }
-            }
-            td {
-                input {
-                    r#type: "text",
-                    style: "width: 100%",
-                    value: "{description}",
-                    oninput: move |event| description.set(event.value()),
-                }
-            }
-            td {
-                RenderColorPicker {
-                    value: color.read().clone(),
-                    on_pick: move |value| color.set(value),
-                }
-            }
-            td {
-                div { class: "btn-row",
-                    button { class: "btn btn-sm", onclick: save, "Save" }
-                    button { class: "btn btn-sm btn-danger", onclick: delete, "Delete" }
-                }
-            }
-        }
-    }
 }
 
 /// Swatches rather than a dropdown of colour names.
@@ -252,7 +272,7 @@ fn RenderKindRow(
 /// A colour picker that shows the colours is the obvious win over one that spells them, and the palette
 /// is fixed and small enough to lay out in full.
 #[component]
-fn RenderColorPicker(value: String, on_pick: EventHandler<String>) -> Element {
+pub fn RenderColorPicker(value: String, on_pick: EventHandler<String>) -> Element {
     let picked = KindColor::parse_or_default(&value);
 
     // Built outside the markup: an rsx format string takes an identifier or a simple expression, not an
@@ -291,5 +311,89 @@ fn RenderColorPicker(value: String, on_pick: EventHandler<String>) -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use task_manager_shared::projects::ProjectKindResponse;
+
+    fn project() -> ProjectResponse {
+        ProjectResponse {
+            id: "p".to_string(),
+            name: "Project".to_string(),
+            description: String::new(),
+            prefix: "RMS".to_string(),
+            prefix_history: Vec::new(),
+            columns: Vec::new(),
+            column_template_id: None,
+            column_template_name: None,
+            kinds: vec![ProjectKindResponse {
+                id: "bug".to_string(),
+                name: "Bug".to_string(),
+                description: String::new(),
+                color: "red".to_string(),
+            }],
+            members: Vec::new(),
+            tasks_amount: 0,
+        }
+    }
+
+    #[test]
+    fn save_is_offered_only_once_something_differs() {
+        let mut cs = ComponentState::new(&project());
+        assert!(!cs.can_save());
+
+        cs.set_name("bug", "Defect".to_string());
+        assert!(cs.can_save());
+
+        cs.set_name("bug", "Bug".to_string());
+        assert!(!cs.is_changed());
+    }
+
+    /// A type with no name cannot be saved — caught here rather than after a round trip.
+    #[test]
+    fn a_nameless_type_blocks_saving() {
+        let mut cs = ComponentState::new(&project());
+        cs.set_name("bug", "  ".to_string());
+
+        assert!(cs.is_changed());
+        assert!(!cs.can_save());
+    }
+
+    #[test]
+    fn adding_is_local_and_refuses_a_duplicate_id() {
+        let mut cs = ComponentState::new(&project());
+
+        cs.new_kind.id = "bug".to_string();
+        assert!(!cs.can_add());
+
+        cs.new_kind.id = " Feature ".to_string();
+        cs.new_kind.name = " Feature ".to_string();
+        assert!(cs.can_add());
+
+        cs.add();
+
+        assert_eq!(cs.draft.len(), 2);
+        assert_eq!(cs.draft[1].id, "feature");
+        assert_eq!(cs.draft[1].name, "Feature");
+        assert!(cs.new_kind.id.is_empty());
+        assert_eq!(
+            cs.new_kind.color,
+            KindColor::default().as_str(),
+            "the picked colour survives an add"
+        );
+    }
+
+    #[test]
+    fn removing_everything_is_a_saveable_change() {
+        let mut cs = ComponentState::new(&project());
+
+        cs.remove("bug");
+
+        assert!(cs.draft.is_empty());
+        assert!(cs.is_changed());
+        assert!(cs.can_save(), "a project with no task types is legitimate");
     }
 }

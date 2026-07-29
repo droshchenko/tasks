@@ -35,5 +35,5 @@ pub async fn update_user(
         disabled,
     };
 
-    handle_http_empty(authed("/api/users/v1", HttpVerb::Put, request).await).await
+    handle_http_empty(authed("/api/users/v1/update", HttpVerb::Post, request).await).await
 }
