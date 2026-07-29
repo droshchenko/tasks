@@ -1,4 +1,4 @@
-FROM myjettools/web-app-host:0.1.1
+FROM ghcr.io/myjettools/web-app-host:0.1.1
 ARG BUILD_VERSION
 ENV BUILD_VERSION=$BUILD_VERSION
 

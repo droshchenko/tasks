@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     container:
-      image: myjettools/dioxus-docker:0.7.3
+      image: ghcr.io/myjettools/dioxus-docker:0.7.9
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions-rs/toolchain@v1
@@ -44,6 +44,7 @@ jobs:
         run: |
           cd ${DIR}
           FILE_NAME="https://jetdev.eu/file/${DELIVER_NAME}-build.zip"
+          echo $FILE_NAME
           apt install zip
           zip -r data.zip ./target/dx/${APP_NAME}/release/web ./Dockerfile
           curl -X 'POST' $FILE_NAME -H 'accept: */*' -H 'Content-Type: multipart/form-data' -F 'file=@data.zip;type=application/zip'
@@ -58,6 +59,7 @@ jobs:
         run: |
           cd ${DIR}
           FILE_NAME="https://jetdev.eu/file/${DELIVER_NAME}-build.zip"
+          echo $FILE_NAME
           curl -L -o data.zip $FILE_NAME
           unzip -o data.zip
 
