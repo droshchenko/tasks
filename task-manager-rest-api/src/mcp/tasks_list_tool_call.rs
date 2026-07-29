@@ -6,6 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppContext;
 use crate::mcp::TaskView;
 
+/// What a caller asked for when it passed `goal`, or did not.
+#[derive(Clone, Copy)]
+enum GoalFilter {
+    Any,
+    None,
+    Number(i64),
+}
+
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct TasksListInput {
     #[property(description = "Which board to read, by project prefix, e.g. `RMS`")]
@@ -22,6 +30,10 @@ pub struct TasksListInput {
     pub assignee: Option<String>,
     #[property(description = "Return only tasks carrying this label. Omit to ignore labels")]
     pub label: Option<String>,
+    #[property(
+        description = "Return only the tasks of this goal, by goal id — `RMS-G7`, or a bare number. This is how you read one epic's work rather than a whole board. Pass an empty string for the opposite: only tasks that belong to no goal at all"
+    )]
+    pub goal: Option<String>,
     #[property(
         description = "Return only tasks that are ready to start — nothing in their `depends_on` is unfinished. Pass true when you are picking up work rather than surveying the board"
     )]
@@ -114,6 +126,19 @@ impl McpToolCall<TasksListInput, TasksListResponse> for TasksListHandler {
             .map(|itm| itm.trim().to_lowercase())
             .filter(|itm| !itm.is_empty());
 
+        // Three cases, and the third is the point: absent means "any goal", a handle means "this goal", and
+        // an empty string means "no goal" — the tasks that stand on their own, which is what the Backlog
+        // group on the screen is. Validated against the project first, so a mistyped goal comes back as a
+        // message rather than as an empty board.
+        let goal_filter = match model.goal.as_deref().map(str::trim) {
+            None => GoalFilter::Any,
+            Some("") => GoalFilter::None,
+            Some(wanted) => {
+                let resolved = crate::scripts::resolve_goal_reference(&board, &project, wanted)?;
+                GoalFilter::Number(resolved)
+            }
+        };
+
         let only_unblocked = model.only_unblocked.unwrap_or(false);
         let include_archived = model.include_archived.unwrap_or(false);
 
@@ -144,6 +169,15 @@ impl McpToolCall<TasksListInput, TasksListResponse> for TasksListHandler {
             .filter(|task| match &label {
                 None => true,
                 Some(wanted) => task.labels.contains(wanted),
+            })
+            // Compared against the *effective* goal, like the status above: a number naming no goal reads
+            // as standalone on the screen, so it has to read that way here too.
+            .filter(|task| match goal_filter {
+                GoalFilter::Any => true,
+                GoalFilter::None => board.effective_goal(task).is_none(),
+                GoalFilter::Number(wanted) => board
+                    .effective_goal(task)
+                    .is_some_and(|goal| goal.number == wanted),
             })
             .filter(|task| !only_unblocked || !board.is_blocked(task))
             // The same seven-day window Home uses, so the tool and the board agree on what "the board" is.

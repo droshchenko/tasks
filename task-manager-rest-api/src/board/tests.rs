@@ -5,8 +5,8 @@ use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO};
 
 use super::{
-    ARCHIVE_AFTER, Board, ColumnModel, ColumnTemplateModel, KindModel, KindTemplateModel,
-    ProjectModel, TaskModel, UserModel,
+    ARCHIVE_AFTER, Board, BoardInner, ColumnModel, ColumnTemplateModel, GoalModel, KindModel,
+    KindTemplateModel, ProjectModel, TaskModel, UserModel,
 };
 
 const TEMPLATE_ID: &str = "tpl";
@@ -69,6 +69,8 @@ fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
         kinds: Vec::new(),
         members: BTreeSet::new(),
         last_task_number: 0,
+        // No window of its own, so the tests measure the seven-day default.
+        archive_days: None,
         created: DateTimeAsMicroseconds::new(0),
     }
 }
@@ -80,10 +82,23 @@ fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> Task
         text: format!("task {number}"),
         status: status.to_string(),
         kind: None,
-        goal_id: None,
+        goal_number: None,
         assignee: None,
         labels: Vec::new(),
         depends_on: depends_on.to_vec(),
+        comments: Vec::new(),
+        created: DateTimeAsMicroseconds::new(0),
+        updated: DateTimeAsMicroseconds::new(0),
+        close_moment: None,
+    }
+}
+
+fn goal(project_id: &str, number: i64) -> GoalModel {
+    GoalModel {
+        project_id: project_id.to_string(),
+        number,
+        name: format!("goal {number}"),
+        description: String::new(),
         comments: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
         updated: DateTimeAsMicroseconds::new(0),
@@ -516,4 +531,160 @@ fn a_template_knows_how_many_projects_follow_it() {
         read.count_projects_using_template("nothing-follows-this"),
         0
     );
+}
+
+/// Tasks and goals draw from ONE counter, so the startup floor has to account for both.
+///
+/// Without the goals half, a counter row that had fallen behind would hand a task the number a goal
+/// already holds — and then `RMS-7` and `RMS-G7` would both exist, which is the single assumption the
+/// handles are built on.
+#[test]
+fn the_counter_floor_counts_goals_as_well_as_tasks() {
+    let mut behind = project("p", "RMS", &[]);
+    behind.last_task_number = 1;
+
+    let inner = BoardInner::from_loaded(
+        vec![behind],
+        vec![task("p", 2, COLUMN_ID_TODO, &[])],
+        Vec::new(),
+        vec![template()],
+        vec![kind_template()],
+        vec![goal("p", 9)],
+    );
+
+    assert_eq!(
+        inner.get_project("p").unwrap().last_task_number,
+        9,
+        "the floor is the highest number in use, whichever kind of thing holds it"
+    );
+}
+
+/// A goal's progress counts archived work. A goal only closes once every task is done, and by then the
+/// oldest of them have aged off the board — a count that skipped those would report finished work as
+/// half-finished, and the goal would read as abandoned rather than landed.
+#[test]
+fn goal_progress_counts_archived_tasks() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+    board.upsert_goal(goal("p", 1));
+
+    let now = DateTimeAsMicroseconds::now();
+    let window = ARCHIVE_AFTER.as_micros() as i64;
+
+    let mut long_closed = task("p", 2, COLUMN_ID_DONE, &[]);
+    long_closed.goal_number = Some(1);
+    long_closed.close_moment = Some(DateTimeAsMicroseconds::new(
+        now.unix_microseconds - window - 60_000_000,
+    ));
+
+    let mut open = task("p", 3, COLUMN_ID_TODO, &[]);
+    open.goal_number = Some(1);
+
+    // Somebody else's work: it must not be counted at all.
+    board.upsert_task(task("p", 4, COLUMN_ID_DONE, &[]));
+
+    board.upsert_task(long_closed.clone());
+    board.upsert_task(open);
+
+    let read = board.read();
+
+    assert!(read.is_archived(&long_closed), "the fixture is archived");
+    assert_eq!(read.goal_progress("p", 1), (2, 1));
+    assert_eq!(read.tasks_of_goal("p", 1).len(), 2);
+}
+
+/// The list under a goal and the counter beside it have to agree, so both include archived work — and
+/// neither includes a task pointing at a different goal.
+#[test]
+fn open_tasks_of_a_goal_are_what_blocks_closing_it() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+    board.upsert_goal(goal("p", 1));
+
+    let mut done = task("p", 2, COLUMN_ID_DONE, &[]);
+    done.goal_number = Some(1);
+
+    let mut open = task("p", 3, "in-progress", &[]);
+    open.goal_number = Some(1);
+
+    board.upsert_task(done);
+    board.upsert_task(open);
+
+    let read = board.read();
+    let blocking = read.open_tasks_of_goal("p", 1);
+
+    assert_eq!(blocking.len(), 1);
+    assert_eq!(blocking[0].number, 3);
+}
+
+/// A goal archives on the same clock a task does, and an OPEN goal never archives however old it is — an
+/// epic that has run for a year is late, not history.
+#[test]
+fn a_goal_archives_by_its_close_moment_and_the_projects_window() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+
+    let now = DateTimeAsMicroseconds::now();
+    let window = ARCHIVE_AFTER.as_micros() as i64;
+
+    let mut just_closed = goal("p", 1);
+    just_closed.close_moment = Some(DateTimeAsMicroseconds::new(
+        now.unix_microseconds - 60_000_000,
+    ));
+
+    let mut long_closed = goal("p", 2);
+    long_closed.close_moment = Some(DateTimeAsMicroseconds::new(
+        now.unix_microseconds - window - 60_000_000,
+    ));
+
+    let ancient_but_open = goal("p", 3);
+
+    let read = board.read();
+
+    assert!(!read.is_goal_archived(&just_closed));
+    assert!(read.is_goal_archived(&long_closed));
+    assert!(!read.is_goal_archived(&ancient_but_open));
+}
+
+/// The window is the project's, not a constant. A project that says two days archives work the default
+/// seven-day window would still be showing.
+#[test]
+fn a_projects_own_archive_window_is_what_counts() {
+    let board = board();
+
+    let mut impatient = project("p", "RMS", &[]);
+    impatient.archive_days = Some(2);
+    board.upsert_project(impatient);
+
+    let now = DateTimeAsMicroseconds::now();
+    let three_days = 3 * 24 * 60 * 60 * 1_000_000_i64;
+
+    let mut closed_three_days_ago = task("p", 1, COLUMN_ID_DONE, &[]);
+    closed_three_days_ago.close_moment = Some(DateTimeAsMicroseconds::new(
+        now.unix_microseconds - three_days,
+    ));
+
+    board.upsert_task(closed_three_days_ago.clone());
+
+    assert!(
+        board.read().is_archived(&closed_three_days_ago),
+        "three days is past a two-day window, even though it is inside the default seven"
+    );
+}
+
+/// A window that makes no sense reads as the default. Writes validate; the read side is lenient, so one
+/// bad row cannot empty a board.
+#[test]
+fn a_nonsense_archive_window_falls_back_to_the_default() {
+    let mut zero = project("p", "RMS", &[]);
+    zero.archive_days = Some(0);
+    assert_eq!(zero.archive_after(), ARCHIVE_AFTER);
+
+    let mut negative = project("p", "RMS", &[]);
+    negative.archive_days = Some(-5);
+    assert_eq!(negative.archive_after(), ARCHIVE_AFTER);
+
+    let mut two = project("p", "RMS", &[]);
+    two.archive_days = Some(2);
+    assert_eq!(two.archive_after().as_secs(), 2 * 24 * 60 * 60);
 }

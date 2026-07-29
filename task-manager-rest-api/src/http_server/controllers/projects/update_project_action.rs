@@ -45,6 +45,7 @@ async fn handle_request(
         &input_data.name,
         &input_data.description,
         &input_data.prefix,
+        input_data.archive_days,
     )
     .await
     .map_err(bad_request)?;

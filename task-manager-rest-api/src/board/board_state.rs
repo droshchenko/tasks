@@ -83,13 +83,9 @@ impl Board {
         self.mutate(|inner| inner.drop_kind_template(id));
     }
 
+    /// Save a goal. There is no removal counterpart: a goal is closed, never deleted.
     pub fn upsert_goal(&self, goal: GoalModel) {
         self.mutate(|inner| inner.put_goal(Arc::new(goal)));
-    }
-
-    /// Drop a goal. Its tasks keep their stored goal id and read as standalone — nothing else is touched.
-    pub fn remove_goal(&self, id: &str) {
-        self.mutate(|inner| inner.drop_goal(id));
     }
 
     pub fn upsert_task(&self, task: TaskModel) {

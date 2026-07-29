@@ -42,6 +42,10 @@ pub enum AppRoute {
         state: String,
         error: String,
     },
+    // The same work as Home, from the other end: goals with their tasks folded underneath. No query
+    // arguments — nothing here is searched, and which project is showing is remembered rather than linked.
+    #[route("/goals")]
+    Goals {},
     #[route("/projects-setup")]
     ProjectsSetup {},
     #[route("/users")]
@@ -132,6 +136,15 @@ fn Home(search: Option<String>) -> Element {
     rsx! {
         Shell { active: "home",
             crate::views::home::RenderHome { search }
+        }
+    }
+}
+
+#[component]
+fn Goals() -> Element {
+    rsx! {
+        Shell { active: "goals",
+            crate::views::goals::RenderGoals {}
         }
     }
 }

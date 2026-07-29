@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO, ProjectResponse};
 use task_manager_shared::task_id::task_id_display;
-use task_manager_shared::tasks::{FindTaskResponse, TaskResponse};
+use task_manager_shared::tasks::TaskResponse;
 
 use dioxus_utils::{DataState, RenderState};
 
@@ -782,7 +782,7 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
     // Built here rather than fetched: this side already holds the whole task and the project it is on, so
     // the card opens instantly and without a round trip. `archived` is false by definition — a card that is
     // drawn is on the board.
-    let found = found_locally(&task, &project);
+    let found = crate::api::find_task_locally(&task, &project);
     let found_on_the_card = found.clone();
 
     rsx! {
@@ -822,6 +822,17 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
                         });
                     },
                     "👁"
+                }
+            }
+
+            // Above the title, because a goal is the context the title is read in: "add the retry" means
+            // something different under "Ship billing" than on its own. Only the name — the handle is in the
+            // dialog, and a card is a thing you scan rather than read.
+            if let Some(goal_name) = task.goal_name.as_ref() {
+                div {
+                    class: "sticker-goal",
+                    title: "Part of {task.goal.clone().unwrap_or_default()}",
+                    "{goal_name}"
                 }
             }
 
@@ -867,18 +878,6 @@ fn handles(ids: &[String]) -> String {
         .join(", ")
 }
 
-/// The task exactly as a lookup by id would have answered it, assembled from what is already on screen.
-fn found_locally(task: &TaskResponse, project: &ProjectResponse) -> FindTaskResponse {
-    FindTaskResponse {
-        task: Some(task.clone()),
-        project_id: project.id.clone(),
-        project_prefix: project.prefix.clone(),
-        project_name: project.name.clone(),
-        archived: false,
-        not_found: String::new(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -890,7 +889,7 @@ mod tests {
             text: text.to_string(),
             status: COLUMN_ID_TODO.to_string(),
             kind: None,
-            goal_id: None,
+            goal: None,
             goal_name: None,
             assignee: assignee.map(|itm| itm.to_string()),
             assignee_name: None,
@@ -948,6 +947,7 @@ mod tests {
             kind_template_name: None,
             members: Vec::new(),
             tasks_amount: 0,
+            archive_days: None,
         }
     }
 

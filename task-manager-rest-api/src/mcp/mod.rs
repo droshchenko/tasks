@@ -5,6 +5,7 @@ use mcp_server_middleware::McpMiddleware;
 use crate::app::AppContext;
 
 mod comment_tool_calls;
+mod goals_tool_calls;
 mod labels_list_tool_call;
 mod projects_list_tool_call;
 mod resolve_id_tool_call;
@@ -16,6 +17,10 @@ mod views;
 pub use views::*;
 
 use comment_tool_calls::{AddCommentHandler, GetCommentsHandler};
+use goals_tool_calls::{
+    GoalsAddCommentHandler, GoalsCreateHandler, GoalsGetCommentsHandler, GoalsListHandler,
+    GoalsUpdateHandler,
+};
 use labels_list_tool_call::LabelsListHandler;
 use projects_list_tool_call::ProjectsListHandler;
 use resolve_id_tool_call::ResolveIdHandler;
@@ -31,11 +36,25 @@ arrives through these tools. The browser side is a viewer — nothing on it is e
 when someone says \"move that to done\" or \"put Yuri on it\" or \"note that we decided X\", there is \
 no other route: it happens here or it does not happen.\
 \
-CALL projects_list FIRST. It is the only tool that reveals what exists, and it returns the four \
+CALL projects_list FIRST. It is the only tool that reveals what exists, and it returns the five \
 vocabularies every other call is written in: the project prefixes that name a board, the column ids a \
-status must be one of, the kind ids with what each one means ON THAT BOARD, and the people who may be \
-assigned work on it. Nothing here is global — two projects can have completely different columns and \
-completely different kinds, so what you learned about one board tells you nothing about the next.\
+status must be one of, the kind ids with what each one means ON THAT BOARD, the people who may be \
+assigned work on it, and the goals its work is organised under. Nothing here is global — two projects \
+can have completely different columns and completely different kinds, so what you learned about one \
+board tells you nothing about the next. One conversation normally works on one project, so \
+`projects_list` with that prefix is the call to make.\
+\
+WORK IS ORGANISED BY GOAL, NOT BY TASK. A goal is a container — an epic: the outcome being pursued, the \
+thread where it is discussed, and the tasks that came out of that discussion. When a conversation is \
+about an outcome rather than one piece of work, open a goal with goals_create, keep the reasoning on its \
+thread with goals_add_comment, and create the tasks under it as they become clear — that order is the \
+point, not a nicety. A goal is named by a handle like `RMS-G7`, which is what goes in `goal` on a task; \
+its number comes from the same counter task numbers come from, so `RMS-7` and `RMS-G7` are never both \
+real. A goal has no columns: it is open or closed. Its progress is counted from its tasks, so there is \
+nothing to keep in sync — and closing it is refused until every one of those tasks is `done`, and \
+requires a resolution comment, for the same reason landing a task does. Goals are never deleted. A task \
+with no goal is a perfectly normal thing and not an unfinished one — but if a goal fits, put it there, \
+because a board of loose tasks is a board nobody can see the shape of.\
 \
 EVERYTHING IS NAMED BY ITS HUMAN HANDLE. A project is its prefix, `RMS`. A task is `RMS-42` — or \
 `RMS-000042`, which is the same id padded; both are accepted, and the padded form is what comes back. \
@@ -119,8 +138,9 @@ A NEW TASK ALWAYS STARTS IN `todo`. tasks_create takes no status — moving work
 job, which is also where landing it has to be explained. There is deliberately no way to create a task \
 straight into Done.\
 \
-THE BOARD IS THE LAST SEVEN DAYS OF DONE, NOT ALL OF IT. Work closed more than seven days ago counts as \
-archived: tasks_list leaves it out, and so does the board a person looks at. Done is the only column that \
+THE BOARD IS THE LAST FEW DAYS OF DONE, NOT ALL OF IT. Work closed longer ago than the project's \
+archive window — seven days unless that project says otherwise — counts as archived: tasks_list leaves \
+it out, and so does the board a person looks at. A closed goal ages off the same way, on the same clock. Done is the only column that \
 grows for ever, and one nobody can read is one nobody looks at. Nothing is deleted — an archived task is \
 still reachable by its id, and `include_archived` on tasks_list brings the history back when you are \
 deliberately looking backwards. Practical consequence: \"this board has 12 tasks\" means twelve live ones, \
@@ -153,12 +173,19 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(UsersListHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(LabelsListHandler::new(app.clone())));
 
+    mcp.register_tool_call(Arc::new(GoalsListHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(TasksListHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(ResolveIdHandler::new(app.clone())));
+
+    mcp.register_tool_call(Arc::new(GoalsCreateHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(GoalsUpdateHandler::new(app.clone())));
 
     mcp.register_tool_call(Arc::new(TasksCreateHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(TasksUpdateHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(TasksDeleteHandler::new(app.clone())));
+
+    mcp.register_tool_call(Arc::new(GoalsAddCommentHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(GoalsGetCommentsHandler::new(app.clone())));
 
     mcp.register_tool_call(Arc::new(AddCommentHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(GetCommentsHandler::new(app)));

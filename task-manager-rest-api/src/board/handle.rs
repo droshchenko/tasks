@@ -23,11 +23,69 @@ pub fn compose_task_handle(prefix: &str, number: i64) -> String {
     format!("{}-{:0width$}", prefix, number, width = NUMBER_WIDTH)
 }
 
+/// The letter that marks a goal inside a handle: `RMS-G7`.
+///
+/// A goal takes its number from the same per-project counter a task does, so a number is unique across
+/// both and the marker is NOT part of the identity — it says what kind of thing the number names. That is
+/// what lets an agent read `RMS-G7` and know it has a goal in front of it without asking anybody.
+const GOAL_MARKER: char = 'G';
+
 /// One half of a parsed handle. Named rather than a tuple so a caller cannot swap the two.
+///
+/// Shared by tasks and goals: the two halves are the same question either way, and with one counter
+/// behind both there is nothing to distinguish in the result.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParsedTaskHandle {
     pub prefix: String,
     pub number: i64,
+}
+
+/// Build the handle a person sees for a goal: `RMS` + 7 -> `RMS-G7`.
+///
+/// Deliberately NOT padded, unlike a task handle. Padding exists to make a long Done list line up, and a
+/// project has orders of magnitude fewer goals than tasks — `RMS-G000007` would be a spelling nobody
+/// types and nobody reads back.
+pub fn compose_goal_handle(prefix: &str, number: i64) -> String {
+    format!("{prefix}-{GOAL_MARKER}{number}")
+}
+
+/// Split `RMS-G7` / `rms-g7` into its prefix and number.
+///
+/// `None` for anything that is not a goal handle — **including a task handle**. `RMS-7` names a number
+/// without saying what kind of thing it is, and since one counter serves both, deciding what that number
+/// means is a lookup, not a parse: see [`parse_task_handle`], then try the goal with the number it gives.
+pub fn parse_goal_handle(src: &str) -> Option<ParsedTaskHandle> {
+    let (prefix, marked_number) = src.trim().rsplit_once('-')?;
+
+    let prefix = prefix.trim();
+
+    // Held to the same rule as a prefix being assigned, for the same reason as in `parse_task_handle`.
+    if !is_valid_prefix(prefix) {
+        return None;
+    }
+
+    let mut chars = marked_number.chars();
+
+    if !chars.next()?.eq_ignore_ascii_case(&GOAL_MARKER) {
+        return None;
+    }
+
+    let digits = chars.as_str();
+
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+
+    let number: i64 = digits.parse().ok()?;
+
+    if number <= 0 {
+        return None;
+    }
+
+    Some(ParsedTaskHandle {
+        prefix: prefix.to_uppercase(),
+        number,
+    })
 }
 
 /// Split `RMS-42` / `RMS-000042` / `rms-42` into its prefix and number.
@@ -132,6 +190,54 @@ mod tests {
             "АБВ-1",   // non-ascii prefix
         ] {
             assert_eq!(parse_task_handle(src), None, "{src:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn a_goal_handle_carries_its_marker_and_no_padding() {
+        assert_eq!(compose_goal_handle("RMS", 7), "RMS-G7");
+        assert_eq!(compose_goal_handle("RMS", 1_234), "RMS-G1234");
+    }
+
+    #[test]
+    fn a_goal_handle_round_trips_in_either_case() {
+        let expected = ParsedTaskHandle {
+            prefix: "RMS".to_string(),
+            number: 7,
+        };
+
+        assert_eq!(parse_goal_handle("RMS-G7"), Some(expected));
+        assert_eq!(
+            parse_goal_handle("  rms-g7 "),
+            Some(ParsedTaskHandle {
+                prefix: "RMS".to_string(),
+                number: 7,
+            })
+        );
+    }
+
+    /// The two spellings must not bleed into each other. A task parser that accepted `RMS-G7` would hand
+    /// back number 7 and lose the one bit that said which of the two things it is — and with one counter
+    /// behind both, that number names something real either way, so nothing downstream would notice.
+    #[test]
+    fn the_two_handle_kinds_do_not_parse_as_each_other() {
+        assert_eq!(parse_task_handle("RMS-G7"), None);
+        assert_eq!(parse_goal_handle("RMS-7"), None);
+    }
+
+    #[test]
+    fn non_goal_handles_are_refused() {
+        for src in [
+            "", "RMS", "RMS-G",     // marker with no number
+            "RMS-G0",    // numbers start at 1
+            "RMS-GG7",   // marker twice
+            "RMS-G7x",   // trailing rubbish
+            "RMS-G 7",   // space inside the number
+            "RMS-G-7",   // splits into prefix `RMS-G`, which no project may hold
+            "RMS-G4.2",  // not an integer
+            "АБВ-G1",    // non-ascii prefix
+        ] {
+            assert_eq!(parse_goal_handle(src), None, "{src:?} should not parse");
         }
     }
 

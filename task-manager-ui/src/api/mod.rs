@@ -1,5 +1,6 @@
 mod auth;
 mod column_templates;
+mod goals;
 mod kind_templates;
 mod projects;
 mod system;
@@ -8,6 +9,7 @@ mod users;
 
 pub use auth::*;
 pub use column_templates::*;
+pub use goals::*;
 pub use kind_templates::*;
 pub use projects::*;
 pub use system::*;

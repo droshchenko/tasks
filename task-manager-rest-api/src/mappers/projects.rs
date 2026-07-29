@@ -84,6 +84,7 @@ impl From<&ProjectDto> for ProjectModel {
             kinds: Vec::new(),
             members: BTreeSet::new(),
             last_task_number: src.last_task_number,
+            archive_days: src.archive_days,
             created: src.created,
         }
     }
@@ -105,6 +106,7 @@ impl From<&ProjectModel> for ProjectDto {
             columns: Vec::new(),
             kinds: Vec::new(),
             last_task_number: src.last_task_number,
+            archive_days: src.archive_days,
             created: src.created,
         }
     }
@@ -153,6 +155,7 @@ pub fn project_to_response(
             .collect(),
         members: src.members.iter().cloned().collect(),
         tasks_amount: tasks_amount as i32,
+            archive_days: src.archive_days,
         column_template_id: src.column_template_id.clone(),
         // The NAME as well as the id, so the setup screen can say which template a project follows
         // without holding the whole template list to look it up. `None` covers both "follows none" and

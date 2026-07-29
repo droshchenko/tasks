@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use encryption::aes::AesKey;
+use task_manager_shared::goals::GoalResponse;
 use task_manager_shared::tasks::TaskResponse;
 use task_manager_shared::ws::{BoardSnapshot, ServerWsPayload};
 
@@ -125,17 +126,38 @@ impl AppContext {
                     .map(|task| crate::mappers::task_to_response(task, &project, &board))
                     .collect();
 
+                // Live goals only, and their counters computed here — the same read `/api/goals/v1/list`
+                // does. Archived tasks are deliberately absent from `tasks` above while being counted in
+                // these numbers, which is why the client is told to take the counters as given.
+                let goals: Vec<GoalResponse> = board
+                    .goals_of_project(&project.id)
+                    .iter()
+                    .filter(|goal| !board.is_goal_archived(goal))
+                    .map(|goal| {
+                        let (tasks_amount, done_amount) =
+                            board.goal_progress(&goal.project_id, goal.number);
+
+                        crate::mappers::goal_to_response(
+                            goal,
+                            &project.prefix,
+                            tasks_amount,
+                            done_amount,
+                        )
+                    })
+                    .collect();
+
                 let members: Vec<String> = project.members.iter().cloned().collect();
 
-                (tasks, members)
+                (tasks, goals, members)
             })
         };
 
         let (payload, members) = match prepared {
-            Some((tasks, members)) => (
+            Some((tasks, goals, members)) => (
                 ServerWsPayload::board(BoardSnapshot {
                     project_id: project_id.to_string(),
                     tasks,
+                    goals,
                 }),
                 members,
             ),

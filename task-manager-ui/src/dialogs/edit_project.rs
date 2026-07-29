@@ -29,6 +29,9 @@ struct Draft {
     column_template_id: String,
     /// Empty means no task types, which is legitimate too: a type is optional on a task.
     kind_template_id: String,
+    /// The archive window, as typed. A STRING rather than a number because empty is a real value here —
+    /// "the default" — and an `Option<i32>` parsed on every keystroke cannot tell empty from mid-typing.
+    archive_days: String,
 }
 
 impl ComponentState {
@@ -40,6 +43,10 @@ impl ComponentState {
                 prefix: project.prefix.clone(),
                 column_template_id: project.column_template_id.clone().unwrap_or_default(),
                 kind_template_id: project.kind_template_id.clone().unwrap_or_default(),
+                archive_days: project
+                    .archive_days
+                    .map(|itm| itm.to_string())
+                    .unwrap_or_default(),
             },
             None => Draft::default(),
         };
@@ -111,6 +118,10 @@ pub fn EditProjectDialog(
         let name = draft.name.trim().to_string();
         let description = draft.description.trim().to_string();
         let prefix = draft.prefix.trim().to_string();
+        // Empty stays `None`, which is what "the default" is on the wire. Unparseable text is treated the
+        // same way rather than refused: the field is numeric, so the only way to get here is a browser that
+        // let something else through.
+        let archive_days = draft.archive_days.trim().parse::<i32>().ok();
         let column_template_id = draft.column_template_id.clone();
         let kind_template_id = draft.kind_template_id.clone();
 
@@ -122,8 +133,14 @@ pub fn EditProjectDialog(
             // picked, since create has nowhere to carry it.
             let saved_id = match existing.as_deref() {
                 Some(project) => {
-                    match crate::api::update_project(&project.id, &name, &description, &prefix)
-                        .await
+                    match crate::api::update_project(
+                        &project.id,
+                        &name,
+                        &description,
+                        &prefix,
+                        archive_days,
+                    )
+                    .await
                     {
                         Ok(()) => Some(project.id.clone()),
                         Err(err) => {
@@ -210,6 +227,7 @@ pub fn EditProjectDialog(
     let name = cs_ra.draft.name.clone();
     let description = cs_ra.draft.description.clone();
     let prefix = cs_ra.draft.prefix.clone();
+    let archive_days = cs_ra.draft.archive_days.clone();
     let selected_template = cs_ra.draft.column_template_id.clone();
     let selected_kind_template = cs_ra.draft.kind_template_id.clone();
     let error = cs_ra.error.clone();
@@ -239,6 +257,19 @@ pub fn EditProjectDialog(
             }
             div { class: "field-hint",
                 "The first half of every task id on this board — RMS-000042. Two projects cannot hold the same prefix at once, and a prefix another project once used is refused too, because its old ids still resolve through it."
+            }
+        }
+        div { class: "form-row",
+            label { "Archive after" }
+            input {
+                r#type: "number",
+                min: "1",
+                value: "{archive_days}",
+                placeholder: "7",
+                oninput: move |event| cs.write().draft.archive_days = event.value(),
+            }
+            div { class: "field-hint",
+                "Days a finished task stays on the board before it counts as archived — and the same window a closed goal is drawn for. Leave empty for 7. Nothing is ever deleted: archived work is still reachable by its id, and searching for one finds it."
             }
         }
         div { class: "form-row",
@@ -398,6 +429,7 @@ mod tests {
             kinds: Vec::new(),
             members: Vec::new(),
             tasks_amount: 0,
+            archive_days: None,
         }
     }
 

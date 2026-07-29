@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use service_sdk::my_postgres::sql_where::NoneWhereModel;
 use service_sdk::my_postgres::{MyPostgres, UpdateConflictType};
 
@@ -12,26 +13,60 @@ use crate::settings::SettingsReader;
 pub const TABLE_NAME: &str = "goals";
 pub const PK_NAME: &str = "goals_pk";
 
-// A goal — a container for tasks, an epic.
+// One comment on a goal's thread, inside the goal row's `comments` jsonb.
 //
-// It does not hold its tasks: the task row carries the goal id. That direction is what makes deleting a
-// goal harmless, and it is also the direction every read wants, since a task is drawn far more often than
-// a goal is listed.
-#[derive(SelectDbEntity, InsertDbEntity, UpdateDbEntity, TableSchema, Debug)]
-pub struct GoalDto {
-    #[primary_key(0)]
-    pub id: String,
-    #[db_index(id: 0, index_name: "goals_project_idx", is_unique: false, order: "ASC")]
-    pub project_id: String,
-    pub name: String,
-    pub description: String,
-    #[sql_type("timestamp")]
-    pub created: DateTimeAsMicroseconds,
+// Deliberately its own type rather than a reuse of the task one: the two threads are the same shape
+// today and have no reason to move together tomorrow, and a shared jsonb model would make a change to
+// one silently rewrite the other's rows.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GoalCommentJsonModel {
+    pub moment_unix_seconds: i64,
+    pub who: String,
+    pub text: String,
 }
 
-#[derive(WhereDbModel, Debug)]
-pub struct GoalByIdWhereModel<'s> {
-    pub id: &'s str,
+// A goal — the container work is done around. An epic.
+//
+// The primary key is `(project_id, number)`, and there is deliberately **no** column for the human
+// handle: the counter is per project and a prefix moves between projects, so `RMS-G7` is a spelling of
+// this row today and of nothing tomorrow. It is composed on read, exactly as a task's handle is.
+//
+// The number comes from the SAME counter as the project's task numbers, so no number names both a task
+// and a goal, and a task can point at its goal with a bare number.
+//
+// There is no `status` column either. A goal has two states in this version and `close_moment` tells
+// them apart on its own; a status beside it could disagree with it, and nothing would catch that. The
+// wire reports a status — derived. Real columns for a goal are the second iteration, and the column
+// arrives with them.
+//
+// It does not hold its tasks: the task row carries the goal number. That direction is what every read
+// wants, since a task is drawn far more often than a goal is listed.
+#[derive(SelectDbEntity, InsertDbEntity, UpdateDbEntity, TableSchema, Debug)]
+pub struct GoalDto {
+    // DEAD, and kept for exactly the reason `projects.columns` is kept. 0.1.7 shipped this table with a
+    // generated text `id` as its primary key, before a goal was named `RMS-G7`; the deployed column is NOT
+    // NULL and my-postgres cannot drop a column, so an insert that stopped listing it would fail. Written
+    // as `project_id:number` rather than as anything meaningful, so it stays unique whichever primary key
+    // the live table ends up with — see `dead_id`. Dropping it needs one
+    // `ALTER TABLE goals DROP COLUMN id;` against the live database.
+    pub id: String,
+    #[primary_key(0)]
+    pub project_id: String,
+    #[primary_key(1)]
+    pub number: i64,
+    pub name: String,
+    pub description: String,
+    #[sql_type("jsonb")]
+    #[json]
+    pub comments: Vec<GoalCommentJsonModel>,
+    #[sql_type("timestamp")]
+    pub created: DateTimeAsMicroseconds,
+    #[sql_type("timestamp")]
+    pub updated: DateTimeAsMicroseconds,
+    // When the goal was closed; NULL while it is open. Nullable rather than defaulted, because "still
+    // open" and "closed at the epoch" are different facts and only one of them is true of a live goal.
+    #[sql_type("timestamp")]
+    pub close_moment: Option<DateTimeAsMicroseconds>,
 }
 
 pub struct GoalsRepo {
@@ -57,6 +92,7 @@ impl GoalsRepo {
             .expect("goals: query_rows get_all failed")
     }
 
+    /// Write a goal whole. There is no delete: a goal is closed, never removed — see `GOAL-HANDOFF.md`.
     pub async fn upsert(&self, row: &GoalDto, ctx: &MyTelemetryContext) {
         self.postgres
             .with_retries(3, Duration::from_secs(1))
@@ -69,12 +105,14 @@ impl GoalsRepo {
             .await
             .expect("goals: insert_or_update_db_entity failed");
     }
+}
 
-    pub async fn delete(&self, id: &str, ctx: &MyTelemetryContext) {
-        self.postgres
-            .with_retries(3, Duration::from_secs(1))
-            .delete(TABLE_NAME, &GoalByIdWhereModel { id }, Some(ctx))
-            .await
-            .expect("goals: delete failed");
-    }
+/// The value written into the dead `id` column.
+///
+/// A goal's identity is `(project_id, number)`; this only has to be unique and non-null, because the
+/// deployed 0.1.7 table still carries the column — possibly still as its primary key, if the schema
+/// verifier has not recreated it. Composing it from both halves means the row is unique under EITHER
+/// definition, so the upsert behaves the same before and after that recreation happens.
+pub fn dead_id(project_id: &str, number: i64) -> String {
+    format!("{project_id}:{number}")
 }

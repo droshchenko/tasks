@@ -2,7 +2,9 @@ use mcp_server_middleware::*;
 use rust_extensions::AsStr;
 use serde::{Deserialize, Serialize};
 
-use crate::board::{BoardInner, ProjectModel, TaskModel, UserModel, compose_task_handle};
+use crate::board::{
+    BoardInner, GoalModel, ProjectModel, TaskModel, UserModel, compose_task_handle,
+};
 
 /// One column of a board, as a tool sees it.
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
@@ -61,6 +63,10 @@ pub struct ProjectView {
     pub members: Vec<String>,
     #[property(description = "How many tasks are on the board, in every column")]
     pub tasks_amount: i32,
+    #[property(
+        description = "The goals of this project that are still open, oldest first. Work here is organised BY GOAL: a goal is the container a conversation happens at and tasks come out of, and this is where you find the ids to pass as `goal`. Closed goals are left out — goals_list with include_archived brings the history back"
+    )]
+    pub goals: Vec<GoalView>,
 }
 
 impl ProjectView {
@@ -107,6 +113,77 @@ impl ProjectView {
             labels: board.labels_of_project(&project.id),
             members: project.members.iter().cloned().collect(),
             tasks_amount: board.tasks_amount(&project.id) as i32,
+            // Open ones only. A project that has run for a year would otherwise answer the very first
+            // call with every epic it has ever finished, and the one thing this list is for is telling a
+            // caller where to put the work it is about to create.
+            goals: board
+                .goals_of_project(&project.id)
+                .iter()
+                .filter(|goal| !goal.is_closed())
+                .map(|goal| GoalView::from_model(goal, project, board))
+                .collect(),
+        }
+    }
+}
+
+/// One goal, as a tool sees it.
+///
+/// The container work is done around, and the level a conversation happens at: a goal is discussed, tasks
+/// come out of the discussion, and the resolution goes back onto it when it lands.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct GoalView {
+    #[property(
+        description = "The goal id, like `RMS-G7`. This is how a goal is named everywhere — in `goal` on a task, in goals_update, in tasks_list. The number comes from the same counter task numbers come from, so `RMS-7` and `RMS-G7` are never both real; the `G` is what says which kind you are holding"
+    )]
+    pub id: String,
+    #[property(description = "The prefix of the project this goal is on")]
+    pub project: String,
+    #[property(description = "What the goal is called")]
+    pub name: String,
+    #[property(description = "What it is about, as Markdown")]
+    pub description: String,
+    #[property(
+        description = "`todo` while the goal is open, `done` once it is closed. Derived from whether it has been closed, so it cannot disagree with `closed_unix_seconds` — a goal has these two states and nothing in between in this version"
+    )]
+    pub status: String,
+    #[property(
+        description = "How many tasks are part of this goal, INCLUDING work already archived off the board. Do not recompute this from tasks_list: that leaves archived work out, and an old goal would read as half-done"
+    )]
+    pub tasks_amount: i32,
+    #[property(description = "How many of those tasks are done. The goal is closable when it equals `tasks_amount`")]
+    pub done_amount: i32,
+    #[property(
+        description = "How many notes are on the goal's thread. This is where the reasoning lives — read it with goals_get_comments before acting on a goal somebody else shaped"
+    )]
+    pub comments_amount: i32,
+    #[property(description = "When the goal was created, unix seconds (UTC)")]
+    pub created_unix_seconds: i64,
+    #[property(description = "When the goal itself last changed, unix seconds (UTC). A comment does not move this")]
+    pub updated_unix_seconds: i64,
+    #[property(
+        description = "When it was closed, unix seconds (UTC), and absent while it is open. A goal closed longer ago than the project's archive window is left out of goals_list unless you ask for it"
+    )]
+    pub closed_unix_seconds: Option<i64>,
+}
+
+impl GoalView {
+    pub fn from_model(goal: &GoalModel, project: &ProjectModel, board: &BoardInner) -> Self {
+        let (tasks_amount, done_amount) = board.goal_progress(&goal.project_id, goal.number);
+
+        Self {
+            id: crate::board::compose_goal_handle(&project.prefix, goal.number),
+            project: project.prefix.clone(),
+            name: goal.name.clone(),
+            description: goal.description.clone(),
+            status: goal.status().to_string(),
+            tasks_amount: tasks_amount as i32,
+            done_amount: done_amount as i32,
+            comments_amount: goal.comments.len() as i32,
+            created_unix_seconds: goal.created.unix_microseconds / 1_000_000,
+            updated_unix_seconds: goal.updated.unix_microseconds / 1_000_000,
+            closed_unix_seconds: goal
+                .close_moment
+                .map(|itm| itm.unix_microseconds / 1_000_000),
         }
     }
 }
@@ -139,6 +216,12 @@ pub struct TaskView {
     pub status: String,
     #[property(description = "What kind of work it is, or absent when it has no kind")]
     pub kind: Option<String>,
+    #[property(
+        description = "The goal this task is part of, by goal id — `RMS-G7`. Absent means the task stands on its own, which is a normal state and not an unfinished one. Work is organised by goal: when you are asked what is happening with something, this is the thread to pull"
+    )]
+    pub goal: Option<String>,
+    #[property(description = "What that goal is called, absent for a standalone task")]
+    pub goal_name: Option<String>,
     #[property(description = "Who is on it — an email, or `AI`. Absent means nobody yet")]
     pub assignee: Option<String>,
     #[property(
@@ -175,12 +258,20 @@ pub struct TaskView {
 
 impl TaskView {
     pub fn from_model(task: &TaskModel, project: &ProjectModel, board: &BoardInner) -> Self {
+        let goal = board.effective_goal(task);
+
         Self {
             id: compose_task_handle(&project.prefix, task.number),
             project: project.prefix.clone(),
             text: task.text.clone(),
             status: project.effective_status(&task.status),
             kind: project.effective_kind(task.kind.as_deref()),
+            // Resolved rather than echoed, so a number naming no goal reads as standalone instead of as
+            // an id the caller cannot look up.
+            goal: goal
+                .as_ref()
+                .map(|itm| crate::board::compose_goal_handle(&project.prefix, itm.number)),
+            goal_name: goal.as_ref().map(|itm| itm.name.clone()),
             assignee: task.assignee.clone(),
             assignee_name: task
                 .assignee

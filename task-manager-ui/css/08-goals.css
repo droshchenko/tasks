@@ -1,0 +1,184 @@
+/* The Goals screen: the same work as the board, grouped by the epic it belongs to.
+   Rows rather than cards on purpose — what this screen is for is the shape of a goal, and twenty cards per
+   goal would bury it. */
+
+.goals-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.goal-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* A closed goal is still on screen for the rest of the archive window, so it has to read as finished
+   without disappearing: dimmed, not hidden. */
+.goal-card.closed {
+  background: var(--surface-2);
+}
+
+.goal-card.closed .goal-name {
+  color: var(--text-muted);
+}
+
+/* The Backlog group is not a goal and must not look like one — no icon, and a left edge that says
+   "container of leftovers" rather than "epic". */
+.goal-card.backlog {
+  border-left: 3px solid var(--border-strong);
+}
+
+.goal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  /* The whole row is a click target, and a click on a row of text otherwise selects it. */
+  user-select: none;
+}
+
+.goal-head:hover {
+  background: var(--surface-2);
+}
+
+.goal-caret {
+  color: var(--text-faint);
+  font-size: 11px;
+  width: 10px;
+}
+
+.goal-icon {
+  width: 18px;
+  height: 18px;
+  opacity: 0.75;
+}
+
+/* Takes the slack, so the meta block on the right lines up down the list however long the names are. */
+.goal-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.goal-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.goal-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  /* One line: the whole description is in the goal, not in a list of goals. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goal-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.goal-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.goal-closed-flag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+
+.goal-progress-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  /* Fixed width so the bars beside them line up rather than stepping in and out with the digits. */
+  min-width: 52px;
+  text-align: right;
+}
+
+.goal-progress {
+  width: 90px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.goal-progress-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.goal-comments {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.goal-body {
+  border-top: 1px solid var(--border);
+  padding: 6px 12px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.goal-task {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 4px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  user-select: none;
+}
+
+.goal-task:hover {
+  background: var(--surface-2);
+}
+
+/* Done work stays listed — a goal's list includes archived tasks, and that is the whole point of the list
+   agreeing with the counter above it. It just stops competing for attention. */
+.goal-task.done .goal-task-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.goal-task-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-faint);
+  min-width: 74px;
+}
+
+.goal-task-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goal-task-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}

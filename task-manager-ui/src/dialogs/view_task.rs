@@ -144,10 +144,18 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                 div { "{found.project_prefix} · {found.project_name}" }
             }
 
-            if let Some(goal) = task.goal_name.as_ref().or(task.goal_id.as_ref()) {
+            // The handle beside the name: the name is what a person reads, and the handle is what they type
+            // back into the search box or into a conversation with an agent.
+            if let Some(goal) = task.goal.as_ref() {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Goal" }
-                    div { "{goal}" }
+                    div {
+                        if let Some(name) = task.goal_name.as_ref() {
+                            "{name} · {goal}"
+                        } else {
+                            "{goal}"
+                        }
+                    }
                 }
             }
 
@@ -260,6 +268,7 @@ fn show(id: String) {
             Ok(found) => found,
             Err(err) => FindTaskResponse {
                 task: None,
+                goal: None,
                 project_id: String::new(),
                 project_prefix: String::new(),
                 project_name: String::new(),

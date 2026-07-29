@@ -44,6 +44,7 @@ pub fn TopBar(active: &'static str) -> Element {
                 // Nothing to search for, so the tab goes to the bare board — never to whatever is in the box
                 // on the board somebody is already looking at.
                 Link { class: class_of("home"), to: AppRoute::Home { search: None }, "Home" }
+                Link { class: class_of("goals"), to: AppRoute::Goals {}, "Goals" }
                 if is_admin {
                     Link {
                         class: class_of("projects"),

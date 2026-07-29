@@ -82,6 +82,9 @@ pub struct ProjectResponse {
     #[serde(default)]
     pub members: Vec<String>,
     pub tasks_amount: i32,
+    // How many days finished work stays on the board here. Absent means the default of seven, which is what
+    // every project did before this was configurable — so "not set" is a real answer and not a missing one.
+    pub archive_days: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
@@ -112,6 +115,13 @@ pub struct UpdateProjectInputModel {
     // Renaming is allowed; the previous prefix is kept in history so old ids keep resolving.
     #[http_body(name: "prefix", description: "Task id prefix, e.g. RMS", trim, to_uppercase)]
     pub prefix: String,
+    // How long finished work stays on the board. Absent or empty leaves the project on the default of seven
+    // days; it is not a way of saying "zero", which would archive work the moment it landed.
+    #[http_body(
+        name: "archiveDays",
+        description: "Days a finished task stays on the board before it counts as archived. Leave empty for the default of 7"
+    )]
+    pub archive_days: Option<i32>,
 }
 
 // Which template a project follows. `column_template_id` empty means "none" — the board is then just

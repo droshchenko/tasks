@@ -8,10 +8,13 @@ use super::models::{
     ColumnTemplateModel, GoalModel, KindTemplateModel, ProjectModel, TaskModel, UserModel,
 };
 
-/// How long a finished task stays on the board before it counts as archived.
+/// How long finished work stays on the board before it counts as archived, when a project has not said
+/// otherwise.
 ///
 /// Done is the only column that grows for ever, so it is the only one that needs a window. Seven days is
-/// long enough to cover "what did we ship this week" and short enough that the column stays readable.
+/// long enough to cover "what did we ship this week" and short enough that the column stays readable —
+/// and it is what every project did before the window became a per-project setting, which is why a
+/// project with no `archive_days` reads exactly as it always has. See `ProjectModel::archive_after`.
 pub const ARCHIVE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// The whole product state, indexed, as one immutable snapshot.
@@ -37,9 +40,10 @@ pub struct BoardInner {
     /// Upper-cased prefix -> every project that has *ever* held it, current holder included.
     /// A multimap, because a prefix is free to move on once renamed away from.
     historical_prefix_index: AHashMap<String, Vec<String>>,
-    /// Goal id -> goal. Flat rather than nested per project: a task names a goal by id alone, and that is
-    /// the lookup every read of a task does.
-    goals: AHashMap<String, Arc<GoalModel>>,
+    /// project id -> goal number -> goal. Nested exactly like `tasks`, because a goal is identified the
+    /// same way a task is and every lookup arrives with the project already in hand: a task names its
+    /// goal by number alone, and the number only means anything within its own project.
+    goals: AHashMap<String, AHashMap<i64, Arc<GoalModel>>>,
     /// project id -> task number -> task.
     tasks: AHashMap<String, AHashMap<i64, Arc<TaskModel>>>,
     /// Lower-cased email -> user.
@@ -72,10 +76,14 @@ impl BoardInner {
     /// Build a snapshot out of what the startup load read from Postgres.
     ///
     /// The one place the counter invariant lives: each project's `last_task_number` is floored at the
-    /// highest number any of its surviving tasks carries. A counter row that is missing or has fallen
-    /// behind therefore cannot re-issue a live number — and since the floor is computed from the
-    /// tasks that actually exist, a number lost to a crash before its task row was written is simply
+    /// highest number any of its surviving tasks **or goals** carries. A counter row that is missing or
+    /// has fallen behind therefore cannot re-issue a live number — and since the floor is computed from
+    /// the rows that actually exist, a number lost to a crash before its row was written is simply
     /// never used.
+    ///
+    /// Goals count towards that floor because they draw from the same counter. Leaving them out would let
+    /// a behind counter hand a task the number a goal already has, and then `RMS-7` and `RMS-G7` would
+    /// both exist — which is the one assumption everything else here is built on.
     ///
     /// A task whose project is gone is dropped: there is nothing to compose its handle from and no
     /// board to draw it on. That cannot happen while project deletion is unimplemented, which is
@@ -100,23 +108,28 @@ impl BoardInner {
             result.put_kind_template(Arc::new(template));
         }
 
-        for goal in goals {
-            result.put_goal(Arc::new(goal));
-        }
+        let mut highest_number: AHashMap<String, i64> = AHashMap::new();
 
-        let mut highest_number: AHashMap<&str, i64> = AHashMap::new();
         for task in &tasks {
-            let entry = highest_number.entry(task.project_id.as_str()).or_insert(0);
+            let entry = highest_number.entry(task.project_id.clone()).or_insert(0);
             if task.number > *entry {
                 *entry = task.number;
             }
         }
 
+        for goal in &goals {
+            let entry = highest_number.entry(goal.project_id.clone()).or_insert(0);
+            if goal.number > *entry {
+                *entry = goal.number;
+            }
+        }
+
+        for goal in goals {
+            result.put_goal(Arc::new(goal));
+        }
+
         for mut project in projects {
-            let floor = highest_number
-                .get(project.id.as_str())
-                .copied()
-                .unwrap_or(0);
+            let floor = highest_number.get(&project.id).copied().unwrap_or(0);
 
             if project.last_task_number < floor {
                 project.last_task_number = floor;
@@ -163,11 +176,10 @@ impl BoardInner {
     }
 
     pub(super) fn put_goal(&mut self, goal: Arc<GoalModel>) {
-        self.goals.insert(goal.id.clone(), goal);
-    }
-
-    pub(super) fn drop_goal(&mut self, id: &str) {
-        self.goals.remove(id);
+        self.goals
+            .entry(goal.project_id.clone())
+            .or_default()
+            .insert(goal.number, goal);
     }
 
     pub(super) fn put_task(&mut self, task: Arc<TaskModel>) {
@@ -313,53 +325,104 @@ impl BoardInner {
             .count()
     }
 
-    pub fn get_goal(&self, id: &str) -> Option<Arc<GoalModel>> {
-        self.goals.get(id).cloned()
+    pub fn get_goal(&self, project_id: &str, number: i64) -> Option<Arc<GoalModel>> {
+        self.goals.get(project_id)?.get(&number).cloned()
     }
 
-    /// A project's goals, oldest first — the order they were set in.
+    /// A project's goals, oldest first — which is also numeric order, since the counter only goes up.
     pub fn goals_of_project(&self, project_id: &str) -> Vec<Arc<GoalModel>> {
-        let mut result: Vec<Arc<GoalModel>> = self
-            .goals
-            .values()
-            .filter(|itm| itm.project_id == project_id)
-            .cloned()
-            .collect();
+        let Some(of_project) = self.goals.get(project_id) else {
+            return Vec::new();
+        };
 
-        result.sort_by_key(|itm| itm.created.unix_microseconds);
+        let mut result: Vec<Arc<GoalModel>> = of_project.values().cloned().collect();
+        result.sort_by_key(|itm| itm.number);
         result
     }
 
     /// The goal a task should be *read* as part of.
     ///
-    /// `None` when it has none, and also when it names a goal that no longer exists — the stored value is
-    /// left alone, exactly as with a status or a task type, so re-creating the goal would bring the task
-    /// back to it. Which is what makes deleting a goal a safe, reversible thing to do.
+    /// `None` when it has none, and also when its number names no goal — the stored value is left alone,
+    /// exactly as with a status or a task type. Nothing removes a goal in this version, so the second case
+    /// should not arise; being lenient about it means a gap in the data reads as "standalone" rather than
+    /// making the task unreadable.
     pub fn effective_goal(&self, task: &TaskModel) -> Option<Arc<GoalModel>> {
-        self.get_goal(task.goal_id.as_deref()?)
+        self.get_goal(&task.project_id, task.goal_number?)
     }
 
-    /// How many of a goal's tasks there are, and how many are done. The whole of a goal's progress —
-    /// derived, never stored, so it cannot disagree with the board.
-    pub fn goal_progress(&self, goal_id: &str) -> (usize, usize) {
+    /// How many of a goal's tasks there are, and how many are done.
+    ///
+    /// The whole of a goal's progress — derived, never stored, so it cannot disagree with the board.
+    /// Archived tasks are counted: a goal closes only once every one of its tasks is done, and by then the
+    /// oldest of them have aged out of the board, so a count that skipped them would report a finished
+    /// goal as half-finished. What the counter measures is the epic, not this week.
+    pub fn goal_progress(&self, project_id: &str, number: i64) -> (usize, usize) {
+        let Some(of_project) = self.tasks.get(project_id) else {
+            return (0, 0);
+        };
+
         let mut total = 0;
         let mut done = 0;
 
-        for of_project in self.tasks.values() {
-            for task in of_project.values() {
-                if task.goal_id.as_deref() != Some(goal_id) {
-                    continue;
-                }
+        for task in of_project.values() {
+            if task.goal_number != Some(number) {
+                continue;
+            }
 
-                total += 1;
+            total += 1;
 
-                if task.status == task_manager_shared::projects::COLUMN_ID_DONE {
-                    done += 1;
-                }
+            if task.status == task_manager_shared::projects::COLUMN_ID_DONE {
+                done += 1;
             }
         }
 
         (total, done)
+    }
+
+    /// The tasks of one goal, oldest first. Includes archived work, for the reason given on
+    /// [`BoardInner::goal_progress`] — the list and the counter have to agree.
+    pub fn tasks_of_goal(&self, project_id: &str, number: i64) -> Vec<Arc<TaskModel>> {
+        let Some(of_project) = self.tasks.get(project_id) else {
+            return Vec::new();
+        };
+
+        let mut result: Vec<Arc<TaskModel>> = of_project
+            .values()
+            .filter(|task| task.goal_number == Some(number))
+            .cloned()
+            .collect();
+
+        result.sort_by_key(|itm| itm.number);
+        result
+    }
+
+    /// Whether a closed goal has aged out of the screen.
+    ///
+    /// The same rule and the same window as a task, read off the goal's own project: a goal is history
+    /// once it has been closed for longer than the project's archive window. An open goal never archives,
+    /// however old it is — an epic that has run for a year is not history, it is late.
+    pub fn is_goal_archived(&self, goal: &GoalModel) -> bool {
+        let Some(closed) = goal.close_moment else {
+            return false;
+        };
+
+        let Some(project) = self.projects.get(&goal.project_id) else {
+            return false;
+        };
+
+        let now = DateTimeAsMicroseconds::now();
+
+        now.unix_microseconds - closed.unix_microseconds > project.archive_after().as_micros() as i64
+    }
+
+    /// Whether every task of this goal is done — the question that decides if it may be closed.
+    ///
+    /// Counts archived work as done, which it is: a task archives only from Done.
+    pub fn open_tasks_of_goal(&self, project_id: &str, number: i64) -> Vec<Arc<TaskModel>> {
+        self.tasks_of_goal(project_id, number)
+            .into_iter()
+            .filter(|task| task.status != task_manager_shared::projects::COLUMN_ID_DONE)
+            .collect()
     }
 
     pub fn get_project(&self, project_id: &str) -> Option<Arc<ProjectModel>> {
@@ -485,7 +548,8 @@ impl BoardInner {
     /// Whether a finished task has aged out of the board.
     ///
     /// Done is the one column that grows without bound, and a board nobody can read is a board nobody
-    /// looks at — so work older than [`ARCHIVE_AFTER`] stops being shown. Nothing is deleted: the task is
+    /// looks at — so work closed longer ago than the project's archive window stops being shown. That
+    /// window is [`ARCHIVE_AFTER`] unless the project says otherwise. Nothing is deleted: the task is
     /// still there, still reachable by its id, and `tasks_list` can ask for it explicitly.
     ///
     /// A task in Done with no `close_moment` is treated as **not** archived. That should not occur — the
@@ -506,7 +570,7 @@ impl BoardInner {
 
         let now = DateTimeAsMicroseconds::now();
 
-        now.unix_microseconds - closed.unix_microseconds > ARCHIVE_AFTER.as_micros() as i64
+        now.unix_microseconds - closed.unix_microseconds > project.archive_after().as_micros() as i64
     }
 
     /// Whether a task is blocked: any id in `depends_on` naming a task that is not Done.

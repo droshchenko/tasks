@@ -52,8 +52,9 @@ pub struct TaskDto {
     pub task_text: String,
     pub status: String,
     pub kind: Option<String>,
-    // Which goal this task is part of. `None` for a standalone task.
-    pub goal_id: Option<String>,
+    // Which goal this task is part of, by the goal's number in this same project. `None` for a
+    // standalone task. A number rather than a handle for the same reason `depends_on` holds numbers.
+    pub goal_number: Option<i64>,
     pub assignee: Option<String>,
     #[sql_type("jsonb")]
     #[json]

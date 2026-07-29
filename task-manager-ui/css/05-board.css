@@ -255,3 +255,14 @@ input[type="text"].board-search {
 .board-search-clear:focus-visible {
   opacity: 1;
 }
+
+/* The goal a card belongs to, above its title — the context the title is read in. Small and quiet: it is
+   the same value on every card of that goal, so it must not compete with the thing that differs. */
+.sticker-goal {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}

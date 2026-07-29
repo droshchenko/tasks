@@ -78,6 +78,10 @@ pub struct ProjectDto {
     #[json]
     pub kinds: Vec<ProjectKindJsonModel>,
     pub last_task_number: i64,
+    // How many days finished work stays on the board. NULL means the built-in default of seven, which is
+    // what every project did before this was configurable — so an existing row keeps its behaviour
+    // without being rewritten, and the column can be added to a live table without a backfill.
+    pub archive_days: Option<i32>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
 }

@@ -102,6 +102,9 @@ pub async fn create_project(
         kinds: Vec::new(),
         members: BTreeSet::new(),
         last_task_number: 0,
+        // No window of its own: `None` is the seven-day default, which is what a project setting up its
+        // board has no opinion about yet.
+        archive_days: None,
         created: DateTimeAsMicroseconds::now(),
     };
 
@@ -118,12 +121,29 @@ pub async fn update_project(
     name: &str,
     description: &str,
     prefix: &str,
+    archive_days: Option<i32>,
 ) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err("a project needs a name".to_string());
     }
 
     let prefix = validate_prefix(prefix)?;
+
+    // Validated on the way in, where the read side is lenient: a zero or a negative would archive work the
+    // instant it landed, which is not a thing anybody means to configure. `None` stays `None` — that is how
+    // a project says "the default", not a value to be normalised away.
+    if let Some(days) = archive_days {
+        if days < 1 {
+            return Err(
+                "the archive window is in days and must be at least 1 — leave it empty for the default of 7"
+                    .to_string(),
+            );
+        }
+
+        if days > 3650 {
+            return Err("an archive window longer than ten years is not a window".to_string());
+        }
+    }
 
     let board = app.board.read();
     let mut project = load(&board, project_id)?;
@@ -146,6 +166,7 @@ pub async fn update_project(
 
     project.name = name.trim().to_string();
     project.description = description.trim().to_string();
+    project.archive_days = archive_days;
 
     save(app, project).await;
     Ok(())

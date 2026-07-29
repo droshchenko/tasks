@@ -1,6 +1,7 @@
 use flurl::HttpVerb;
+use task_manager_shared::projects::ProjectResponse;
 use task_manager_shared::tasks::{
-    FindTaskInputModel, FindTaskResponse, GetTasksInputModel, TasksResponse,
+    FindTaskInputModel, FindTaskResponse, GetTasksInputModel, TaskResponse, TasksResponse,
 };
 
 use crate::models::RequestError;
@@ -30,4 +31,22 @@ pub async fn find_task(query: &str) -> Result<FindTaskResponse, RequestError> {
     };
 
     handle_http_response(authed("/api/tasks/v1/find", HttpVerb::Post, request).await).await
+}
+
+/// The answer a lookup by id would have given, assembled from what is already on screen.
+///
+/// No round trip: whichever screen is drawing the task already holds it and the project it is on, so the
+/// dialog opens instantly. `archived` is false by definition of being drawn — the one caller that can show
+/// archived work (a goal's own list) is showing it deliberately, and the dialog does not use the flag to
+/// decide anything, only to say so.
+pub fn find_task_locally(task: &TaskResponse, project: &ProjectResponse) -> FindTaskResponse {
+    FindTaskResponse {
+        task: Some(task.clone()),
+        goal: None,
+        project_id: project.id.clone(),
+        project_prefix: project.prefix.clone(),
+        project_name: project.name.clone(),
+        archived: false,
+        not_found: String::new(),
+    }
 }

@@ -37,12 +37,14 @@ pub async fn update_project(
     name: &str,
     description: &str,
     prefix: &str,
+    archive_days: Option<i32>,
 ) -> Result<(), RequestError> {
     let request = UpdateProjectInputModel {
         project_id: project_id.to_string(),
         name: name.to_string(),
         description: description.to_string(),
         prefix: prefix.to_string(),
+        archive_days,
     };
 
     handle_http_empty(authed("/api/projects/v1/update", HttpVerb::Post, request).await).await

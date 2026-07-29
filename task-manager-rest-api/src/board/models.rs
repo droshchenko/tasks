@@ -86,9 +86,14 @@ pub struct ProjectModel {
     pub kind_template_id: Option<String>,
     pub kinds: Vec<KindModel>,
     pub members: BTreeSet<String>,
-    // High-water mark of the project's own task counter. Only ever moves forward — deleting a task
-    // does not lower it, which is what keeps a number from being handed out twice.
+    // High-water mark of the project's own counter, shared by tasks AND goals: a number is handed out
+    // once and names one or the other. Only ever moves forward — deleting a task does not lower it,
+    // which is what keeps a number from being handed out twice.
     pub last_task_number: i64,
+    // How long finished work stays on the board before it counts as archived. `None` means the default
+    // seven days, which is what every project did before this was configurable — so a row that has never
+    // been told otherwise keeps behaving exactly as it did.
+    pub archive_days: Option<i32>,
     pub created: DateTimeAsMicroseconds,
 }
 
@@ -133,19 +138,70 @@ impl ProjectModel {
     pub fn is_member(&self, email: &str) -> bool {
         self.members.contains(&email.trim().to_lowercase())
     }
+
+    /// How long finished work stays on this board before it counts as archived.
+    ///
+    /// `None` means the default, and so does a number that makes no sense: a stored zero or a negative
+    /// would archive everything the instant it closed, which is not a setting anybody means to make. The
+    /// leniency is on the read side on purpose — writes validate — so one bad row cannot empty a board.
+    pub fn archive_after(&self) -> std::time::Duration {
+        match self.archive_days {
+            Some(days) if days > 0 => {
+                std::time::Duration::from_secs(days as u64 * 24 * 60 * 60)
+            }
+            _ => super::ARCHIVE_AFTER,
+        }
+    }
 }
 
-/// A goal, in memory — a container for tasks, an epic.
+/// A goal, in memory — the container work is done around. An epic.
 ///
-/// It does not list its tasks: a task carries the goal id. Deleting a goal therefore takes nothing with
-/// it, and its tasks read as standalone from then on.
+/// Identified by `(project_id, number)`, exactly like a task, and out of the same per-project counter: a
+/// number names either a task or a goal and never both, so `RMS-7` and `RMS-G7` cannot coexist. The
+/// handle is composed on read from the project's current prefix and is not stored, for the same reason a
+/// task's is not — a prefix moves between projects.
+///
+/// It does not list its tasks: a task carries the goal's number. That direction is also the one every
+/// read wants, since a task is drawn far more often than a goal is listed.
+///
+/// **There is no `status` field, and that is the point.** A goal has exactly two states in this version,
+/// and `close_moment` already tells them apart — storing a status beside it would let the two disagree
+/// (`done` with no moment reads as never closed; a moment with `todo` reads as archived while open), and
+/// a goal that is closed according to one field and open according to the other is a bug nobody sees
+/// until a screen goes blank. The wire still reports `status`; it is derived. When the second iteration
+/// gives a goal real columns, the field arrives then and pays for itself.
 #[derive(Debug, Clone)]
 pub struct GoalModel {
-    pub id: String,
     pub project_id: String,
+    pub number: i64,
     pub name: String,
     pub description: String,
+    // The discussion the work came out of. Same shape as a task's thread and the same reason it rides on
+    // the row: one atomic write per comment.
+    pub comments: Vec<CommentModel>,
     pub created: DateTimeAsMicroseconds,
+    // Moved by a change to the goal itself. A comment does NOT move it, as on a task.
+    pub updated: DateTimeAsMicroseconds,
+    // When the goal was closed, and `None` while it is open — which makes this the whole of its state.
+    // Cleared on re-opening, so a re-closed goal is dated by its latest close.
+    pub close_moment: Option<DateTimeAsMicroseconds>,
+}
+
+impl GoalModel {
+    /// Whether the goal is closed. The only state question there is — see the note on the struct.
+    pub fn is_closed(&self) -> bool {
+        self.close_moment.is_some()
+    }
+
+    /// The status a reader shows: `done` for a closed goal, `todo` for an open one. Derived rather than
+    /// stored so it cannot disagree with `close_moment`.
+    pub fn status(&self) -> &'static str {
+        if self.is_closed() {
+            task_manager_shared::projects::COLUMN_ID_DONE
+        } else {
+            task_manager_shared::projects::COLUMN_ID_TODO
+        }
+    }
 }
 
 /// One comment on a task's thread.
@@ -170,9 +226,13 @@ pub struct TaskModel {
     // column that no longer exists.
     pub status: String,
     pub kind: Option<String>,
-    // The stored goal. Read it through `BoardInner::effective_goal` — this can name a goal that no longer
-    // exists, and such a task reads as standalone.
-    pub goal_id: Option<String>,
+    // The goal this task is part of, by the goal's number within this same project — a task can only
+    // belong to a goal on its own board, so the project is implied and storing a prefix would only give
+    // it a way to go stale.
+    //
+    // Read it through `BoardInner::effective_goal`: nothing deletes a goal in this version, but a number
+    // naming no goal still reads as "standalone" rather than as an error, the same leniency a status gets.
+    pub goal_number: Option<i64>,
     pub assignee: Option<String>,
     // Lower-cased and de-duplicated on write, sorted so a listing is reproducible.
     pub labels: Vec<String>,

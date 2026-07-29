@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::goals::GoalResponse;
 use crate::tasks::TaskResponse;
 
 // A whole board, pushed because it changed.
@@ -18,10 +19,18 @@ use crate::tasks::TaskResponse;
 // The snapshot itself rather than a signal to go and re-read: a re-read empties the screen while it is in
 // flight, and what the reader sees for that moment is a spinner where their board was. It is not a delta
 // either — a delta is only correct if the client's copy is, and a wholesale replacement cannot drift.
+//
+// `goals` rides along because every change to one arrives this way too — a goal renamed or closed through
+// MCP has to appear on the Goals screen without anybody re-reading anything. Their progress counters are
+// computed server-side and count archived work; `tasks` does NOT include archived work, so a client that
+// recomputed the counters from what is in this snapshot would disagree with the server, and disagree more
+// the older the goal. Take the numbers as given.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BoardSnapshot {
     pub project_id: String,
     pub tasks: Vec<TaskResponse>,
+    #[serde(default)]
+    pub goals: Vec<GoalResponse>,
 }
 
 // One message from the server. Exactly one of the fields is set on any given message.

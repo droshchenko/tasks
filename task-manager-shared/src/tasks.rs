@@ -49,10 +49,10 @@ pub struct TaskResponse {
     pub text: String,
     pub status: String,
     pub kind: Option<String>,
-    // Which goal this task is part of, and its name. Both absent for a standalone task — and also when the
-    // stored goal no longer exists, which reads the same way on purpose: a deleted goal leaves its tasks
-    // standalone rather than dangling.
-    pub goal_id: Option<String>,
+    // Which goal this task is part of — its handle, `RMS-G7` — and its name. Both absent for a standalone
+    // task, which is a normal state and not an unfinished one. Also both absent if the stored number names
+    // no goal, which reads the same way on purpose: such a task is standalone rather than dangling.
+    pub goal: Option<String>,
     pub goal_name: Option<String>,
     pub assignee: Option<String>,
     // The assignee's display name, resolved from the roster. Absent when the assignee is `claude`
@@ -98,11 +98,16 @@ pub struct TasksResponse {
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
 pub struct FindTaskResponse {
     pub task: Option<TaskResponse>,
+    // Set instead of `task` when the query named a GOAL — either written `RMS-G7`, or a bare number that
+    // turned out to be a goal's. One counter serves both kinds per project, so a number is one or the
+    // other and never both. Search is the only way to reach an archived goal, which is why it answers for
+    // goals at all.
+    pub goal: Option<crate::goals::GoalResponse>,
     pub project_id: String,
     pub project_prefix: String,
     pub project_name: String,
-    // True when the hit is older than the seven-day window, so it is NOT on the board. Said out loud, or
-    // somebody goes hunting through the columns for a card that is not drawn.
+    // True when the hit is older than the project's archive window, so it is NOT on the board. Said out
+    // loud, or somebody goes hunting through the columns for a card that is not drawn.
     pub archived: bool,
     // Why there is no task, in words. Empty on a hit — an id that is not there has to come back as a
     // message, never as an empty result that reads like "there is nothing there".
@@ -111,7 +116,7 @@ pub struct FindTaskResponse {
 
 #[derive(MyHttpInput)]
 pub struct FindTaskInputModel {
-    #[http_body(name: "query", description: "A task id such as RMS-42 or RMS-000042")]
+    #[http_body(name: "query", description: "A task id such as RMS-42 or RMS-000042, or a goal id such as RMS-G7")]
     pub query: String,
 }
 

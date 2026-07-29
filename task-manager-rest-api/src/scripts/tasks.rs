@@ -165,6 +165,13 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     let depends_on = parse_dependencies(&new_task.depends_on, &project)?;
     let labels = normalise_labels(&new_task.labels);
 
+    // Validated against the project rather than accepted blindly: a goal from another board would draw the
+    // task under something nobody on this one can see, and a closed goal would gain a live task.
+    //
+    // Before the reservation, with the rest of the validation — a refused goal used to burn a number,
+    // which contradicted the promise made right above.
+    let goal_number = resolve_goal(&board, &project, new_task.goal.as_deref())?;
+
     let number = app.board.reserve_task_number(&project.id).ok_or_else(|| {
         format!(
             "project {} vanished while creating the task",
@@ -173,9 +180,6 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     })?;
 
     let now = DateTimeAsMicroseconds::now();
-    // Validated against the project rather than accepted blindly: a goal id from another board would draw
-    // the task under a goal nobody on this one can see.
-    let goal_id = resolve_goal(&board, &project.id, new_task.goal.as_deref())?;
 
     let task = TaskModel {
         project_id: project.id.clone(),
@@ -184,7 +188,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
         // Always Todo. Moving it on is tasks_update's job, which is where the Done rule lives.
         status: COLUMN_ID_TODO.to_string(),
         kind,
-        goal_id,
+        goal_number,
         assignee: normalise_assignee(new_task.assignee.as_deref()),
         labels,
         depends_on,
@@ -255,7 +259,7 @@ fn build_comment(
 /// Addresses are lower-cased — they are case-insensitive, and storing two spellings of one would split a
 /// person in two. `AI` is stored exactly as declared whatever case it arrived in, so the value that comes
 /// back is the value the tool descriptions told the caller to use.
-fn normalise_actor(src: &str) -> String {
+pub(super) fn normalise_actor(src: &str) -> String {
     if task_manager_shared::users::is_ai_assignee(src) {
         return task_manager_shared::users::ASSIGNEE_AI.to_string();
     }
@@ -263,27 +267,47 @@ fn normalise_actor(src: &str) -> String {
     src.to_lowercase()
 }
 
-/// The goal id to store, validated against the project the task is on.
+/// The goal number to store, validated against the project the task is on.
 ///
 /// `Ok(None)` for "no goal" — either nothing was passed or an empty string was, which is how a caller
-/// detaches a task. A goal that does not exist, or belongs to another project, is refused: accepting it
-/// would file the task under a goal nobody on this board can see.
+/// detaches a task. Accepts a handle (`RMS-G7`) or a bare number, the same leniency `depends_on` gets: a
+/// number is unambiguous within a project, and a caller editing one task should not have to retype the
+/// prefix.
+///
+/// Refused in three cases, each of which would otherwise create something that looks fine:
+///
+/// * a handle whose prefix belongs to another project — a task can only be part of a goal on its own board;
+/// * a number naming no goal — unlike a dependency, where an unknown number keeps the task blocked and is
+///   therefore safe, an unknown goal would simply make the task read as standalone and lose the link;
+/// * a **closed** goal. This is the second of the three doors into "a closed goal has no live tasks", and
+///   the easiest one to walk through by accident: closing a goal checks its tasks, and nothing would stop
+///   the very next call from hanging a fresh one underneath.
 fn resolve_goal(
     board: &crate::board::BoardInner,
-    project_id: &str,
+    project: &crate::board::ProjectModel,
     goal: Option<&str>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<i64>, String> {
     let Some(goal) = goal.map(str::trim).filter(|itm| !itm.is_empty()) else {
         return Ok(None);
     };
 
-    match board.get_goal(goal) {
-        Some(found) if found.project_id == project_id => Ok(Some(found.id.clone())),
-        Some(_) => Err(format!(
-            "goal '{goal}' belongs to another project — a task can only be part of a goal on its own board"
-        )),
-        None => Err(format!("no goal with id '{goal}'")),
+    // Parsing, project ownership and existence are one question wherever a goal is named, so they live in
+    // one place. What is special here is only the last check.
+    let number = super::resolve_goal_reference(board, project, goal)?;
+
+    let handle = crate::board::compose_goal_handle(&project.prefix, number);
+
+    let Some(found) = board.get_goal(&project.id, number) else {
+        return Err(format!("no goal {handle} on {}", project.prefix));
+    };
+
+    if found.is_closed() {
+        return Err(format!(
+            "{handle} is closed — re-open it before putting work under it, or choose another goal"
+        ));
     }
+
+    Ok(Some(number))
 }
 
 /// An assignee, normalised by [`normalise_actor`]. Blank means nobody.
@@ -301,7 +325,7 @@ fn normalise_assignee(src: Option<&str>) -> Option<String> {
 ///
 /// Reads the project back out of memory first: the copy captured before `reserve_task_number` still
 /// has the old counter, and persisting that would undo the reservation.
-async fn persist_project_counter(app: &AppContext, project_id: &str, ctx: &MyTelemetryContext) {
+pub(super) async fn persist_project_counter(app: &AppContext, project_id: &str, ctx: &MyTelemetryContext) {
     if let Some(project) = app.board.read().get_project(project_id) {
         let dto: crate::postgres::ProjectDto = project.as_ref().into();
         app.projects_repo.upsert(&dto, ctx).await;
@@ -347,7 +371,24 @@ pub async fn update_task(
     }
 
     if let Some(goal) = &patch.goal {
-        task.goal_id = resolve_goal(&board, &project.id, Some(goal))?;
+        task.goal_number = resolve_goal(&board, &project, Some(goal))?;
+    }
+
+    // The third door into "a closed goal has no live tasks", and the only one that does not involve the
+    // goal at all: the task was done, its goal was closed on the strength of that, and now the task is
+    // being re-opened underneath it. Refused rather than silently re-opening the goal, because re-opening
+    // an epic is a decision that belongs in its thread, not a side effect of moving one sticker.
+    if project.effective_status(&task.status) != COLUMN_ID_DONE {
+        if let Some(number) = task.goal_number {
+            if let Some(goal) = board.get_goal(&project.id, number) {
+                if goal.is_closed() {
+                    return Err(format!(
+                        "{handle} is part of {}, which is closed — re-open the goal first, or detach the task from it by passing an empty `goal`",
+                        crate::board::compose_goal_handle(&project.prefix, number)
+                    ));
+                }
+            }
+        }
     }
 
     if let Some(assignee) = &patch.assignee {

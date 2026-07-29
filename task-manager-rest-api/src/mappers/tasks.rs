@@ -35,7 +35,7 @@ impl From<&TaskDto> for TaskModel {
             text: src.task_text.clone(),
             status: src.status.clone(),
             kind: src.kind.clone(),
-            goal_id: src.goal_id.clone(),
+            goal_number: src.goal_number,
             assignee: src.assignee.clone(),
             labels: src.labels.clone(),
             depends_on: src.depends_on.clone(),
@@ -55,7 +55,7 @@ impl From<&TaskModel> for TaskDto {
             task_text: src.text.clone(),
             status: src.status.clone(),
             kind: src.kind.clone(),
-            goal_id: src.goal_id.clone(),
+            goal_number: src.goal_number,
             assignee: src.assignee.clone(),
             labels: src.labels.clone(),
             depends_on: src.depends_on.clone(),
@@ -99,8 +99,11 @@ pub fn task_to_response(
         text: task.text.clone(),
         status: project.effective_status(&task.status),
         kind: project.effective_kind(task.kind.as_deref()),
-        // Resolved, so a task pointing at a goal that is gone reads as standalone rather than dangling.
-        goal_id: goal.as_ref().map(|itm| itm.id.clone()),
+        // Resolved and composed, so a task whose goal number names nothing reads as standalone rather
+        // than as a dangling number nobody can look up.
+        goal: goal
+            .as_ref()
+            .map(|itm| crate::board::compose_goal_handle(&project.prefix, itm.number)),
         goal_name: goal.as_ref().map(|itm| itm.name.clone()),
         assignee: task.assignee.clone(),
         assignee_name,

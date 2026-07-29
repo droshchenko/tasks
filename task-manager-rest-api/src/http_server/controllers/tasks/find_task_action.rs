@@ -34,6 +34,7 @@ impl FindTaskAction {
 fn nothing(reason: String) -> FindTaskResponse {
     FindTaskResponse {
         task: None,
+        goal: None,
         project_id: String::new(),
         project_prefix: String::new(),
         project_name: String::new(),
@@ -51,12 +52,32 @@ async fn handle_request(
 
     let board = action.app.board.read();
 
+    // A goal first, and only when the query is spelled as one: `RMS-G7` cannot be a task, so there is
+    // nothing to fall through to. This is the only route to a goal that has aged off the screen.
+    if crate::board::parse_goal_handle(input_data.query.trim()).is_some() {
+        return found_goal(action, &board, &user, input_data.query.trim());
+    }
+
     // `resolve_task` already says what would fix a miss — a bad shape, an unknown prefix with the known
     // ones listed, or a number that is not on that board. Passing its message through beats inventing a
     // flatter one here.
     let found = match crate::scripts::resolve_task(&board, &input_data.query) {
         Ok(found) => found,
-        Err(err) => return HttpOutput::as_json(nothing(err)).into_ok_result(true),
+        Err(err) => {
+            // A bare `RMS-7` may be a goal's number: one counter serves both kinds, so a query that no
+            // task answers is worth asking the goals about before reporting nothing.
+            if let Some(parsed) = crate::board::parse_task_handle(input_data.query.trim()) {
+                if let Some(project) = board.get_project_by_prefix(&parsed.prefix) {
+                    if board.get_goal(&project.id, parsed.number).is_some() {
+                        let handle =
+                            crate::board::compose_goal_handle(&project.prefix, parsed.number);
+                        return found_goal(action, &board, &user, &handle);
+                    }
+                }
+            }
+
+            return HttpOutput::as_json(nothing(err)).into_ok_result(true);
+        }
     };
 
     // Not a 403: refusing would confirm that RMS-42 exists, which is the one thing somebody probing ids
@@ -74,10 +95,53 @@ async fn handle_request(
 
     HttpOutput::as_json(FindTaskResponse {
         task: Some(task),
+        goal: None,
         project_id: found.project.id.clone(),
         project_prefix: found.project.prefix.clone(),
         project_name: found.project.name.clone(),
         archived,
+        not_found: String::new(),
+    })
+    .into_ok_result(true)
+}
+
+/// Answer with a goal.
+///
+/// Membership is checked the same way and refused the same way — as "not found" rather than as a 403,
+/// because a refusal would confirm that the goal exists, which is the one thing somebody probing ids for a
+/// board they cannot see would learn.
+fn found_goal(
+    action: &FindTaskAction,
+    board: &crate::board::BoardInner,
+    user: &crate::auth::AuthUser,
+    handle: &str,
+) -> Result<HttpOkResult, HttpFailResult> {
+    let _ = action;
+
+    let found = match crate::scripts::resolve_goal_by_handle(board, handle) {
+        Ok(found) => found,
+        Err(err) => return HttpOutput::as_json(nothing(err)).into_ok_result(true),
+    };
+
+    if !user.is_admin && !found.project.is_member(&user.email) {
+        return HttpOutput::as_json(nothing(format!("no goal {handle} you can see")))
+            .into_ok_result(true);
+    }
+
+    let (tasks_amount, done_amount) = board.goal_progress(&found.project.id, found.goal.number);
+
+    HttpOutput::as_json(FindTaskResponse {
+        task: None,
+        goal: Some(crate::mappers::goal_to_response(
+            &found.goal,
+            &found.project.prefix,
+            tasks_amount,
+            done_amount,
+        )),
+        project_id: found.project.id.clone(),
+        project_prefix: found.project.prefix.clone(),
+        project_name: found.project.name.clone(),
+        archived: board.is_goal_archived(&found.goal),
         not_found: String::new(),
     })
     .into_ok_result(true)
