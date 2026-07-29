@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use encryption::aes::AesKey;
+use task_manager_shared::tasks::TaskResponse;
+use task_manager_shared::ws::{BoardSnapshot, ServerWsPayload};
 
 use crate::board::Board;
 use crate::postgres::{
@@ -94,5 +96,60 @@ impl AppContext {
             .admins
             .iter()
             .any(|itm| itm.trim().to_lowercase() == email)
+    }
+
+    /// Push the board to every Home watching it.
+    ///
+    /// **The board itself, not a signal to go and re-read it.** A re-read empties the screen for as long as
+    /// the round trip takes, and what the reader sees in that moment is a spinner where their board was —
+    /// on a board that repaints every time an agent touches anything, that is most of the time. A whole
+    /// snapshot cannot drift out of step with the server the way a delta could, so this keeps the one
+    /// property the invalidation signal was chosen for.
+    ///
+    /// Called from `scripts/` after the change is in Postgres **and** in memory.
+    ///
+    /// The snapshot matches `/api/tasks/v1/list` exactly — same mapper, same archive filter — because the
+    /// client has one way of reading a board and it must not matter which door the board came through.
+    pub async fn notify_project_changed(&self, project_id: &str) {
+        // Built while the board lock is held and sent after it is dropped: `parking_lot`'s guard is `!Send`,
+        // so holding one across an `.await` does not compile — which is the compiler enforcing the thing we
+        // want anyway, since one stalled socket must not hold up every other reader of the board.
+        let prepared = {
+            let board = self.board.read();
+
+            board.get_project(project_id).map(|project| {
+                let tasks: Vec<TaskResponse> = board
+                    .tasks_of_project(&project.id)
+                    .iter()
+                    .filter(|task| !board.is_archived(task))
+                    .map(|task| crate::mappers::task_to_response(task, &project, &board))
+                    .collect();
+
+                let members: Vec<String> = project.members.iter().cloned().collect();
+
+                (tasks, members)
+            })
+        };
+
+        let (payload, members) = match prepared {
+            Some((tasks, members)) => (
+                ServerWsPayload::board(BoardSnapshot {
+                    project_id: project_id.to_string(),
+                    tasks,
+                }),
+                members,
+            ),
+            // No project in memory to build a board from. The signal still goes out, and a client that gets
+            // one without a snapshot re-reads — which is also what the whole protocol did before snapshots.
+            None => (ServerWsPayload::project_changed(project_id), Vec::new()),
+        };
+
+        let Ok(payload) = serde_json::to_string(&payload) else {
+            return;
+        };
+
+        self.subscribers
+            .push_to_watchers(project_id, &payload, &members)
+            .await;
     }
 }

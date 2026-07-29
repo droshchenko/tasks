@@ -19,14 +19,33 @@ pub fn RenderHome() -> Element {
     let mut cs = use_signal(ComponentState::default);
     let cs_ra = cs.read();
 
-    // A WebSocket push says "this board changed". Resetting the `DataState` is what re-reads it — an
-    // effect rather than a read inside the loader, because `use_effect` IS reactive where `use_future` is
-    // not, and this is the whole invalidation mechanism on this side.
+    // A WebSocket push arrives carrying the board. Applying it is a `set_loaded` — no request, no `Loading…`,
+    // and nothing on screen is emptied before the new cards are there, which is what stops the board
+    // flinching every time an agent touches a task.
+    //
+    // An effect rather than a read inside the loader because `use_effect` IS reactive where `use_future` is
+    // not, and reacting to a push is the whole job.
     use_effect(move || {
-        let _revision = app_state.read().board_revision;
+        let app_ra = app_state.read();
+        // Read even though the snapshot below is what gets used: it changes on every push, so it is what
+        // makes two pushes carrying identical tasks count as two.
+        let _revision = app_ra.board_revision;
+        let push = app_ra.board_push.clone();
+        drop(app_ra);
 
-        if cs.peek().tasks.has_value() {
-            cs.write().tasks.reset();
+        match push {
+            // Only the board on screen. A push for the project somebody just switched away from can still be
+            // in flight, and applying it would put the previous board back under the new project's name.
+            Some(snapshot) if snapshot.project_id == cs.peek().selected => {
+                cs.write().tasks.set_loaded(snapshot.tasks);
+            }
+            Some(_) => {}
+            // A push with no board: re-read, which is what this screen did before snapshots existed. Only
+            // when something is already loaded — otherwise the loader below has it in hand anyway.
+            None if cs.peek().tasks.has_value() => {
+                cs.write().tasks.reset();
+            }
+            None => {}
         }
     });
 
@@ -683,6 +702,7 @@ mod tests {
             labels: labels.iter().map(|itm| itm.to_string()).collect(),
             depends_on: Vec::new(),
             blocks: Vec::new(),
+            link_statuses: Vec::new(),
             blocked: false,
             comments: Vec::new(),
             created_unix_seconds: 0,

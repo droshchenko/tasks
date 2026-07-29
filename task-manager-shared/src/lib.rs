@@ -25,3 +25,4 @@ pub mod system;
 pub mod task_title;
 pub mod tasks;
 pub mod users;
+pub mod ws;

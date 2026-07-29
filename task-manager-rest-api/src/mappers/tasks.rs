@@ -1,4 +1,4 @@
-use task_manager_shared::tasks::{TaskCommentResponse, TaskResponse};
+use task_manager_shared::tasks::{TaskCommentResponse, TaskLinkResponse, TaskResponse};
 
 use crate::board::{
     BoardInner, CommentModel, ProjectModel, TaskModel, compose_task_handle, parse_task_handle,
@@ -89,6 +89,10 @@ pub fn task_to_response(
         .as_ref()
         .and_then(|itm| board.display_name_of(itm));
 
+    // Read once: it is a scan of the project's tasks, and both `blocks` and the statuses beside it need
+    // the same answer.
+    let blocks = board.blocks(&task.project_id, task.number);
+
     TaskResponse {
         id: compose_task_handle(&project.prefix, task.number),
         project_id: task.project_id.clone(),
@@ -106,11 +110,11 @@ pub fn task_to_response(
             .iter()
             .map(|number| compose_task_handle(&project.prefix, *number))
             .collect(),
-        blocks: board
-            .blocks(&task.project_id, task.number)
+        blocks: blocks
             .iter()
             .map(|number| compose_task_handle(&project.prefix, *number))
             .collect(),
+        link_statuses: link_statuses(task, &blocks, project, board),
         blocked: board.is_blocked(task),
         comments: task
             .comments
@@ -127,6 +131,36 @@ pub fn task_to_response(
             .close_moment
             .map(|itm| itm.unix_microseconds / 1_000_000),
     }
+}
+
+/// What every task on either end of a dependency is doing.
+///
+/// Both directions in one list rather than two: the reader asks the same question of a blocker and of
+/// something blocked — is it done — and an id appears in only one of the two lists anyway, because a task
+/// that both waited on and blocked the same task would be a cycle.
+///
+/// Dependencies never cross projects, which is what makes the lookup a project-local one and this a scan of
+/// tasks already in memory rather than a query.
+fn link_statuses(
+    task: &TaskModel,
+    blocks: &[i64],
+    project: &ProjectModel,
+    board: &BoardInner,
+) -> Vec<TaskLinkResponse> {
+    task.depends_on
+        .iter()
+        .chain(blocks.iter())
+        .filter_map(|number| {
+            // No entry for a number that names no task. It is the case that keeps `blocked` true — a typo
+            // or a deleted blocker — and inventing a status for it would hide exactly that.
+            let linked = board.get_task(&task.project_id, *number)?;
+
+            Some(TaskLinkResponse {
+                id: compose_task_handle(&project.prefix, *number),
+                status: project.effective_status(&linked.status),
+            })
+        })
+        .collect()
 }
 
 /// Read a `depends_on` entry written by a caller: a handle (`RMS-7`) or a bare number (`7`).

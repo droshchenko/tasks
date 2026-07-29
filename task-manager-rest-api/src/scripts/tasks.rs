@@ -204,7 +204,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     persist_project_counter(app, &project.id, &ctx).await;
 
     app.board.upsert_task(task);
-    app.subscribers.notify_project_changed(&project.id).await;
+    app.notify_project_changed(&project.id).await;
 
     Ok(crate::board::compose_task_handle(&project.prefix, number))
 }
@@ -400,7 +400,7 @@ pub async fn update_task(
 
     let handle = crate::board::compose_task_handle(&project.prefix, task.number);
     app.board.upsert_task(task);
-    app.subscribers.notify_project_changed(&project.id).await;
+    app.notify_project_changed(&project.id).await;
 
     Ok(handle)
 }
@@ -416,7 +416,7 @@ pub async fn delete_task(app: &AppContext, handle: &str) -> Result<String, Strin
     app.tasks_repo.delete(&project_id, number, &ctx).await;
 
     app.board.remove_task(&project_id, number);
-    app.subscribers.notify_project_changed(&project_id).await;
+    app.notify_project_changed(&project_id).await;
 
     Ok(crate::board::compose_task_handle(
         &resolved.project.prefix,
@@ -459,7 +459,7 @@ pub async fn add_comment(
 
     let handle = crate::board::compose_task_handle(&project.prefix, task.number);
     app.board.upsert_task(task);
-    app.subscribers.notify_project_changed(&project.id).await;
+    app.notify_project_changed(&project.id).await;
 
     Ok(handle)
 }

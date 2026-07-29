@@ -25,6 +25,20 @@
   box-sizing: border-box;
 }
 
+/* Everything still scrolls; nothing shows a bar for it.
+   Applied to `*` rather than to the handful of containers that scroll today, because the list would be a
+   thing to remember: the next pane that overflows would grow a bar back and nobody would connect it to a
+   rule in this file. Three declarations because three engines disagree — `scrollbar-width` is the standard
+   and Firefox, `-ms-overflow-style` is old Edge, and WebKit only listens to the pseudo-element. */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
 html,
 body {
   margin: 0;
@@ -380,6 +394,14 @@ input[readonly] {
   color: var(--text-muted);
 }
 
+/* "Unassigned" is not a name. Set in the same weight and colour as one it reads as a person until you have
+   read the word; grey, it reads as a gap, which is what it is. Used on the card and in the dialog so both
+   say it the same way. */
+.unassigned {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
 .tag {
   display: inline-block;
   background: rgba(9, 30, 66, 0.06);
@@ -438,7 +460,8 @@ input[readonly] {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* Room for the scrollbar, so it does not sit on top of a card's right edge. */
+  /* Breathing room at the right edge of a card. It used to be room for the scrollbar, which is now hidden
+     (see `01-tokens.css`) — the gap is worth keeping on its own. */
   padding-right: 2px;
 }
 
@@ -558,6 +581,13 @@ input[readonly] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The `.unassigned` utility loses to the rule above on load order alone — same specificity, earlier file. The
+   compound selector is what makes it win, rather than reordering the CSS pipeline around one colour. */
+.sticker-assignee.unassigned {
+  color: var(--text-faint);
+  font-weight: 400;
 }
 
 .sticker-counters {
@@ -924,6 +954,12 @@ input[readonly] {
   gap: 3px;
 }
 
+.task-view-linked {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .task-view-link {
   border: none;
   background: none;
@@ -937,6 +973,20 @@ input[readonly] {
 
 .task-view-link:hover {
   text-decoration: underline;
+}
+
+/* What the dependency is doing. Quieter than the handle: the handle is the thing you click, the status is the
+   thing you read. */
+.task-view-link-status {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Done is the answer the reader is scanning for — it is what says this task is free to start — so it is the
+   one status that gets a colour of its own. */
+.task-view-link-status.done {
+  color: #1a7f37;
+  font-weight: 600;
 }
 
 /* The lower half. The header stays put and only the thread under it moves, so which list you are scrolling

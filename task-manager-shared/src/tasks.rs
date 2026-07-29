@@ -20,6 +20,18 @@ pub struct TaskCommentResponse {
     pub text: String,
 }
 
+// A task named by another task, and what it is doing.
+//
+// A handle on its own is not enough for a reader looking at a dependency: the question a dependency
+// raises is "is that done yet", and the answer is the whole reason it is on screen. The status is
+// `effective_status` — the same leniency a task's own status gets, so a blocker sitting in a column
+// its project no longer has reads as Todo rather than as a column nobody recognises.
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct TaskLinkResponse {
+    pub id: String,
+    pub status: String,
+}
+
 // One sticker, as Home draws it.
 //
 // `status` and `kind` are raw ids, not enums: both vocabularies are configured per project at
@@ -52,6 +64,12 @@ pub struct TaskResponse {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub blocks: Vec<String>,
+    // The status of every task named in `depends_on` or `blocks`, so a reader shown a dependency can be
+    // shown what it is doing without a second call per id. Derived, never stored. An id matching no task
+    // has no entry here — the same case that keeps `blocked` true, and a reader showing the handle with
+    // no status beside it is telling the truth about it.
+    #[serde(default)]
+    pub link_statuses: Vec<TaskLinkResponse>,
     pub blocked: bool,
     #[serde(default)]
     pub comments: Vec<TaskCommentResponse>,

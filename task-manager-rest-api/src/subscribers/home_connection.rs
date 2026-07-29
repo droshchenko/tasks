@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use service_sdk::my_http_server::web_sockets::{MyWebSocket, WsMessage};
+use task_manager_shared::ws::ServerWsPayload;
 
 /// One connected Home.
 ///
@@ -32,25 +33,20 @@ impl HomeConnection {
         self.watching.load().as_str() == project_id
     }
 
-    /// Tell this Home that its board changed, so it re-reads.
+    /// Send one already-serialised payload.
     ///
-    /// The payload is an invalidation signal and nothing more — no task, no delta. There is no second
-    /// copy of the state on the client, so there is nothing that can drift out of sync.
-    pub async fn send_project_changed(&self, project_id: &str) {
-        let payload = format!("{{\"projectChanged\":\"{project_id}\"}}");
+    /// Serialised by the caller, once, and handed to every watcher: a board goes out to everyone looking at
+    /// it, and encoding the same tasks once per connection is work that scales with the wrong number.
+    pub async fn send_payload(&self, payload: &str) {
         self.ws
-            .send_message(std::iter::once(WsMessage::Text(payload.into())))
+            .send_message(std::iter::once(WsMessage::Text(payload.to_string().into())))
             .await;
     }
 
     pub async fn send_error(&self, message: &str) {
-        // Escaped so a message containing a quote cannot produce a payload the client fails to parse.
-        let payload = format!(
-            "{{\"error\":{}}}",
-            serde_json::to_string(message).unwrap_or_else(|_| "\"error\"".to_string())
-        );
-        self.ws
-            .send_message(std::iter::once(WsMessage::Text(payload.into())))
-            .await;
+        let payload = serde_json::to_string(&ServerWsPayload::error(message))
+            .unwrap_or_else(|_| "{\"error\":\"error\"}".to_string());
+
+        self.send_payload(&payload).await;
     }
 }

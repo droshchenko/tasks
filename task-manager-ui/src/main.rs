@@ -255,10 +255,15 @@ fn kick_off_ws(mut app_state: Signal<AppState>) {
                 while let Some(message) = read.next().await {
                     match message {
                         Ok(Message::Text(text)) => match ServerWsMessage::parse(&text) {
-                            // Bumping a counter rather than applying anything: the view watches it and
-                            // re-reads the board it is showing, so the two cannot disagree.
+                            // Landed as-is for the view to apply. Nothing is requested and nothing is
+                            // emptied first, which is the whole point: the screen does not flinch.
+                            ServerWsMessage::BoardSnapshot(snapshot) => {
+                                app_state.write().board_pushed(snapshot);
+                            }
+                            // No board came with it, so the view re-reads — the old protocol, kept because
+                            // it is the one thing that works when the server cannot build a snapshot.
                             ServerWsMessage::ProjectChanged => {
-                                app_state.write().board_revision += 1;
+                                app_state.write().board_invalidated();
                             }
                             ServerWsMessage::Error(err) => {
                                 crate::web::console_log(format!("ws: {err}").as_str());

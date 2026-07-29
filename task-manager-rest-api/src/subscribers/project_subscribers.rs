@@ -60,16 +60,30 @@ impl ProjectSubscribers {
         self.connections.load().len()
     }
 
-    /// Tell everyone watching this board that it changed.
+    /// Send one payload to everyone watching this board and entitled to see it.
     ///
-    /// Called from `scripts/` after the change is in Postgres **and** in memory — notifying any earlier
-    /// would send a client to re-read a board that does not show the change yet.
-    pub async fn notify_project_changed(&self, project_id: &str) {
-        let snapshot = self.connections.load_full();
+    /// Called from [`crate::app::AppContext::notify_project_changed`], which is where the payload is built —
+    /// after the change is in Postgres **and** in memory. Sending any earlier would push a board that does
+    /// not show the change yet.
+    ///
+    /// `members` is re-checked here and not only at subscribe time, and it matters more than it used to: a
+    /// signal to go and re-read was harmless to send to somebody who had just lost access, because the read
+    /// itself would refuse them. A snapshot IS the board, so the check has to happen before the send.
+    pub async fn push_to_watchers(&self, project_id: &str, payload: &str, members: &[String]) {
+        let connections = self.connections.load_full();
 
-        for connection in snapshot.values() {
-            if connection.is_watching(project_id) {
-                connection.send_project_changed(project_id).await;
+        for connection in connections.values() {
+            if !connection.is_watching(project_id) {
+                continue;
+            }
+
+            let allowed = connection.is_admin
+                || members
+                    .iter()
+                    .any(|member| member.eq_ignore_ascii_case(&connection.email));
+
+            if allowed {
+                connection.send_payload(payload).await;
             }
         }
     }

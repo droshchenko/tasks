@@ -64,7 +64,7 @@ async fn save(app: &AppContext, project: ProjectModel) {
 
     let project_id = project.id.clone();
     app.board.upsert_project(project);
-    app.subscribers.notify_project_changed(&project_id).await;
+    app.notify_project_changed(&project_id).await;
 }
 
 /// Create a project. Returns its internal id — the UI works in ids, MCP in prefixes.
@@ -265,7 +265,7 @@ pub async fn set_members(
 
     let project_id = project.id.clone();
     app.board.upsert_project(project);
-    app.subscribers.notify_project_changed(&project_id).await;
+    app.notify_project_changed(&project_id).await;
 
     Ok(())
 }

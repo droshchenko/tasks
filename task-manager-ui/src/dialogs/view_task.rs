@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use task_manager_shared::projects::COLUMN_ID_DONE;
 use task_manager_shared::task_title::{task_text_without_title, task_title};
-use task_manager_shared::tasks::{FindTaskResponse, TaskResponse};
+use task_manager_shared::tasks::{FindTaskResponse, TaskLinkResponse, TaskResponse};
 
 /// One task, shown in full.
 ///
@@ -166,14 +166,14 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
             if !task.depends_on.is_empty() {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Waiting on" }
-                    {render_links(&task.depends_on)}
+                    {render_links(&task.depends_on, &task.link_statuses)}
                 }
             }
 
             if !task.blocks.is_empty() {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Blocking" }
-                    {render_links(&task.blocks)}
+                    {render_links(&task.blocks, &task.link_statuses)}
                 }
             }
 
@@ -195,23 +195,43 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
     }
 }
 
-/// A list of task handles, each one a way into that task.
+/// A list of task handles with what each one is doing, every handle a way into that task.
 ///
 /// One per line rather than comma-separated: they are targets to hit with a mouse, and in a 200px column a
 /// wrapped run of ids gives you no idea where one ends and the next begins.
-fn render_links(ids: &[String]) -> Element {
+///
+/// The status is the reason a dependency is worth showing at all — "waiting on RMS-7" says nothing until you
+/// know whether RMS-7 is done. Done is marked as such rather than merely named: it is the answer the reader is
+/// scanning for, and the one that means this task is free to start.
+fn render_links(ids: &[String], statuses: &[TaskLinkResponse]) -> Element {
     rsx! {
         div { class: "task-view-links",
             for id in ids.iter() {
-                button {
-                    class: "task-view-link",
-                    key: "{id}",
-                    title: "Open {id}",
-                    onclick: {
-                        let id = id.clone();
-                        move |_| show(id.clone())
-                    },
-                    "{id}"
+                {
+                    let status = statuses.iter().find(|itm| &itm.id == id).map(|itm| itm.status.clone());
+                    let done = status.as_deref() == Some(COLUMN_ID_DONE);
+                    rsx! {
+                        div { class: "task-view-linked", key: "{id}",
+                            button {
+                                class: "task-view-link",
+                                title: "Open {id}",
+                                onclick: {
+                                    let id = id.clone();
+                                    move |_| show(id.clone())
+                                },
+                                "{id}"
+                            }
+                            // No status at all when the id names no task — a typo or a deleted blocker, which
+                            // is exactly the case that keeps this task blocked. Better a visible gap than an
+                            // invented column.
+                            if let Some(status) = status {
+                                span {
+                                    class: if done { "task-view-link-status done" } else { "task-view-link-status" },
+                                    if done { "done" } else { "{status}" }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -271,6 +271,12 @@
   gap: 3px;
 }
 
+.task-view-linked {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .task-view-link {
   border: none;
   background: none;
@@ -284,6 +290,20 @@
 
 .task-view-link:hover {
   text-decoration: underline;
+}
+
+/* What the dependency is doing. Quieter than the handle: the handle is the thing you click, the status is the
+   thing you read. */
+.task-view-link-status {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Done is the answer the reader is scanning for — it is what says this task is free to start — so it is the
+   one status that gets a colour of its own. */
+.task-view-link-status.done {
+  color: #1a7f37;
+  font-weight: 600;
 }
 
 /* The lower half. The header stays put and only the thread under it moves, so which list you are scrolling

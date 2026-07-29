@@ -136,6 +136,6 @@ async fn notify_followers(app: &AppContext, template_id: &str) {
     drop(board);
 
     for project_id in followers {
-        app.subscribers.notify_project_changed(&project_id).await;
+        app.notify_project_changed(&project_id).await;
     }
 }
