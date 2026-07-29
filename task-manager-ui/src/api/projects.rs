@@ -69,18 +69,25 @@ pub async fn set_column_template(
     .await
 }
 
-/// Replace a project's whole set of task types. A snapshot, not a delta — the dialog builds the complete
-/// list and sends it once.
-pub async fn set_kinds(
+/// Point a project at a task-type template, or at none with an empty id.
+pub async fn set_kind_template(
     project_id: &str,
-    kinds: Vec<ProjectKindInputItem>,
+    kind_template_id: &str,
 ) -> Result<(), RequestError> {
-    let request = SetProjectKindsInputModel {
+    let request = SetProjectKindTemplateInputModel {
         project_id: project_id.to_string(),
-        kinds,
+        kind_template_id: kind_template_id.to_string(),
     };
 
-    handle_http_empty(authed("/api/projects/v1/kinds/set", HttpVerb::Post, request).await).await
+    handle_http_empty(
+        authed(
+            "/api/projects/v1/kind-template/set",
+            HttpVerb::Post,
+            request,
+        )
+        .await,
+    )
+    .await
 }
 
 /// Replaces the whole set — which is how the screen works, and means this side never has to diff.

@@ -28,8 +28,21 @@ pub struct ColumnTemplateModel {
     pub created: DateTimeAsMicroseconds,
 }
 
-/// One kind of work, in memory. Unlike a column id, a kind is optional on a task.
+/// A named set of task types, shared by any number of projects.
+///
+/// Same shape and same reason as [`ColumnTemplateModel`]: the vocabulary of work is a property of how a
+/// team works, not of one project, so it is defined once and followed.
 #[derive(Debug, Clone)]
+pub struct KindTemplateModel {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub kinds: Vec<KindModel>,
+    pub created: DateTimeAsMicroseconds,
+}
+
+/// One kind of work, in memory. Unlike a column id, a kind is optional on a task.
+#[derive(Debug, Clone, PartialEq)]
 pub struct KindModel {
     pub id: String,
     pub name: String,
@@ -64,6 +77,9 @@ pub struct ProjectModel {
     // a project for its columns, and threading the template collection through every one of them would
     // spread this indirection across the whole service instead of confining it to one function.
     pub columns: Vec<ColumnModel>,
+    // Which task-type template this project follows, and the types resolved from it. Exactly the same
+    // arrangement as the columns above, cache and all — see the comment there for why.
+    pub kind_template_id: Option<String>,
     pub kinds: Vec<KindModel>,
     pub members: BTreeSet<String>,
     // High-water mark of the project's own task counter. Only ever moves forward — deleting a task

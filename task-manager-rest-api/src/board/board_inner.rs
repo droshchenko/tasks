@@ -4,7 +4,7 @@ use std::time::Duration;
 use ahash::{AHashMap, AHashSet};
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 
-use super::models::{ColumnTemplateModel, ProjectModel, TaskModel, UserModel};
+use super::models::{ColumnTemplateModel, KindTemplateModel, ProjectModel, TaskModel, UserModel};
 
 /// How long a finished task stays on the board before it counts as archived.
 ///
@@ -27,6 +27,8 @@ pub struct BoardInner {
     /// Template id -> the named set of columns projects follow. Columns are configured here, not on a
     /// project; a project carries only the id of the template it follows.
     column_templates: AHashMap<String, Arc<ColumnTemplateModel>>,
+    /// Template id -> the named set of task types projects follow. Same arrangement as the columns above.
+    kind_templates: AHashMap<String, Arc<KindTemplateModel>>,
     /// Upper-cased current prefix -> project id. One entry per project: two projects may not hold
     /// the same prefix at the same time, which is exactly what makes this a map and not a multimap.
     prefix_index: AHashMap<String, String>,
@@ -41,6 +43,7 @@ pub struct BoardInner {
     projects_list: Arc<Vec<Arc<ProjectModel>>>,
     users_list: Arc<Vec<Arc<UserModel>>>,
     column_templates_list: Arc<Vec<Arc<ColumnTemplateModel>>>,
+    kind_templates_list: Arc<Vec<Arc<KindTemplateModel>>>,
 }
 
 impl BoardInner {
@@ -48,6 +51,7 @@ impl BoardInner {
         Self {
             projects: AHashMap::new(),
             column_templates: AHashMap::new(),
+            kind_templates: AHashMap::new(),
             prefix_index: AHashMap::new(),
             historical_prefix_index: AHashMap::new(),
             tasks: AHashMap::new(),
@@ -55,6 +59,7 @@ impl BoardInner {
             projects_list: Arc::new(Vec::new()),
             users_list: Arc::new(Vec::new()),
             column_templates_list: Arc::new(Vec::new()),
+            kind_templates_list: Arc::new(Vec::new()),
         }
     }
 
@@ -74,6 +79,7 @@ impl BoardInner {
         tasks: Vec<TaskModel>,
         users: Vec<UserModel>,
         column_templates: Vec<ColumnTemplateModel>,
+        kind_templates: Vec<KindTemplateModel>,
     ) -> Self {
         let mut result = Self::new();
 
@@ -81,6 +87,10 @@ impl BoardInner {
         // project loaded first would otherwise resolve to an empty board until the next write.
         for template in column_templates {
             result.put_column_template(Arc::new(template));
+        }
+
+        for template in kind_templates {
+            result.put_kind_template(Arc::new(template));
         }
 
         let mut highest_number: AHashMap<&str, i64> = AHashMap::new();
@@ -131,6 +141,14 @@ impl BoardInner {
 
     pub(super) fn drop_column_template(&mut self, id: &str) {
         self.column_templates.remove(id);
+    }
+
+    pub(super) fn put_kind_template(&mut self, template: Arc<KindTemplateModel>) {
+        self.kind_templates.insert(template.id.clone(), template);
+    }
+
+    pub(super) fn drop_kind_template(&mut self, id: &str) {
+        self.kind_templates.remove(id);
     }
 
     pub(super) fn put_task(&mut self, task: Arc<TaskModel>) {
@@ -194,6 +212,11 @@ impl BoardInner {
             self.column_templates.values().cloned().collect();
         templates.sort_by_key(|itm| itm.name.to_lowercase());
         self.column_templates_list = Arc::new(templates);
+
+        let mut kind_templates: Vec<Arc<KindTemplateModel>> =
+            self.kind_templates.values().cloned().collect();
+        kind_templates.sort_by_key(|itm| itm.name.to_lowercase());
+        self.kind_templates_list = Arc::new(kind_templates);
     }
 
     /// Copy each project's columns down from the template it follows.
@@ -209,20 +232,30 @@ impl BoardInner {
     /// emptying boards.
     fn resolve_project_columns(&mut self) {
         for project in self.projects.values_mut() {
-            let resolved = project
+            let columns = project
                 .column_template_id
                 .as_ref()
                 .and_then(|id| self.column_templates.get(id))
                 .map(|template| template.columns.clone())
                 .unwrap_or_default();
 
-            if project.columns == resolved {
+            let kinds = project
+                .kind_template_id
+                .as_ref()
+                .and_then(|id| self.kind_templates.get(id))
+                .map(|template| template.kinds.clone())
+                .unwrap_or_default();
+
+            if project.columns == columns && project.kinds == kinds {
                 continue;
             }
 
-            // `make_mut` clones only when this project is shared with a snapshot a reader still holds —
-            // so a rebuild that changes nothing copies nothing.
-            Arc::make_mut(project).columns = resolved;
+            // Both in one pass, so a project is cloned at most once per rebuild. `make_mut` clones only
+            // when this project is shared with a snapshot a reader still holds — so a rebuild that changes
+            // nothing copies nothing.
+            let project = Arc::make_mut(project);
+            project.columns = columns;
+            project.kinds = kinds;
         }
     }
 
@@ -243,6 +276,21 @@ impl BoardInner {
         self.projects
             .values()
             .filter(|itm| itm.column_template_id.as_deref() == Some(template_id))
+            .count()
+    }
+
+    pub fn get_kind_template(&self, id: &str) -> Option<Arc<KindTemplateModel>> {
+        self.kind_templates.get(id).cloned()
+    }
+
+    pub fn get_kind_templates(&self) -> Arc<Vec<Arc<KindTemplateModel>>> {
+        self.kind_templates_list.clone()
+    }
+
+    pub fn count_projects_using_kind_template(&self, template_id: &str) -> usize {
+        self.projects
+            .values()
+            .filter(|itm| itm.kind_template_id.as_deref() == Some(template_id))
             .count()
     }
 

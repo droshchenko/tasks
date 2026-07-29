@@ -65,9 +65,9 @@ fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
                             th { "Description" }
                             th { class: "num", "Tasks" }
                             th { "Column template" }
-                            th { "Task types" }
+                            th { "Task-type template" }
                             th { class: "num", "Members" }
-                            th { style: "width: 230px" }
+                            th { style: "width: 160px" }
                         }
                     }
                     tbody {
@@ -98,7 +98,6 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
         .join(" → ");
 
     let for_edit = project.clone();
-    let for_kinds = project.clone();
     let for_members = project.clone();
 
     rsx! {
@@ -118,12 +117,20 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
                 }
             }
             td {
-                if project.kinds.is_empty() {
-                    span { class: "muted", "—" }
-                } else {
-                    for kind in project.kinds.iter() {
-                        RenderKindTag { key: "{kind.id}", name: kind.name.clone(), color: kind.color.clone() }
+                // The template's name, then the types it resolves to — same reading as the column cell.
+                if let Some(template) = project.kind_template_name.as_ref() {
+                    div { "{template}" }
+                    div {
+                        for kind in project.kinds.iter() {
+                            RenderKindTag {
+                                key: "{kind.id}",
+                                name: kind.name.clone(),
+                                color: kind.color.clone(),
+                            }
+                        }
                     }
+                } else {
+                    span { class: "muted", "—" }
                 }
             }
             td { class: "num", "{project.members.len()}" }
@@ -136,14 +143,6 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
                             open(data, |on_saved| DialogState::EditProject { project: Some(project), on_saved });
                         },
                         "Edit"
-                    }
-                    button {
-                        class: "btn btn-sm",
-                        onclick: move |_| {
-                            let project = for_kinds.clone();
-                            open(data, |on_saved| DialogState::EditKinds { project, on_saved });
-                        },
-                        "Task types"
                     }
                     button {
                         class: "btn btn-sm",

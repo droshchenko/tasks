@@ -269,25 +269,27 @@ the request came back. `DialogState` is a context signal of its own rather than 
 the guide would have it be: Dioxus subscribes per signal, not per field, so putting it in `AppState` would
 make opening a dialog re-run Home's board read.
 
-### Columns live in a template, not in a project
+### Columns and task types live in templates, not in a project
 
-A **column template** is a named set of columns, defined once under Settings and followed by any number of
-projects. A project carries only the id of the template it follows; one that follows none has a board of
-just Todo and Done, which is a legitimate state and not an error.
+A **column template** is a named set of columns, and a **task-type template** a named set of task types.
+Both are defined once under Settings and followed by any number of A project carries only the id of each template it follows. One with no column template has a board of just
+Todo and Done; one with no task-type template has no types to choose from. Both are legitimate states, not
+errors — otherwise creating a project would require creating two templates first.
 
 The indirection earns itself twice. The projects on one board mostly share a workflow, so per-project
 columns meant typing the same four columns into every project and watching them drift. And a template is a
 thing you change once and have every project follow.
 
-In memory, `ProjectModel.columns` is a **cache**, not the source of truth: `BoardInner::rebuild_indexes`
-recomputes it from the templates on every write, so it cannot drift, and editing a template moves every
-project following it within the same swap. That is what keeps the indirection to one function —
-`has_column`, `effective_status`, the board read and the MCP tools all still ask a project for its own
-columns and never learn templates exist.
+In memory, `ProjectModel.columns` and `.kinds` are a **cache**, not the source of truth:
+`BoardInner::rebuild_indexes` recomputes both from the templates on every write, so they cannot drift, and
+editing a template moves every project following it within the same swap. That is what keeps the
+indirection to one function — `has_column`, `effective_status`, `has_kind`, the board read and the MCP tools
+all still ask a project for its own columns and types and never learn templates exist.
 
-Deleting a template with any followers is refused. A project whose template vanished would lose the middle
-of its board and every task sitting there would read as Todo — a large, silent consequence for a small
-click, so the projects have to be pointed elsewhere first.
+Deleting a template with any followers is refused. For columns the reason is sharp: a project whose template
+vanished loses the middle of its board and every task sitting there reads as Todo. Losing a task type is
+milder — a task pointing at one that is gone reads as having no type — but it still changes every following
+project at once, so both are made deliberately rather than discovered.
 
 ### No path parameters at all — every mutation is a POST with a body
 

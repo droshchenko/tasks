@@ -4,7 +4,9 @@ use ahash::AHashMap;
 use service_sdk::my_telemetry::MyTelemetryContext;
 
 use crate::app::AppContext;
-use crate::board::{BoardInner, ColumnTemplateModel, ProjectModel, TaskModel, UserModel};
+use crate::board::{
+    BoardInner, ColumnTemplateModel, KindTemplateModel, ProjectModel, TaskModel, UserModel,
+};
 
 /// Read the whole product out of Postgres and install it in memory.
 ///
@@ -20,6 +22,7 @@ pub async fn load_state(app: &AppContext) {
     let task_rows = app.tasks_repo.get_all(&ctx).await;
     let user_rows = app.users_repo.get_all(&ctx).await;
     let template_rows = app.column_templates_repo.get_all(&ctx).await;
+    let kind_template_rows = app.kind_templates_repo.get_all(&ctx).await;
 
     // Membership lives in its own table, so it is folded back onto the projects here — the only place
     // the two halves are joined.
@@ -50,10 +53,14 @@ pub async fn load_state(app: &AppContext) {
     let column_templates: Vec<ColumnTemplateModel> =
         template_rows.iter().map(|row| row.into()).collect();
 
+    let kind_templates: Vec<KindTemplateModel> =
+        kind_template_rows.iter().map(|row| row.into()).collect();
+
     app.board.replace_all(BoardInner::from_loaded(
         projects,
         tasks,
         users,
         column_templates,
+        kind_templates,
     ));
 }

@@ -109,43 +109,47 @@ pub fn RenderHome() -> Element {
 
     let tasks_ra = tasks.read();
 
+    // A flex column filling what is left of the window, so the board below it can be full height and each
+    // of its columns can scroll on its own.
     rsx! {
-        div { class: "page-header",
-            h1 { class: "page-title", "Home" }
-            div { class: "project-picker",
-                select {
-                    value: "{selected_id}",
-                    onchange: move |event| selected.set(event.value()),
-                    for project in projects_ra.iter() {
-                        option { value: "{project.id}", "{project.prefix} · {project.name}" }
+        div { class: "board-page",
+            div { class: "page-header",
+                h1 { class: "page-title", "Home" }
+                div { class: "project-picker",
+                    select {
+                        value: "{selected_id}",
+                        onchange: move |event| selected.set(event.value()),
+                        for project in projects_ra.iter() {
+                            option { value: "{project.id}", "{project.prefix} · {project.name}" }
+                        }
+                    }
+                    span {
+                        class: if ws_live { "ws-dot live" } else { "ws-dot" },
+                        title: if ws_live {
+                            "Live — the board repaints when it changes"
+                        } else {
+                            "Not live — reload to see changes"
+                        },
                     }
                 }
-                span {
-                    class: if ws_live { "ws-dot live" } else { "ws-dot" },
-                    title: if ws_live {
-                        "Live — the board repaints when it changes"
-                    } else {
-                        "Not live — reload to see changes"
-                    },
-                }
             }
-        }
 
-        if !current.description.trim().is_empty() {
-            p { class: "page-note", "{current.description}" }
-        }
+            if !current.description.trim().is_empty() {
+                p { class: "page-note", "{current.description}" }
+            }
 
-        if !error_text.is_empty() {
-            div { class: "error-banner", "{error_text}" }
-        }
+            if !error_text.is_empty() {
+                div { class: "error-banner", "{error_text}" }
+            }
 
-        div { class: "board",
-            for column in board_columns(current) {
-                RenderColumn {
-                    key: "{column.id}",
-                    column: column.clone(),
-                    project: current.clone(),
-                    tasks: tasks_ra.clone(),
+            div { class: "board",
+                for column in board_columns(current) {
+                    RenderColumn {
+                        key: "{column.id}",
+                        column: column.clone(),
+                        project: current.clone(),
+                        tasks: tasks_ra.clone(),
+                    }
                 }
             }
         }
@@ -214,8 +218,12 @@ fn RenderColumn(
             if !column.description.trim().is_empty() {
                 div { class: "board-column-description", "{column.description}" }
             }
-            for task in in_column {
-                RenderSticker { key: "{task.id}", task: task.clone(), project: project.clone() }
+            // The only part that scrolls. The header and the description stay in place, so which column
+            // you are looking at is still answerable once the cards have moved.
+            div { class: "board-column-body",
+                for task in in_column {
+                    RenderSticker { key: "{task.id}", task: task.clone(), project: project.clone() }
+                }
             }
         }
     }

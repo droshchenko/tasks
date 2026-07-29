@@ -44,15 +44,21 @@ async fn handle_request(
             // The template is looked up per project rather than passed as a map: the list is short, the
             // lookup is a hash hit, and threading a collection through the mapper would make every
             // caller know about templates.
-            let template = project
+            let column_template = project
                 .column_template_id
                 .as_ref()
                 .and_then(|id| board.get_column_template(id));
 
+            let kind_template = project
+                .kind_template_id
+                .as_ref()
+                .and_then(|id| board.get_kind_template(id));
+
             project_to_response(
                 project,
                 board.tasks_amount(&project.id),
-                template.as_deref(),
+                column_template.as_deref(),
+                kind_template.as_deref(),
             )
         })
         .collect();

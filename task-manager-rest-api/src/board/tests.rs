@@ -5,11 +5,27 @@ use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO};
 
 use super::{
-    ARCHIVE_AFTER, Board, ColumnModel, ColumnTemplateModel, KindModel, ProjectModel, TaskModel,
-    UserModel,
+    ARCHIVE_AFTER, Board, ColumnModel, ColumnTemplateModel, KindModel, KindTemplateModel,
+    ProjectModel, TaskModel, UserModel,
 };
 
 const TEMPLATE_ID: &str = "tpl";
+const KIND_TEMPLATE_ID: &str = "kinds-tpl";
+
+fn kind_template() -> KindTemplateModel {
+    KindTemplateModel {
+        id: KIND_TEMPLATE_ID.to_string(),
+        name: "Default".to_string(),
+        description: String::new(),
+        kinds: vec![KindModel {
+            id: "bug".to_string(),
+            name: "Bug".to_string(),
+            description: String::new(),
+            color: KindColor::Red,
+        }],
+        created: DateTimeAsMicroseconds::new(0),
+    }
+}
 
 fn template() -> ColumnTemplateModel {
     ColumnTemplateModel {
@@ -33,6 +49,7 @@ fn template() -> ColumnTemplateModel {
 fn board() -> Board {
     let board = Board::new();
     board.upsert_column_template(template());
+    board.upsert_kind_template(kind_template());
     board
 }
 
@@ -44,15 +61,11 @@ fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
         prefix: prefix.to_string(),
         prefix_history: history.iter().map(|itm| itm.to_string()).collect(),
         column_template_id: Some(TEMPLATE_ID.to_string()),
-        // Left empty: the board resolves it from the template. Setting it here would be a lie the very
-        // first rebuild overwrites.
+        kind_template_id: Some(KIND_TEMPLATE_ID.to_string()),
+        // Both left empty: the board resolves them from the templates. Setting them here would be a lie
+        // the very first rebuild overwrites.
         columns: Vec::new(),
-        kinds: vec![KindModel {
-            id: "bug".to_string(),
-            name: "Bug".to_string(),
-            description: String::new(),
-            color: KindColor::Red,
-        }],
+        kinds: Vec::new(),
         members: BTreeSet::new(),
         last_task_number: 0,
         created: DateTimeAsMicroseconds::new(0),

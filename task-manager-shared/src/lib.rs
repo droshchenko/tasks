@@ -18,6 +18,7 @@
 pub mod auth;
 pub mod column_templates;
 pub mod kind_color;
+pub mod kind_templates;
 pub mod projects;
 pub mod system;
 pub mod tasks;

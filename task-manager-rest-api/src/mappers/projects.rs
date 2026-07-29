@@ -4,10 +4,10 @@ use rust_extensions::AsStr;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{ProjectColumnResponse, ProjectKindResponse, ProjectResponse};
 
-use crate::board::{ColumnModel, ColumnTemplateModel, KindModel, ProjectModel};
+use crate::board::{ColumnModel, ColumnTemplateModel, KindModel, KindTemplateModel, ProjectModel};
 use crate::postgres::{
-    ColumnTemplateColumnJsonModel, ColumnTemplateDto, ProjectColumnJsonModel, ProjectDto,
-    ProjectKindJsonModel,
+    ColumnTemplateColumnJsonModel, ColumnTemplateDto, KindTemplateDto, KindTemplateKindJsonModel,
+    ProjectColumnJsonModel, ProjectDto, ProjectKindJsonModel,
 };
 
 // Conversions are `From` rather than `Into`. The house style says "always an impl, never a standalone
@@ -75,10 +75,11 @@ impl From<&ProjectDto> for ProjectModel {
                 .map(|itm| itm.to_uppercase())
                 .collect(),
             column_template_id: src.column_template_id.clone(),
-            // Left empty on purpose: `BoardInner::rebuild_indexes` fills it from the template. Reading
-            // the row's own (dead) column here would resurrect a value nothing maintains.
+            // Left empty on purpose: `BoardInner::rebuild_indexes` fills both from their templates.
+            // Reading the row's own (dead) columns here would resurrect a value nothing maintains.
             columns: Vec::new(),
-            kinds: src.kinds.iter().map(|itm| itm.into()).collect(),
+            kind_template_id: src.kind_template_id.clone(),
+            kinds: Vec::new(),
             members: BTreeSet::new(),
             last_task_number: src.last_task_number,
             created: src.created,
@@ -97,9 +98,10 @@ impl From<&ProjectModel> for ProjectDto {
             prefix: src.prefix.clone(),
             prefix_history: src.prefix_history.clone(),
             column_template_id: src.column_template_id.clone(),
-            // The dead field. Written empty — the columns it used to hold live in the template now.
+            kind_template_id: src.kind_template_id.clone(),
+            // Both dead. Written empty — what they used to hold lives in the templates now.
             columns: Vec::new(),
-            kinds: src.kinds.iter().map(|itm| itm.into()).collect(),
+            kinds: Vec::new(),
             last_task_number: src.last_task_number,
             created: src.created,
         }
@@ -118,6 +120,7 @@ pub fn project_to_response(
     src: &ProjectModel,
     tasks_amount: usize,
     column_template: Option<&ColumnTemplateModel>,
+    kind_template: Option<&KindTemplateModel>,
 ) -> ProjectResponse {
     ProjectResponse {
         id: src.id.clone(),
@@ -152,6 +155,80 @@ pub fn project_to_response(
         // without holding the whole template list to look it up. `None` covers both "follows none" and
         // "follows one that is gone" — which read the same way on a board, so they read the same here.
         column_template_name: column_template.map(|itm| itm.name.clone()),
+        kind_template_id: src.kind_template_id.clone(),
+        kind_template_name: kind_template.map(|itm| itm.name.clone()),
+    }
+}
+
+impl From<&KindTemplateKindJsonModel> for KindModel {
+    fn from(src: &KindTemplateKindJsonModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            name: src.name.clone(),
+            description: src.description.clone(),
+            // A colour this build does not recognise is decoration that failed to load, not a corrupt
+            // row — it draws as the default swatch.
+            color: KindColor::parse_or_default(&src.color),
+        }
+    }
+}
+
+impl From<&KindModel> for KindTemplateKindJsonModel {
+    fn from(src: &KindModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            name: src.name.clone(),
+            description: src.description.clone(),
+            color: src.color.as_str().to_string(),
+        }
+    }
+}
+
+impl From<&KindTemplateDto> for KindTemplateModel {
+    fn from(src: &KindTemplateDto) -> Self {
+        Self {
+            id: src.id.clone(),
+            name: src.name.clone(),
+            description: src.description.clone(),
+            kinds: src.kinds.iter().map(|itm| itm.into()).collect(),
+            created: src.created,
+        }
+    }
+}
+
+impl From<&KindTemplateModel> for KindTemplateDto {
+    fn from(src: &KindTemplateModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            name: src.name.clone(),
+            description: src.description.clone(),
+            kinds: src.kinds.iter().map(|itm| itm.into()).collect(),
+            created: src.created,
+        }
+    }
+}
+
+/// Memory -> wire, with the count of projects following it passed in — it is derived against the whole
+/// board, which a template does not know about.
+pub fn kind_template_to_response(
+    src: &KindTemplateModel,
+    used_by: usize,
+) -> task_manager_shared::kind_templates::KindTemplateResponse {
+    task_manager_shared::kind_templates::KindTemplateResponse {
+        id: src.id.clone(),
+        name: src.name.clone(),
+        description: src.description.clone(),
+        kinds: src
+            .kinds
+            .iter()
+            .map(|itm| task_manager_shared::kind_templates::KindTemplateKind {
+                id: itm.id.clone(),
+                name: itm.name.clone(),
+                description: itm.description.clone(),
+                color: itm.color.as_str().to_string(),
+            })
+            .collect(),
+        used_by: used_by as i32,
     }
 }
 

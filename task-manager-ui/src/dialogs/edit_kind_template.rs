@@ -3,9 +3,9 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 use rust_extensions::AsStr;
 use task_manager_shared::kind_color::KindColor;
-use task_manager_shared::projects::{ProjectKindInputItem, ProjectResponse};
+use task_manager_shared::kind_templates::{KindTemplateKind, KindTemplateResponse};
 
-/// The types of work a task can be, per project — edited whole.
+/// A task-type template, edited whole.
 ///
 /// Same pattern as [`super::EditColumnTemplateDialog`]: model in, a draft built beside it, Save lit only
 /// when they differ, the new model handed out through `on_submit`.
@@ -15,9 +15,17 @@ use task_manager_shared::projects::{ProjectKindInputItem, ProjectResponse};
 /// to match a label would break them for nothing.
 #[derive(Clone, PartialEq)]
 struct ComponentState {
-    original: Vec<ProjectKindInputItem>,
-    draft: Vec<ProjectKindInputItem>,
+    original: Draft,
+    draft: Draft,
     new_kind: NewKind,
+}
+
+/// The editable shape. `PartialEq` is the whole mechanism behind the Save button.
+#[derive(Clone, PartialEq, Default)]
+struct Draft {
+    name: String,
+    description: String,
+    kinds: Vec<KindTemplateKind>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -40,17 +48,15 @@ impl Default for NewKind {
 }
 
 impl ComponentState {
-    fn new(project: &ProjectResponse) -> Self {
-        let draft: Vec<ProjectKindInputItem> = project
-            .kinds
-            .iter()
-            .map(|itm| ProjectKindInputItem {
-                id: itm.id.clone(),
-                name: itm.name.clone(),
-                description: itm.description.clone(),
-                color: itm.color.clone(),
-            })
-            .collect();
+    fn new(template: Option<&KindTemplateResponse>) -> Self {
+        let draft = match template {
+            Some(template) => Draft {
+                name: template.name.clone(),
+                description: template.description.clone(),
+                kinds: template.kinds.clone(),
+            },
+            None => Draft::default(),
+        };
 
         Self {
             original: draft.clone(),
@@ -65,13 +71,19 @@ impl ComponentState {
 
     /// Every type needs a name, checked here so an unsaveable set cannot be submitted and bounced.
     fn can_save(&self) -> bool {
-        self.is_changed() && self.draft.iter().all(|itm| !itm.name.trim().is_empty())
+        self.is_changed()
+            && !self.draft.name.trim().is_empty()
+            && self
+                .draft
+                .kinds
+                .iter()
+                .all(|itm| !itm.name.trim().is_empty())
     }
 
     fn can_add(&self) -> bool {
         let id = self.new_kind.id.trim();
 
-        !id.is_empty() && !self.draft.iter().any(|itm| itm.id == id)
+        !id.is_empty() && !self.draft.kinds.iter().any(|itm| itm.id == id)
     }
 
     fn add(&mut self) {
@@ -79,7 +91,7 @@ impl ComponentState {
             return;
         }
 
-        self.draft.push(ProjectKindInputItem {
+        self.draft.kinds.push(KindTemplateKind {
             id: self.new_kind.id.trim().to_lowercase(),
             name: self.new_kind.name.trim().to_string(),
             description: self.new_kind.description.trim().to_string(),
@@ -93,42 +105,66 @@ impl ComponentState {
     }
 
     fn remove(&mut self, id: &str) {
-        self.draft.retain(|itm| itm.id != id);
+        self.draft.kinds.retain(|itm| itm.id != id);
     }
 
     fn set_name(&mut self, id: &str, value: String) {
-        if let Some(kind) = self.draft.iter_mut().find(|itm| itm.id == id) {
+        if let Some(kind) = self.draft.kinds.iter_mut().find(|itm| itm.id == id) {
             kind.name = value;
         }
     }
 
     fn set_description(&mut self, id: &str, value: String) {
-        if let Some(kind) = self.draft.iter_mut().find(|itm| itm.id == id) {
+        if let Some(kind) = self.draft.kinds.iter_mut().find(|itm| itm.id == id) {
             kind.description = value;
         }
     }
 
     fn set_color(&mut self, id: &str, value: String) {
-        if let Some(kind) = self.draft.iter_mut().find(|itm| itm.id == id) {
+        if let Some(kind) = self.draft.kinds.iter_mut().find(|itm| itm.id == id) {
             kind.color = value;
         }
     }
 }
 
+/// What the dialog hands back: the complete template, ready to send.
+#[derive(Clone, PartialEq)]
+pub struct KindTemplateSubmit {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub kinds: Vec<KindTemplateKind>,
+}
+
 #[component]
-pub fn EditKindsDialog(
-    project: Rc<ProjectResponse>,
-    on_submit: EventHandler<Vec<ProjectKindInputItem>>,
+pub fn EditKindTemplateDialog(
+    template: Option<Rc<KindTemplateResponse>>,
+    on_submit: EventHandler<KindTemplateSubmit>,
 ) -> Element {
-    let mut cs = use_signal(|| ComponentState::new(&project));
+    let mut cs = use_signal(|| ComponentState::new(template.as_deref()));
     let cs_ra = cs.read();
 
+    let id = template
+        .as_deref()
+        .map(|itm| itm.id.clone())
+        .unwrap_or_default();
+
     let submit = move |_| {
+        let id = id.clone();
         let draft = cs.read().draft.clone();
-        on_submit.call(draft);
+
+        on_submit.call(KindTemplateSubmit {
+            id,
+            name: draft.name.trim().to_string(),
+            description: draft.description.trim().to_string(),
+            kinds: draft.kinds,
+        });
     };
 
-    let draft = cs_ra.draft.clone();
+    let name = cs_ra.draft.name.clone();
+    let description = cs_ra.draft.description.clone();
+    let draft = cs_ra.draft.kinds.clone();
+    let used_by = template.as_deref().map(|itm| itm.used_by).unwrap_or(0);
     let new_kind = cs_ra.new_kind.clone();
     // The submit outcome is the router's, not this dialog's — see `DialogFeedback`.
     let feedback = super::feedback();
@@ -137,11 +173,36 @@ pub fn EditKindsDialog(
     let can_add = cs_ra.can_add();
 
     let content = rsx! {
-        div { class: "field-hint",
-            "A task type is optional on a task. The description is what an agent reads before classifying one, so write the rule for applying it rather than a synonym of the name. Nothing is sent until Save."
-        }
         if !error.is_empty() {
-            div { class: "error-banner", style: "margin-top: 10px", "{error}" }
+            div { class: "error-banner", "{error}" }
+        }
+
+        if used_by > 1 {
+            div { class: "field-hint",
+                "{used_by} projects follow this template. Saving changes all of them."
+            }
+        }
+
+        div { class: "form-row",
+            label { "Name" }
+            input {
+                r#type: "text",
+                placeholder: "Development",
+                value: "{name}",
+                oninput: move |event| cs.write().draft.name = event.value(),
+            }
+        }
+        div { class: "form-row",
+            label { "Description" }
+            input {
+                r#type: "text",
+                value: "{description}",
+                oninput: move |event| cs.write().draft.description = event.value(),
+            }
+        }
+
+        div { class: "field-hint", style: "margin-top: 6px",
+            "A task type is optional on a task. The description is what an agent reads before classifying one, so write the rule for applying it rather than a synonym of the name. Nothing is sent until Save."
         }
 
         if draft.is_empty() {
@@ -259,12 +320,12 @@ pub fn EditKindsDialog(
         button { class: "btn btn-primary", disabled: !can_save, onclick: submit, "Save" }
     };
 
-    super::dialog_template_ex(
-        &format!("Task types · {}", project.prefix),
-        content,
-        ok_button,
-        Some("modal-xl"),
-    )
+    let title = match template.as_deref() {
+        Some(template) => format!("Task types · {}", template.name),
+        None => "New task-type template".to_string(),
+    };
+
+    super::dialog_template_ex(&title, content, ok_button, Some("modal-xl"))
 }
 
 /// Swatches rather than a dropdown of colour names.
@@ -317,32 +378,25 @@ pub fn RenderColorPicker(value: String, on_pick: EventHandler<String>) -> Elemen
 #[cfg(test)]
 mod tests {
     use super::*;
-    use task_manager_shared::projects::ProjectKindResponse;
 
-    fn project() -> ProjectResponse {
-        ProjectResponse {
-            id: "p".to_string(),
-            name: "Project".to_string(),
+    fn template() -> KindTemplateResponse {
+        KindTemplateResponse {
+            id: "tpl".to_string(),
+            name: "Development".to_string(),
             description: String::new(),
-            prefix: "RMS".to_string(),
-            prefix_history: Vec::new(),
-            columns: Vec::new(),
-            column_template_id: None,
-            column_template_name: None,
-            kinds: vec![ProjectKindResponse {
+            kinds: vec![KindTemplateKind {
                 id: "bug".to_string(),
                 name: "Bug".to_string(),
                 description: String::new(),
                 color: "red".to_string(),
             }],
-            members: Vec::new(),
-            tasks_amount: 0,
+            used_by: 2,
         }
     }
 
     #[test]
     fn save_is_offered_only_once_something_differs() {
-        let mut cs = ComponentState::new(&project());
+        let mut cs = ComponentState::new(Some(&template()));
         assert!(!cs.can_save());
 
         cs.set_name("bug", "Defect".to_string());
@@ -355,8 +409,18 @@ mod tests {
     /// A type with no name cannot be saved — caught here rather than after a round trip.
     #[test]
     fn a_nameless_type_blocks_saving() {
-        let mut cs = ComponentState::new(&project());
+        let mut cs = ComponentState::new(Some(&template()));
         cs.set_name("bug", "  ".to_string());
+
+        assert!(cs.is_changed());
+        assert!(!cs.can_save());
+    }
+
+    /// So does a template with no name of its own.
+    #[test]
+    fn a_nameless_template_cannot_be_saved() {
+        let mut cs = ComponentState::new(Some(&template()));
+        cs.draft.name = "   ".to_string();
 
         assert!(cs.is_changed());
         assert!(!cs.can_save());
@@ -364,7 +428,7 @@ mod tests {
 
     #[test]
     fn adding_is_local_and_refuses_a_duplicate_id() {
-        let mut cs = ComponentState::new(&project());
+        let mut cs = ComponentState::new(Some(&template()));
 
         cs.new_kind.id = "bug".to_string();
         assert!(!cs.can_add());
@@ -375,9 +439,9 @@ mod tests {
 
         cs.add();
 
-        assert_eq!(cs.draft.len(), 2);
-        assert_eq!(cs.draft[1].id, "feature");
-        assert_eq!(cs.draft[1].name, "Feature");
+        assert_eq!(cs.draft.kinds.len(), 2);
+        assert_eq!(cs.draft.kinds[1].id, "feature");
+        assert_eq!(cs.draft.kinds[1].name, "Feature");
         assert!(cs.new_kind.id.is_empty());
         assert_eq!(
             cs.new_kind.color,
@@ -388,12 +452,24 @@ mod tests {
 
     #[test]
     fn removing_everything_is_a_saveable_change() {
-        let mut cs = ComponentState::new(&project());
+        let mut cs = ComponentState::new(Some(&template()));
 
         cs.remove("bug");
 
-        assert!(cs.draft.is_empty());
+        assert!(cs.draft.kinds.is_empty());
         assert!(cs.is_changed());
-        assert!(cs.can_save(), "a project with no task types is legitimate");
+        assert!(cs.can_save(), "a template with no task types is legitimate");
+    }
+
+    /// A new template starts empty and needs a name before it can be saved.
+    #[test]
+    fn a_new_template_needs_a_name() {
+        let mut cs = ComponentState::new(None);
+
+        assert!(!cs.is_changed());
+        assert!(!cs.can_save());
+
+        cs.draft.name = "Development".to_string();
+        assert!(cs.can_save());
     }
 }

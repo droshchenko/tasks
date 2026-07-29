@@ -2,14 +2,15 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 use task_manager_shared::column_templates::ColumnTemplateResponse;
+use task_manager_shared::kind_templates::KindTemplateResponse;
 use task_manager_shared::projects::ProjectResponse;
 
 mod dialog_template;
 pub use dialog_template::*;
 mod edit_column_template;
 pub use edit_column_template::*;
-mod edit_kinds;
-pub use edit_kinds::*;
+mod edit_kind_template;
+pub use edit_kind_template::*;
 mod edit_members;
 pub use edit_members::*;
 mod edit_project;
@@ -36,18 +37,18 @@ pub enum DialogState {
         project: Option<Rc<ProjectResponse>>,
         on_saved: EventHandler<()>,
     },
-    EditKinds {
-        project: Rc<ProjectResponse>,
-        on_saved: EventHandler<()>,
-    },
     EditMembers {
         project: Rc<ProjectResponse>,
         on_saved: EventHandler<()>,
     },
-    /// Columns are configured here — once per template, under Settings — and never on a project, which
-    /// only points at one. `template: None` creates.
+    /// Columns and task types are configured here — once per template, under Settings — and never on a
+    /// project, which only points at one of each. `template: None` creates.
     EditColumnTemplate {
         template: Option<Rc<ColumnTemplateResponse>>,
+        on_saved: EventHandler<()>,
+    },
+    EditKindTemplate {
+        template: Option<Rc<KindTemplateResponse>>,
         on_saved: EventHandler<()>,
     },
 }
@@ -65,30 +66,32 @@ pub fn RenderDialog() -> Element {
         DialogState::EditProject { project, on_saved } => rsx! {
             EditProjectDialog { project, on_saved }
         },
-        DialogState::EditKinds { project, on_saved } => {
-            let project_id = project.id.clone();
-
-            rsx! {
-                EditKindsDialog {
-                    project,
-                    on_submit: move |kinds| {
-                        let project_id = project_id.clone();
-                        begin_submit();
-                        spawn(async move {
-                            match crate::api::set_kinds(&project_id, kinds).await {
-                                Ok(()) => {
-                                    on_saved.call(());
-                                    close();
-                                }
-                                Err(err) => submit_failed(err.message),
-                            }
-                        });
-                    },
-                }
-            }
-        }
         DialogState::EditMembers { project, on_saved } => rsx! {
             EditMembersDialog { project, on_saved }
+        },
+        DialogState::EditKindTemplate { template, on_saved } => rsx! {
+            EditKindTemplateDialog {
+                template,
+                on_submit: move |submit: KindTemplateSubmit| {
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::save_kind_template(
+                                &submit.id,
+                                &submit.name,
+                                &submit.description,
+                                submit.kinds,
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                on_saved.call(());
+                                close();
+                            }
+                            Err(err) => submit_failed(err.message),
+                        }
+                    });
+                },
+            }
         },
         DialogState::EditColumnTemplate { template, on_saved } => rsx! {
             EditColumnTemplateDialog {

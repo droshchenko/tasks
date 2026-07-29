@@ -69,7 +69,11 @@ pub struct ProjectResponse {
     // `columns` is empty and the board is Todo -> Done.
     pub column_template_id: Option<String>,
     pub column_template_name: Option<String>,
+    // Resolved from the task-type template this project follows, for the same reason `columns` is: every
+    // reader wants this project's types and none of them should have to join a template list.
     pub kinds: Vec<ProjectKindResponse>,
+    pub kind_template_id: Option<String>,
+    pub kind_template_name: Option<String>,
     // Emails of the users who may see this project. An admin sees every project without appearing
     // here.
     #[serde(default)]
@@ -120,26 +124,14 @@ pub struct SetProjectColumnTemplateInputModel {
     pub column_template_id: String,
 }
 
-// A kind as it is sent back, inside the kinds snapshot.
-#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
-pub struct ProjectKindInputItem {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub color: String,
-}
-
-// The whole set of kinds in one call — a SNAPSHOT, like the column template.
-//
-// Replaces add/update/delete. The dialog builds the complete new list and sends it, so the server never
-// reconciles a sequence of small writes, a half-finished edit is never visible, and Cancel costs nothing
-// because nothing was sent.
+// Which task-type template a project follows. Empty means "none" — the project then has no task types,
+// which is legitimate: a type is optional on a task.
 #[derive(MyHttpInput)]
-pub struct SetProjectKindsInputModel {
+pub struct SetProjectKindTemplateInputModel {
     #[http_body(name: "projectId", description: "Project id")]
     pub project_id: String,
-    #[http_body(name: "kinds", description: "The complete list of kinds for this project")]
-    pub kinds: Vec<ProjectKindInputItem>,
+    #[http_body(name: "kindTemplateId", description: "Task-type template id, or empty for none", trim, to_lowercase)]
+    pub kind_template_id: String,
 }
 
 // Membership is edited from the project's side — this is the whole set, replaced wholesale, so the

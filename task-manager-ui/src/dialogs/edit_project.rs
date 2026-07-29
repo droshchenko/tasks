@@ -3,6 +3,7 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 use dioxus_utils::{DataState, RenderState};
 use task_manager_shared::column_templates::ColumnTemplateResponse;
+use task_manager_shared::kind_templates::KindTemplateResponse;
 use task_manager_shared::projects::ProjectResponse;
 
 /// What a project *is*: name, description, prefix, and which column template it follows.
@@ -26,6 +27,8 @@ struct Draft {
     prefix: String,
     /// Empty means "follow no template" — a legitimate state whose board is Todo -> Done.
     column_template_id: String,
+    /// Empty means no task types, which is legitimate too: a type is optional on a task.
+    kind_template_id: String,
 }
 
 impl ComponentState {
@@ -36,6 +39,7 @@ impl ComponentState {
                 description: project.description.clone(),
                 prefix: project.prefix.clone(),
                 column_template_id: project.column_template_id.clone().unwrap_or_default(),
+                kind_template_id: project.kind_template_id.clone().unwrap_or_default(),
             },
             None => Draft::default(),
         };
@@ -60,9 +64,13 @@ impl ComponentState {
             && !self.draft.prefix.trim().is_empty()
     }
 
-    /// Whether the template changed, which decides if the second request is worth making at all.
-    fn template_changed(&self) -> bool {
+    /// Whether either template changed, which decides if the extra requests are worth making at all.
+    fn column_template_changed(&self) -> bool {
         self.draft.column_template_id != self.original.column_template_id
+    }
+
+    fn kind_template_changed(&self) -> bool {
+        self.draft.kind_template_id != self.original.kind_template_id
     }
 
     fn begin_save(&mut self) {
@@ -87,6 +95,7 @@ pub fn EditProjectDialog(
     // Save button. The template list is loaded data, not part of the edit, so it does not belong in the
     // comparison anyway.
     let templates_state = use_signal(DataState::<Vec<ColumnTemplateResponse>>::default);
+    let kind_templates_state = use_signal(DataState::<Vec<KindTemplateResponse>>::default);
     let cs_ra = cs.read();
 
     let existing = project.clone();
@@ -95,13 +104,15 @@ pub fn EditProjectDialog(
         let existing = existing.clone();
         let ra = cs.read();
         let draft = ra.draft.clone();
-        let template_changed = ra.template_changed();
+        let column_changed = ra.column_template_changed();
+        let kind_changed = ra.kind_template_changed();
         drop(ra);
 
         let name = draft.name.trim().to_string();
         let description = draft.description.trim().to_string();
         let prefix = draft.prefix.trim().to_string();
-        let template_id = draft.column_template_id.clone();
+        let column_template_id = draft.column_template_id.clone();
+        let kind_template_id = draft.kind_template_id.clone();
 
         cs.write().begin_save();
 
@@ -133,16 +144,46 @@ pub fn EditProjectDialog(
                 },
             };
 
-            let assign = existing.is_none() && !template_id.is_empty() || template_changed;
+            // A brand-new project needs the assignment whenever a template was picked, since create has
+            // nowhere to carry it; an existing one only when the choice moved.
+            let is_new = existing.is_none();
+            let assign_column = is_new && !column_template_id.is_empty() || column_changed;
+            let assign_kind = is_new && !kind_template_id.is_empty() || kind_changed;
 
-            if assign
-                && let Some(project_id) = saved_id
-                && let Err(err) = crate::api::set_column_template(&project_id, &template_id).await
+            let Some(project_id) = saved_id else {
+                // Saved, but we could not find it again to assign anything. Reported rather than
+                // swallowed: the templates are not what the person asked for.
+                if assign_column || assign_kind {
+                    cs.write().fail(
+                        "The project was saved, but its templates could not be assigned — reopen it and set them."
+                            .to_string(),
+                    );
+                }
+
+                on_saved.call(());
+                return;
+            };
+
+            if assign_column
+                && let Err(err) =
+                    crate::api::set_column_template(&project_id, &column_template_id).await
             {
                 // The basics DID save. Saying so matters: the person would otherwise re-enter a name that
                 // is already stored and hit "prefix already used" by themselves.
                 cs.write().fail(format!(
                     "The project was saved, but its column template was not: {}",
+                    err.message
+                ));
+                on_saved.call(());
+                return;
+            }
+
+            if assign_kind
+                && let Err(err) =
+                    crate::api::set_kind_template(&project_id, &kind_template_id).await
+            {
+                cs.write().fail(format!(
+                    "The project was saved, but its task-type template was not: {}",
                     err.message
                 ));
                 on_saved.call(());
@@ -170,9 +211,11 @@ pub fn EditProjectDialog(
     let description = cs_ra.draft.description.clone();
     let prefix = cs_ra.draft.prefix.clone();
     let selected_template = cs_ra.draft.column_template_id.clone();
+    let selected_kind_template = cs_ra.draft.kind_template_id.clone();
     let error = cs_ra.error.clone();
     let can_save = cs_ra.can_save();
     let templates = read_templates(templates_state);
+    let kind_templates = read_kind_templates(kind_templates_state);
 
     let content = rsx! {
         if !error.is_empty() {
@@ -220,6 +263,20 @@ pub fn EditProjectDialog(
                 "Columns are configured under Settings → Column templates and shared between projects. Changing the template here moves every task parked in a column the new one does not have: it reads as Todo, and comes back if that column returns."
             }
         }
+        div { class: "form-row",
+            label { "Task types" }
+            select {
+                value: "{selected_kind_template}",
+                onchange: move |event| cs.write().draft.kind_template_id = event.value(),
+                option { value: "", "No template — no task types" }
+                for template in kind_templates.iter() {
+                    option { value: "{template.id}", "{template.name}" }
+                }
+            }
+            div { class: "field-hint",
+                "Also shared, under Settings → Task-type templates. A task pointing at a type the new template does not have reads as having none, and comes back if that type returns."
+            }
+        }
         if !history.is_empty() {
             div { class: "field-hint",
                 "Previously: {history}. Ids written under those prefixes still resolve — the tasks_resolve_id MCP tool finds them."
@@ -265,6 +322,34 @@ fn read_templates(
     Vec::new()
 }
 
+/// The task-type templates to choose from. Same shape and same leniency as `read_templates`.
+fn read_kind_templates(
+    mut state: Signal<DataState<Vec<KindTemplateResponse>>>,
+) -> Vec<KindTemplateResponse> {
+    let loaded = match state.read().as_ref() {
+        RenderState::Loaded(templates) => Some(templates.clone()),
+        RenderState::None => None,
+        _ => Some(Vec::new()),
+    };
+
+    if let Some(templates) = loaded {
+        return templates;
+    }
+
+    spawn(async move {
+        state.write().set_loading();
+
+        match crate::api::get_kind_templates().await {
+            Ok(response) => state
+                .write()
+                .set_loaded(response.map(|itm| itm.templates).unwrap_or_default()),
+            Err(_) => state.write().set_loaded(Vec::new()),
+        }
+    });
+
+    Vec::new()
+}
+
 /// Find a just-created project by its prefix, which is unique.
 ///
 /// Only needed because create answers with an empty body. Returning the new id from the server would be
@@ -293,6 +378,8 @@ mod tests {
             columns: Vec::new(),
             column_template_id: Some("tpl".to_string()),
             column_template_name: Some("Development".to_string()),
+            kind_template_id: Some("kinds".to_string()),
+            kind_template_name: Some("Default".to_string()),
             kinds: Vec::new(),
             members: Vec::new(),
             tasks_amount: 0,
@@ -314,24 +401,32 @@ mod tests {
     /// Picking another template is a change on its own, and is what decides whether the second request
     /// runs at all.
     #[test]
-    fn changing_only_the_template_is_a_saveable_change() {
+    fn changing_only_a_template_is_a_saveable_change() {
         let mut cs = ComponentState::new(Some(&project()));
-        assert!(!cs.template_changed());
+        assert!(!cs.column_template_changed());
+        assert!(!cs.kind_template_changed());
 
         cs.draft.column_template_id = "other".to_string();
 
         assert!(cs.is_changed());
         assert!(cs.can_save());
-        assert!(cs.template_changed());
+        assert!(cs.column_template_changed());
+        assert!(
+            !cs.kind_template_changed(),
+            "the two are tracked apart, so only the request that is needed runs"
+        );
+
+        cs.draft.kind_template_id = "other-kinds".to_string();
+        assert!(cs.kind_template_changed());
     }
 
     /// Choosing "no template" is a real choice, not a cleared field.
     #[test]
-    fn clearing_the_template_is_a_change() {
+    fn clearing_a_template_is_a_change() {
         let mut cs = ComponentState::new(Some(&project()));
         cs.draft.column_template_id = String::new();
 
-        assert!(cs.template_changed());
+        assert!(cs.column_template_changed());
         assert!(cs.can_save());
     }
 

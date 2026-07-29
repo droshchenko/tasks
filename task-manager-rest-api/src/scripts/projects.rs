@@ -6,7 +6,7 @@ use service_sdk::my_telemetry::MyTelemetryContext;
 use task_manager_shared::kind_color::KindColor;
 
 use crate::app::AppContext;
-use crate::board::{KindModel, ProjectModel, is_valid_prefix};
+use crate::board::{ProjectModel, is_valid_prefix};
 use crate::postgres::ProjectDto;
 
 fn validate_prefix(prefix: &str) -> Result<String, String> {
@@ -25,6 +25,11 @@ fn validate_prefix(prefix: &str) -> Result<String, String> {
 /// script, which applies the same rule to the same kind of hand-typed id.
 pub(super) fn validate_column_id(id: &str) -> Result<String, String> {
     validate_config_id(id, "column")
+}
+
+/// A task type's id, validated. Same rule as a column's — both are hand-typed and immutable afterwards.
+pub(super) fn validate_task_type_id(id: &str) -> Result<String, String> {
+    validate_config_id(id, "task type")
 }
 
 /// An id typed in by a person for a column or a kind. Immutable once created, so it is worth being
@@ -93,6 +98,7 @@ pub async fn create_project(
         // Requiring a template up front would mean you cannot create a project before creating one.
         column_template_id: None,
         columns: Vec::new(),
+        kind_template_id: None,
         kinds: Vec::new(),
         members: BTreeSet::new(),
         last_task_number: 0,
@@ -184,50 +190,37 @@ pub async fn set_column_template(
     Ok(())
 }
 
-/// Replace a project's whole set of kinds.
+/// Point a project at a task-type template, or at none.
 ///
-/// A snapshot, not a delta — see `SetProjectKindsInputModel`. Validated as a whole before anything is
-/// written, so a bad colour or a duplicate id fails the call and leaves the project exactly as it was
-/// rather than half-applied.
-///
-/// A task pointing at a kind that this call removed keeps its stored value and reads as having no kind.
-/// The value is left alone so re-adding the kind brings those tasks back to it.
-pub async fn set_kinds(
+/// The whole of a project's task-type configuration. There is no add-type here: types are configured in
+/// the template, and this only decides which template the project follows.
+pub async fn set_kind_template(
     app: &AppContext,
     project_id: &str,
-    kinds: &[task_manager_shared::projects::ProjectKindInputItem],
+    kind_template_id: &str,
 ) -> Result<(), String> {
+    let kind_template_id = kind_template_id.trim().to_lowercase();
+
     let board = app.board.read();
     let mut project = load(&board, project_id)?;
 
-    let mut next: Vec<KindModel> = Vec::with_capacity(kinds.len());
-
-    for kind in kinds {
-        let id = validate_config_id(&kind.id, "kind")?;
-
-        if next.iter().any(|itm| itm.id == id) {
-            return Err(format!("kind '{id}' is listed twice"));
+    project.kind_template_id = if kind_template_id.is_empty() {
+        None
+    } else {
+        if board.get_kind_template(&kind_template_id).is_none() {
+            return Err(format!(
+                "no task-type template with id '{kind_template_id}'"
+            ));
         }
 
-        if kind.name.trim().is_empty() {
-            return Err(format!("kind '{id}' needs a name"));
-        }
-
-        next.push(KindModel {
-            id,
-            name: kind.name.trim().to_string(),
-            description: kind.description.trim().to_string(),
-            color: parse_color(&kind.color)?,
-        });
-    }
-
-    project.kinds = next;
+        Some(kind_template_id)
+    };
 
     save(app, project).await;
     Ok(())
 }
 
-fn parse_color(color: &str) -> Result<KindColor, String> {
+pub(super) fn parse_kind_color(color: &str) -> Result<KindColor, String> {
     color
         .trim()
         .to_lowercase()

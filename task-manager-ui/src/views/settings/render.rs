@@ -6,6 +6,7 @@ use crate::AppRoute;
 const DEFAULT_SECTION: &str = SECTION_COLUMN_TEMPLATES;
 
 const SECTION_COLUMN_TEMPLATES: &str = "column-templates";
+const SECTION_KIND_TEMPLATES: &str = "task-type-templates";
 const SECTION_DIAGNOSTICS: &str = "diagnostics";
 
 /// Settings — a menu of areas on the left, the chosen one on the right.
@@ -32,6 +33,11 @@ pub fn RenderSettings() -> Element {
                     active: section == SECTION_COLUMN_TEMPLATES,
                 }
                 RenderMenuLink {
+                    section: SECTION_KIND_TEMPLATES.to_string(),
+                    title: "Task-type templates".to_string(),
+                    active: section == SECTION_KIND_TEMPLATES,
+                }
+                RenderMenuLink {
                     section: SECTION_DIAGNOSTICS.to_string(),
                     title: "Diagnostics".to_string(),
                     active: section == SECTION_DIAGNOSTICS,
@@ -41,6 +47,8 @@ pub fn RenderSettings() -> Element {
             div { class: "settings-content",
                 if section == SECTION_COLUMN_TEMPLATES {
                     super::ColumnTemplatesPanel {}
+                } else if section == SECTION_KIND_TEMPLATES {
+                    super::KindTemplatesPanel {}
                 } else if section == SECTION_DIAGNOSTICS {
                     super::DiagnosticsPanel {}
                 } else {

@@ -227,6 +227,13 @@ code {
   margin-bottom: 12px;
 }
 
+/* Zeroed, or the row sits 12px above the line's bottom edge while a bare button sits on it — and the
+   button reads as dropped below every input next to it. `align-items: flex-end` aligns MARGIN boxes, so
+   the margin `.form-row` carries when it is stacked has to go when it is inline. */
+.form-row-inline > .form-row {
+  margin-bottom: 0;
+}
+
 label {
   font-size: 12px;
   font-weight: 600;
@@ -384,12 +391,28 @@ input[readonly] {
 }
 
 /* Home. Read-only by design — nothing here is dragged, clicked to edit, or double-clicked. */
+
+/* Fills what is left of the window below the top bar, so the board can hand its columns a real height to
+   stretch into. Only the 40px of `.main-content` vertical padding is assumed — everything above the board
+   (title, project picker, description) keeps its natural height and the board takes the rest. */
+.board-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--topbar-height) - 40px);
+  /* Without this a tall column would push the page instead of scrolling inside itself. */
+  min-height: 0;
+}
+
 .board {
   display: flex;
   gap: 14px;
-  align-items: flex-start;
+  /* `stretch`, not `flex-start`: that is what makes every column full height regardless of how many cards
+     it holds, so the board reads as a set of lanes rather than a row of ragged blocks. */
+  align-items: stretch;
   overflow-x: auto;
   padding-bottom: 10px;
+  flex: 1;
+  min-height: 0;
 }
 
 .board-column {
@@ -401,6 +424,22 @@ input[readonly] {
   display: flex;
   flex-direction: column;
   gap: 9px;
+  /* Required for the body below to scroll: a flex item's default `min-height: auto` would let its content
+     dictate the height, and nothing would ever overflow. */
+  min-height: 0;
+}
+
+/* The only part that scrolls. The name, the count and the description stay put, so which column you are
+   looking at is still answerable once the cards have moved. */
+.board-column-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Room for the scrollbar, so it does not sit on top of a card's right edge. */
+  padding-right: 2px;
 }
 
 .board-column-header {

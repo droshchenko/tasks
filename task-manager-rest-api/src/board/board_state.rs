@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 
 use super::board_inner::BoardInner;
-use super::models::{ColumnTemplateModel, ProjectModel, TaskModel, UserModel};
+use super::models::{ColumnTemplateModel, KindTemplateModel, ProjectModel, TaskModel, UserModel};
 
 /// The product state, held entirely in memory.
 ///
@@ -70,6 +70,15 @@ impl Board {
 
     pub fn remove_column_template(&self, id: &str) {
         self.mutate(|inner| inner.drop_column_template(id));
+    }
+
+    /// Save a task-type template. Every project following it picks the change up in the same swap.
+    pub fn upsert_kind_template(&self, template: KindTemplateModel) {
+        self.mutate(|inner| inner.put_kind_template(Arc::new(template)));
+    }
+
+    pub fn remove_kind_template(&self, id: &str) {
+        self.mutate(|inner| inner.drop_kind_template(id));
     }
 
     pub fn upsert_task(&self, task: TaskModel) {
