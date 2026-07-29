@@ -544,9 +544,9 @@ fn RenderColumn(
 
 /// One card, and deliberately almost nothing: its handle and its title.
 ///
-/// The whole task — the text, the thread, who has it, what it waits on — is one click away behind the eye,
-/// and only there. A column of full cards is a wall of Markdown you have to read to scan, which is the
-/// opposite of what a board is for; a column of titles is a list you can take in at a glance.
+/// The whole task — the text, the thread, who has it, what it waits on — is behind the eye or a double-click
+/// on the card, and only there. A column of full cards is a wall of Markdown you have to read to scan, which
+/// is the opposite of what a board is for; a column of titles is a list you can take in at a glance.
 #[component]
 fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
     let kind = task
@@ -571,11 +571,20 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
     // the card opens instantly and without a round trip. `archived` is false by definition — a card that is
     // drawn is on the board.
     let found = found_locally(&task, &project);
+    let found_on_the_card = found.clone();
 
     rsx! {
         div {
             class: if task.blocked { "sticker blocked" } else { "sticker" },
             style: "{border}",
+            // The whole card, not only the eye. Double rather than single, because a single click on a card
+            // is how you select one and this board has no selection — a stray click must not throw a dialog
+            // in front of somebody who was only scrolling.
+            ondoubleclick: move |_| {
+                crate::dialogs::open(crate::dialogs::DialogState::ViewTask {
+                    found: found_on_the_card.clone(),
+                });
+            },
 
             div { class: "sticker-top",
                 span { class: "sticker-id", "{task.id}" }

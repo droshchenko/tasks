@@ -82,6 +82,10 @@
   box-shadow: var(--shadow-card);
   padding: 10px 11px;
   border-left: 3px solid transparent;
+  /* The card is a double-click target, and a double-click selects a word. Without this, opening a task
+     leaves half its title highlighted behind the dialog. Nothing is lost — the text is selectable in the
+     dialog, which is where it is read. */
+  user-select: none;
 }
 
 .sticker.blocked {
