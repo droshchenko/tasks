@@ -48,10 +48,10 @@ jobs:
 
       - name: Docker Build and Publish
         run: |
-          # Nothing about the image name is written out by hand: the owner and repo come from the
-          # repository itself, and the service from DIR. Spelling the org out is how the first release
-          # ended up in the wrong one.
-          IMAGE_NAME="ghcr.io/${{ github.repository }}/${DIR}"
+          # `ghcr.io/{org}/{service}` per the release guide — flat, not nested under the repo name.
+          # Both halves are derived rather than written out: the owner from the repository, the service
+          # from DIR. Spelling the org by hand is how the first release landed in the wrong one.
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/${DIR}"
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           echo "publishing ${IMAGE_NAME}:${VERSION}"
           cd ${DIR}
