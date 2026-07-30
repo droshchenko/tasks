@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
+use dioxus_utils::RenderState;
 use futures::{SinkExt, StreamExt};
 use reqwasm::websocket::{Message, futures::WebSocket};
+use task_manager_shared::auth::MeResponse;
 
 mod api;
 mod dialogs;
@@ -11,7 +13,7 @@ mod views;
 mod web;
 
 use models::ServerWsMessage;
-use states::{AppState, SignedIn};
+use states::AppState;
 
 #[derive(Routable, PartialEq, Clone)]
 pub enum AppRoute {
@@ -79,54 +81,87 @@ fn main() {
 /// individual view has to handle "not yet asked", and none of them can forget to.
 #[component]
 fn Shell(active: &'static str, children: Element) -> Element {
-    let mut app_state = use_context_provider(|| Signal::new(AppState::default()));
+    let app_state = use_context_provider(|| Signal::new(AppState::default()));
 
     // A context of its own rather than a field of `AppState` — see `dialogs::DialogState` for why.
     use_context_provider(|| Signal::new(crate::dialogs::DialogState::None));
     // How the last submit went, for the dialogs whose request the router makes — see `DialogFeedback`.
     use_context_provider(|| Signal::new(crate::dialogs::DialogFeedback::default()));
 
-    let signed_in = app_state.read().signed_in.clone();
+    let app_state_ra = app_state.read();
 
-    // Asked once per page load. `/me` is the only way to find out: the token in localStorage may be
-    // expired, encrypted with a rotated key, or belong to somebody since disabled — all of which look
-    // identical from here and are all answered by asking.
-    use_future(move || async move {
-        if app_state.read().signed_in != SignedIn::Unknown {
-            return;
-        }
+    // Read in the RENDER body, which is what subscribes this scope to it — the previous version asked
+    // inside `use_future`, which spawns once and tracks nothing.
+    let me = match get_me(app_state, &app_state_ra) {
+        Ok(me) => me,
+        Err(element) => return element,
+    };
 
-        match crate::api::get_me().await {
-            Ok(Some(me)) => app_state.write().signed_in = SignedIn::Yes(me),
-            Ok(None) => {
-                crate::web::storage::clear_session_token();
-                app_state.write().signed_in = SignedIn::No;
-            }
-            // A transport failure is not "signed out" — showing the login screen would hide the real
-            // problem behind a button that cannot help.
-            Err(err) => {
-                crate::web::console_log(format!("/me failed: {err}").as_str());
-                app_state.write().signed_in = SignedIn::No;
-            }
-        }
-    });
-
-    match signed_in {
-        SignedIn::Unknown => rsx! {
-            div { class: "full-screen",
-                div { class: "loading-note", "Loading…" }
-            }
-        },
-        SignedIn::No => rsx! {
+    if me.is_none() {
+        return rsx! {
             crate::views::login::RenderLogin {}
-        },
-        SignedIn::Yes(_) => {
-            rsx! {
-                crate::templates::ContentPanel { active, {children} }
-                // Last, and outside the content panel: a dialog is an overlay over whatever screen
-                // opened it, and it is mounted once here so no screen has to remember to.
-                crate::dialogs::RenderDialog {}
-            }
+        };
+    }
+
+    rsx! {
+        crate::templates::ContentPanel { active, {children} }
+        // Last, and outside the content panel: a dialog is an overlay over whatever screen opened it,
+        // and it is mounted once here so no screen has to remember to.
+        crate::dialogs::RenderDialog {}
+    }
+}
+
+/// Whoever is signed in, asked once per page load.
+///
+/// `/me` is the only way to find out: the token in localStorage may be expired, encrypted with a rotated
+/// key, or belong to somebody since disabled — all of which look identical from here and are all answered
+/// by asking. `Ok(None)` is "nobody", which is data rather than a failure.
+fn get_me(
+    mut app_state: Signal<AppState>,
+    app_state_ra: &AppState,
+) -> Result<Option<&MeResponse>, Element> {
+    match app_state_ra.signed_in.as_ref() {
+        RenderState::None => {
+            spawn(async move {
+                app_state.write().signed_in.set_loading();
+
+                match crate::api::get_me().await {
+                    Ok(me) => {
+                        // A token the server will not accept is a token worth throwing away, or every
+                        // later request carries it and is refused all over again.
+                        if me.is_none() {
+                            crate::web::storage::clear_session_token();
+                        }
+
+                        app_state.write().signed_in.set_loaded(me);
+                    }
+                    // A transport failure is not "signed out", but the login screen is the only thing
+                    // this shell has to offer either way — so it is logged, where the real problem is
+                    // findable, and then treated as nobody.
+                    Err(err) => {
+                        crate::web::console_log(format!("/me failed: {err}").as_str());
+                        app_state.write().signed_in.set_loaded(None);
+                    }
+                }
+            });
+
+            Err(render_loading())
+        }
+        RenderState::Loading => Err(render_loading()),
+        RenderState::Loaded(me) => Ok(me.as_ref()),
+        // Not reachable — a failed `/me` is stored as "nobody" above — but if that ever changes, the
+        // login screen is still the only useful thing to put in front of somebody.
+        RenderState::Error(_) => Err(rsx! {
+            crate::views::login::RenderLogin {}
+        }),
+    }
+}
+
+/// The whole-window spinner the shell shows while `/me` is out. Not the in-page one: there is no page yet.
+fn render_loading() -> Element {
+    rsx! {
+        div { class: "full-screen",
+            div { class: "loading-note", "Loading…" }
         }
     }
 }

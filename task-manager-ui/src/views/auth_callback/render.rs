@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_utils::{DataState, RenderState};
 
 use crate::AppRoute;
 
@@ -13,62 +14,110 @@ use crate::AppRoute;
 /// "Google did not return a sign-in" — see the route declaration in `main.rs`.
 #[component]
 pub fn RenderAuthCallback(code: String, state: String, error: String) -> Element {
-    let mut failure = use_signal(String::new);
+    let cs = use_signal(ComponentState::default);
+    let cs_ra = cs.read();
 
-    use_future(move || {
-        // Taken verbatim. The router has already percent-decoded the query by the time these reach a
-        // prop, so there is nothing left here to undo — see `callback_value`.
-        let code = callback_value(&code);
-        let state = callback_value(&state);
-        let error = callback_value(&error);
+    // Nothing is rendered out of the exchange — it ends in a redirect — so the only branch that draws
+    // anything is the failing one.
+    let Err(element) = exchange_the_code(cs, &cs_ra, &code, &state, &error) else {
+        return render_signing_in();
+    };
 
-        async move {
-            // Google's own refusal, and the ordinary case of it is somebody pressing Cancel on the
-            // consent screen. Reported as itself rather than as a fault: there is nothing to retry
-            // differently, and "something went wrong" would be a lie about a deliberate choice.
-            if !error.is_empty() {
-                failure.set(if error == "access_denied" {
-                    "Sign-in was cancelled.".to_string()
-                } else {
-                    format!("Google refused the sign-in: {error}")
-                });
-                return;
-            }
+    element
+}
 
-            if code.is_empty() || state.is_empty() {
-                failure.set("Google did not return a sign-in to complete.".to_string());
-                return;
-            }
+/// One struct, one signal. The exchange is a request whose whole visible result is which of the two
+/// screens below is drawn, so it is a `DataState` like any other — `Loaded(())` only ever flashes past
+/// on the way to Home.
+#[derive(Default)]
+struct ComponentState {
+    exchange: DataState<()>,
+}
 
-            match crate::api::finish_google_login(&code, &state).await {
-                Ok(response) => {
-                    crate::web::storage::save_session_token(&response.token);
-                    replace_url_with_root();
-                    navigator().push(AppRoute::Home { search: None });
+/// Trade the code for a session token, once.
+///
+/// `Ok(())` means there is nothing to draw beyond "Signing in…" — the navigation has already been asked
+/// for. `Err` carries the screen to show instead.
+fn exchange_the_code(
+    mut cs: Signal<ComponentState>,
+    cs_ra: &ComponentState,
+    code: &str,
+    state: &str,
+    error: &str,
+) -> Result<(), Element> {
+    match cs_ra.exchange.as_ref() {
+        RenderState::None => {
+            // Taken verbatim. The router has already percent-decoded the query by the time these reach
+            // a prop, so there is nothing left here to undo — see `callback_value`.
+            let code = callback_value(code);
+            let state = callback_value(state);
+            let error = callback_value(error);
+
+            spawn(async move {
+                cs.write().exchange.set_loading();
+
+                // Google's own refusal, and the ordinary case of it is somebody pressing Cancel on the
+                // consent screen. Reported as itself rather than as a fault: there is nothing to retry
+                // differently, and "something went wrong" would be a lie about a deliberate choice.
+                if !error.is_empty() {
+                    let message = if error == "access_denied" {
+                        "Sign-in was cancelled.".to_string()
+                    } else {
+                        format!("Google refused the sign-in: {error}")
+                    };
+
+                    cs.write().exchange.set_error(message);
+                    return;
                 }
-                Err(err) => failure.set(err.message),
-            }
+
+                if code.is_empty() || state.is_empty() {
+                    cs.write()
+                        .exchange
+                        .set_error("Google did not return a sign-in to complete.".to_string());
+                    return;
+                }
+
+                match crate::api::finish_google_login(&code, &state).await {
+                    Ok(response) => {
+                        crate::web::storage::save_session_token(&response.token);
+                        replace_url_with_root();
+                        navigator().push(AppRoute::Home { search: None });
+                        cs.write().exchange.set_loaded(());
+                    }
+                    Err(err) => cs.write().exchange.set_error(err.message),
+                }
+            });
+
+            Ok(())
         }
-    });
+        RenderState::Loading | RenderState::Loaded(()) => Ok(()),
+        RenderState::Error(err) => Err(render_failure(err)),
+    }
+}
 
-    let failure_text = failure.read().clone();
-
+fn render_signing_in() -> Element {
     rsx! {
         div { class: "full-screen",
             div { class: "full-screen-form",
-                if failure_text.is_empty() {
-                    div { class: "loading-note", "Signing in…" }
-                } else {
-                    h1 { class: "login-title", "Could not sign in" }
-                    div { class: "error-banner", "{failure_text}" }
-                    button {
-                        class: "btn btn-primary btn-google",
-                        onclick: move |_| {
-                            replace_url_with_root();
-                            navigator().push(AppRoute::Home { search: None });
-                        },
-                        "Try again"
-                    }
+                div { class: "loading-note", "Signing in…" }
+            }
+        }
+    }
+}
+
+fn render_failure(message: &str) -> Element {
+    rsx! {
+        div { class: "full-screen",
+            div { class: "full-screen-form",
+                h1 { class: "login-title", "Could not sign in" }
+                div { class: "error-banner", "{message}" }
+                button {
+                    class: "btn btn-primary btn-google",
+                    onclick: move |_| {
+                        replace_url_with_root();
+                        navigator().push(AppRoute::Home { search: None });
+                    },
+                    "Try again"
                 }
             }
         }

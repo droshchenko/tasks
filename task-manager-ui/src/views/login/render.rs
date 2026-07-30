@@ -5,26 +5,23 @@ use dioxus::prelude::*;
 /// There is nothing to type — no password lives here, and the address is whatever Google says it is.
 #[component]
 pub fn RenderLogin() -> Element {
-    let mut error = use_signal(String::new);
-    let mut going = use_signal(|| false);
+    let mut cs = use_signal(ComponentState::default);
+    let cs_ra = cs.read();
 
     let start_login = move |_| {
-        going.set(true);
-        error.set(String::new());
+        cs.write().begin();
 
         spawn(async move {
             match crate::api::get_google_auth_url().await {
+                // Nothing to store: the answer is somewhere to go, and the browser leaves this page.
                 Ok(response) => crate::web::navigate_to(response.url.as_str()),
-                Err(err) => {
-                    going.set(false);
-                    error.set(err.message);
-                }
+                Err(err) => cs.write().fail(err.message),
             }
         });
     };
 
-    let error_text = error.read().clone();
-    let is_going = *going.read();
+    let error_text = cs_ra.error.as_str();
+    let is_going = cs_ra.going;
 
     rsx! {
         div { class: "full-screen",
@@ -50,5 +47,25 @@ pub fn RenderLogin() -> Element {
                 }
             }
         }
+    }
+}
+
+/// One struct, one signal. No `DataState`: the request here is an action rather than something to show —
+/// its success is that the browser leaves for Google, so there is no loaded value this screen ever draws.
+#[derive(Default)]
+struct ComponentState {
+    going: bool,
+    error: String,
+}
+
+impl ComponentState {
+    fn begin(&mut self) {
+        self.going = true;
+        self.error = String::new();
+    }
+
+    fn fail(&mut self, message: String) {
+        self.going = false;
+        self.error = message;
     }
 }

@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus_utils::{DataState, RenderState};
 use task_manager_shared::users::UserResponse;
 
 /// The roster.
@@ -8,68 +9,37 @@ use task_manager_shared::users::UserResponse;
 /// comment author points at it, so a changed address is a new person rather than a rename.
 #[component]
 pub fn RenderUsers() -> Element {
-    let mut users = use_signal(Vec::<UserResponse>::new);
-    let mut allowed = use_signal(|| true);
-    let mut loading = use_signal(|| true);
-    let mut error = use_signal(String::new);
-    let mut revision = use_signal(|| 0_u32);
+    let mut cs = use_signal(ComponentState::default);
+    let cs_ra = cs.read();
 
-    // `use_resource`, not `use_future`: the latter spawns once and tracks nothing, so bumping `revision`
-    // after a write refreshed nothing at all.
-    use_resource(move || {
-        let _revision = *revision.read();
+    let roster = match get_roster(cs, &cs_ra) {
+        Ok(roster) => roster,
+        Err(element) => return element,
+    };
 
-        async move {
-            match crate::api::get_users().await {
-                Ok(Some(response)) => {
-                    users.set(response.users);
-                    allowed.set(true);
-                    loading.set(false);
-                }
-                Ok(None) => {
-                    allowed.set(false);
-                    loading.set(false);
-                }
-                Err(err) => {
-                    error.set(err.message);
-                    loading.set(false);
-                }
-            }
-        }
-    });
-
-    if *loading.read() {
-        return rsx! {
-            div { class: "loading-note", "Loading…" }
-        };
-    }
-
-    if !*allowed.read() {
+    // Not an admin. The endpoint answers that rather than failing, so it is a shape of the data and not
+    // an error banner.
+    let Some(users) = roster else {
         return rsx! {
             div { class: "page-header",
                 h1 { class: "page-title", "Users" }
             }
             div { class: "empty-note", "Admins only." }
         };
-    }
-
-    let users_ra = users.read().clone();
-    let error_text = error.read().clone();
+    };
 
     rsx! {
         div { class: "page-header",
             h1 { class: "page-title", "Users" }
         }
 
-        if !error_text.is_empty() {
-            div { class: "error-banner", "{error_text}" }
-        }
-
-        RenderCreateUser { on_saved: move |_| revision += 1 }
+        // Saving anything re-reads. `reset()` puts the `DataState` back to `None` and the next render
+        // loads — the server is the only thing that says what was actually stored.
+        RenderCreateUser { on_saved: move |_| cs.write().roster.reset() }
 
         div { class: "card",
             div { class: "card-title", "Roster" }
-            if users_ra.is_empty() {
+            if users.is_empty() {
                 div { class: "empty-note", "Nobody yet." }
             } else {
                 div { class: "table-responsive",
@@ -84,11 +54,11 @@ pub fn RenderUsers() -> Element {
                             }
                         }
                         tbody {
-                            for user in users_ra.iter() {
+                            for user in users.iter() {
                                 RenderUserRow {
                                     key: "{user.email}",
                                     user: user.clone(),
-                                    on_saved: move |_| revision += 1,
+                                    on_saved: move |_| cs.write().roster.reset(),
                                 }
                             }
                         }
@@ -99,40 +69,122 @@ pub fn RenderUsers() -> Element {
     }
 }
 
+/// Everything this screen holds, in one struct behind one signal.
+///
+/// `Option` inside the `DataState` because "not an admin" is an answer the endpoint gives on purpose —
+/// see [`get_roster`].
+#[derive(Default)]
+struct ComponentState {
+    roster: DataState<Option<Vec<UserResponse>>>,
+}
+
+/// The roster, loading it on first render.
+///
+/// `Err` carries what to show instead — the spinner or the failure — so the caller stays a straight line.
+/// `Ok(None)` from the endpoint is carried through as loaded data rather than folded into an error: an
+/// admin-only screen saying "Admins only" is working correctly, not failing.
+fn get_roster(
+    mut cs: Signal<ComponentState>,
+    cs_ra: &ComponentState,
+) -> Result<Option<&[UserResponse]>, Element> {
+    match cs_ra.roster.as_ref() {
+        RenderState::None => {
+            spawn(async move {
+                cs.write().roster.set_loading();
+
+                match crate::api::get_users().await {
+                    Ok(response) => cs.write().roster.set_loaded(response.map(|itm| itm.users)),
+                    Err(err) => cs.write().roster.set_error(err.message),
+                }
+            });
+
+            Err(render_loading())
+        }
+        RenderState::Loading => Err(render_loading()),
+        RenderState::Loaded(roster) => Ok(roster.as_deref()),
+        RenderState::Error(err) => Err(render_error(err)),
+    }
+}
+
+fn render_loading() -> Element {
+    rsx! {
+        div { class: "loading-note", "Loading…" }
+    }
+}
+
+fn render_error(message: &str) -> Element {
+    rsx! {
+        div { class: "page-header",
+            h1 { class: "page-title", "Users" }
+        }
+        div { class: "error-banner", "{message}" }
+    }
+}
+
+/// The add-someone form. A write, so no `DataState` — what it holds is what is being typed and how the
+/// last submit went.
+#[derive(Default)]
+struct CreateUserState {
+    email: String,
+    name: String,
+    admin: bool,
+    error: String,
+    saving: bool,
+}
+
+impl CreateUserState {
+    fn can_save(&self) -> bool {
+        self.email.contains('@') && !self.saving
+    }
+
+    fn begin_save(&mut self) {
+        self.saving = true;
+        self.error = String::new();
+    }
+
+    fn fail(&mut self, message: String) {
+        self.saving = false;
+        self.error = message;
+    }
+}
+
 #[component]
 fn RenderCreateUser(on_saved: EventHandler<()>) -> Element {
-    let mut email = use_signal(String::new);
-    let mut name = use_signal(String::new);
-    let mut admin = use_signal(|| false);
-    let mut error = use_signal(String::new);
+    let mut cs = use_signal(CreateUserState::default);
+    let cs_ra = cs.read();
 
     let submit = move |_| {
-        let (email_value, name_value, admin_value) =
-            (email.read().clone(), name.read().clone(), *admin.read());
+        let (email, name, admin) = {
+            let ra = cs.read();
+            (ra.email.clone(), ra.name.clone(), ra.admin)
+        };
 
-        error.set(String::new());
+        cs.write().begin_save();
 
         spawn(async move {
-            match crate::api::create_user(&email_value, &name_value, admin_value).await {
+            match crate::api::create_user(&email, &name, admin).await {
+                // Emptied back to a blank form: the row that was just added is now in the table below,
+                // and leaving it in the inputs invites adding it twice.
                 Ok(()) => {
-                    email.set(String::new());
-                    name.set(String::new());
-                    admin.set(false);
+                    cs.set(CreateUserState::default());
                     on_saved.call(());
                 }
-                Err(err) => error.set(err.message),
+                Err(err) => cs.write().fail(err.message),
             }
         });
     };
 
-    let error_text = error.read().clone();
-    let can_save = email.read().contains('@');
+    let email = cs_ra.email.as_str();
+    let name = cs_ra.name.as_str();
+    let admin = cs_ra.admin;
+    let error = cs_ra.error.as_str();
+    let can_save = cs_ra.can_save();
 
     rsx! {
         div { class: "card",
             div { class: "card-title", "Add someone" }
-            if !error_text.is_empty() {
-                div { class: "error-banner", "{error_text}" }
+            if !error.is_empty() {
+                div { class: "error-banner", "{error}" }
             }
             div { class: "form-row-inline",
                 div { class: "form-row", style: "flex: 1 1 240px",
@@ -140,7 +192,7 @@ fn RenderCreateUser(on_saved: EventHandler<()>) -> Element {
                     input {
                         r#type: "text",
                         value: "{email}",
-                        oninput: move |event| email.set(event.value().to_lowercase()),
+                        oninput: move |event| cs.write().email = event.value().to_lowercase(),
                     }
                 }
                 div { class: "form-row", style: "flex: 1 1 180px",
@@ -148,15 +200,15 @@ fn RenderCreateUser(on_saved: EventHandler<()>) -> Element {
                     input {
                         r#type: "text",
                         value: "{name}",
-                        oninput: move |event| name.set(event.value()),
+                        oninput: move |event| cs.write().name = event.value(),
                     }
                 }
                 div { class: "checkbox-row",
                     input {
                         r#type: "checkbox",
                         id: "new-user-admin",
-                        checked: *admin.read(),
-                        onchange: move |event| admin.set(event.checked()),
+                        checked: admin,
+                        onchange: move |event| cs.write().admin = event.checked(),
                     }
                     label { r#for: "new-user-admin", "Admin" }
                 }
@@ -174,21 +226,46 @@ fn RenderCreateUser(on_saved: EventHandler<()>) -> Element {
     }
 }
 
+/// One editable row. Also a write, so also no `DataState`.
+struct UserRowState {
+    name: String,
+    admin: bool,
+    disabled: bool,
+    saving: bool,
+}
+
+impl UserRowState {
+    fn new(user: &UserResponse) -> Self {
+        Self {
+            name: user.name.clone(),
+            admin: user.admin,
+            disabled: user.disabled,
+            saving: false,
+        }
+    }
+}
+
 #[component]
 fn RenderUserRow(user: UserResponse, on_saved: EventHandler<()>) -> Element {
-    let mut name = use_signal(|| user.name.clone());
-    let mut admin = use_signal(|| user.admin);
-    let mut disabled = use_signal(|| user.disabled);
+    let mut cs = use_signal(|| UserRowState::new(&user));
+    let cs_ra = cs.read();
 
     let email = user.email.clone();
 
     let save = move |_| {
         let email = email.clone();
-        let (name_value, admin_value, disabled_value) =
-            (name.read().clone(), *admin.read(), *disabled.read());
+
+        let (name, admin, disabled) = {
+            let ra = cs.read();
+            (ra.name.clone(), ra.admin, ra.disabled)
+        };
+
+        cs.write().saving = true;
 
         spawn(async move {
-            let _ = crate::api::update_user(&email, &name_value, admin_value, disabled_value).await;
+            let _ = crate::api::update_user(&email, &name, admin, disabled).await;
+
+            cs.write().saving = false;
             on_saved.call(());
         });
     };
@@ -197,6 +274,11 @@ fn RenderUserRow(user: UserResponse, on_saved: EventHandler<()>) -> Element {
     // worse than showing none, so it reads as granted-elsewhere instead.
     let admin_from_settings = user.admin_from_settings;
 
+    let name = cs_ra.name.as_str();
+    let admin = cs_ra.admin;
+    let disabled = cs_ra.disabled;
+    let saving = cs_ra.saving;
+
     rsx! {
         tr {
             td { class: "mono", "{user.email}" }
@@ -204,7 +286,7 @@ fn RenderUserRow(user: UserResponse, on_saved: EventHandler<()>) -> Element {
                 input {
                     r#type: "text",
                     value: "{name}",
-                    oninput: move |event| name.set(event.value()),
+                    oninput: move |event| cs.write().name = event.value(),
                 }
             }
             td {
@@ -213,20 +295,25 @@ fn RenderUserRow(user: UserResponse, on_saved: EventHandler<()>) -> Element {
                 } else {
                     input {
                         r#type: "checkbox",
-                        checked: *admin.read(),
-                        onchange: move |event| admin.set(event.checked()),
+                        checked: admin,
+                        onchange: move |event| cs.write().admin = event.checked(),
                     }
                 }
             }
             td {
                 input {
                     r#type: "checkbox",
-                    checked: *disabled.read(),
-                    onchange: move |event| disabled.set(event.checked()),
+                    checked: disabled,
+                    onchange: move |event| cs.write().disabled = event.checked(),
                 }
             }
             td {
-                button { class: "btn btn-sm", onclick: save, "Save" }
+                button {
+                    class: "btn btn-sm",
+                    disabled: saving,
+                    onclick: save,
+                    "Save"
+                }
             }
         }
     }

@@ -130,7 +130,13 @@ pub fn RenderGoals() -> Element {
     let current = current.clone();
     let expanded = cs_ra.expanded.clone();
     let picking_color = cs_ra.picking_color.clone();
-    let goal_tasks = cs_ra.goal_tasks.clone();
+    // Copied out rather than cloned: the map holds `DataState`s, which do not clone, and what a child
+    // needs is the three-way answer rather than the loader's own state.
+    let goal_tasks: HashMap<String, GoalTasks> = cs_ra
+        .goal_tasks
+        .iter()
+        .map(|(id, state)| (id.clone(), GoalTasks::of(state)))
+        .collect();
     drop(cs_ra);
 
     rsx! {
@@ -171,15 +177,28 @@ pub fn RenderGoals() -> Element {
     }
 }
 
-/// The work under one expanded goal, in the three states it can be in.
+/// The work under one expanded goal, in the three states it can be in — the PROP form of the `DataState`
+/// the component state holds.
 ///
-/// Not a `DataState`: that is neither `Clone` nor `PartialEq`, and a component prop has to be both. Three
-/// variants rather than an `Option<Result<..>>` so the render below reads as what it is.
+/// It exists only because `DataState` is neither `Clone` nor `PartialEq` and a component prop has to be
+/// both. The request itself goes through the `DataState` like every other one; this is what gets copied
+/// out of it on the way into the child.
 #[derive(Clone, PartialEq)]
 enum GoalTasks {
     Loading,
     Loaded(Vec<TaskResponse>),
     Failed(String),
+}
+
+impl GoalTasks {
+    /// `None` and `Loading` are the same thing to a reader — an entry exists, so a request is on its way.
+    fn of(state: &DataState<Vec<TaskResponse>>) -> Self {
+        match state.as_ref() {
+            RenderState::None | RenderState::Loading => Self::Loading,
+            RenderState::Loaded(tasks) => Self::Loaded(tasks.clone()),
+            RenderState::Error(err) => Self::Failed(err.clone()),
+        }
+    }
 }
 
 /// The key the Backlog group is remembered under. Not a goal id — no goal can be called this, because a
@@ -195,8 +214,9 @@ struct ComponentState {
     /// Which groups are open. Kept across a repaint, so a push does not fold up what somebody was reading.
     expanded: Vec<String>,
     /// Goal id -> its whole task list, archived work included. Filled when a goal is first expanded and
-    /// dropped on every push, since a snapshot cannot carry archived work.
-    goal_tasks: HashMap<String, GoalTasks>,
+    /// dropped on every push, since a snapshot cannot carry archived work. A `DataState` per goal, like
+    /// every other request on this screen — [`GoalTasks`] is only the shape it takes as a prop.
+    goal_tasks: HashMap<String, DataState<Vec<TaskResponse>>>,
     /// Which goal's palette is open, if any. One at a time: two open palettes ask a question nobody asked.
     picking_color: Option<String>,
 }
@@ -423,16 +443,19 @@ fn RenderGoal(
                     spawn(async move {
                         cs.write()
                             .goal_tasks
-                            .insert(goal_id.clone(), GoalTasks::Loading);
+                            .entry(goal_id.clone())
+                            .or_default()
+                            .set_loading();
 
                         let loaded = crate::api::get_goal_tasks(&project_id, &goal_id).await;
 
-                        let state = match loaded {
-                            Ok(response) => GoalTasks::Loaded(response.tasks),
-                            Err(err) => GoalTasks::Failed(err.message),
-                        };
+                        let mut write = cs.write();
+                        let state = write.goal_tasks.entry(goal_id).or_default();
 
-                        cs.write().goal_tasks.insert(goal_id, state);
+                        match loaded {
+                            Ok(response) => state.set_loaded(response.tasks),
+                            Err(err) => state.set_error(err.message),
+                        }
                     });
                 },
 

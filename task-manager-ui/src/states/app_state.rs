@@ -1,21 +1,18 @@
+use dioxus_utils::DataState;
 use task_manager_shared::auth::MeResponse;
 use task_manager_shared::ws::BoardSnapshot;
 
-/// Where the shell is in working out whether anybody is signed in.
-///
-/// Three states rather than an `Option`, because "we have not asked yet" and "we asked and nobody is"
-/// have to look different: the first shows a spinner, the second shows the login screen. Collapsing
-/// them flashes the login form on every page load.
-#[derive(Clone, PartialEq)]
-pub enum SignedIn {
-    Unknown,
-    No,
-    Yes(MeResponse),
-}
-
-#[derive(Clone, PartialEq)]
+/// Not `Clone` and not `PartialEq`, because `signed_in` is a `DataState` and that is neither. Nothing
+/// ever cloned or compared the whole struct — the fields that are read are read one at a time — so the
+/// derives were only ever holding the state machine below in a hand-rolled shape.
 pub struct AppState {
-    pub signed_in: SignedIn,
+    /// Who is signed in, as `/me` answered. The three render states are exactly the three things the
+    /// shell can show — a spinner, the login screen, the product — which is why this is a `DataState`
+    /// rather than a bespoke enum: "not asked yet" is `None`, and "asked, nobody is" is `Loaded(None)`.
+    ///
+    /// `Option` inside, because a signed-out browser is an ANSWER and not a failure: the endpoint says so
+    /// deliberately, and collapsing it into `Error` would report a working sign-out as a fault.
+    pub signed_in: DataState<Option<MeResponse>>,
     /// True once the WebSocket task has been spawned, so a re-render does not open a second one.
     pub ws_started: bool,
     /// Bumped by the WebSocket on every push about the open board. Views watch it, which is what makes two
@@ -33,7 +30,7 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            signed_in: SignedIn::Unknown,
+            signed_in: DataState::new(),
             ws_started: false,
             board_revision: 0,
             board_push: None,
@@ -42,11 +39,11 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Whoever is signed in — `None` while `/me` is still out, and `None` when it came back with nobody.
+    /// The two are told apart by the shell, which is the only place that has anything different to do
+    /// about them; everywhere else the question is only "have I got a user".
     pub fn me(&self) -> Option<&MeResponse> {
-        match &self.signed_in {
-            SignedIn::Yes(me) => Some(me),
-            SignedIn::Unknown | SignedIn::No => None,
-        }
+        self.signed_in.try_unwrap_as_loaded()?.as_ref()
     }
 
     pub fn is_admin(&self) -> bool {
