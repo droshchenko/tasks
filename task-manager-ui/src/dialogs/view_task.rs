@@ -112,6 +112,19 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
         .or_else(|| task.assignee.clone())
         .unwrap_or_else(|| "Unassigned".to_string());
 
+    // The goal's colour travels with the task, unlike the type's — so this band is right wherever the task
+    // was looked up from, including a project that is not the one on screen.
+    let goal_hex =
+        task_manager_shared::kind_color::KindColor::parse_or_default(
+            task.goal_color.as_deref().unwrap_or_default(),
+        )
+        .hex();
+
+    let goal_title = task
+        .goal_name
+        .clone()
+        .unwrap_or_else(|| "Goal".to_string());
+
     rsx! {
         div { class: "task-view-attrs",
             div { class: "task-view-attr",
@@ -144,17 +157,15 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                 div { "{found.project_prefix} · {found.project_name}" }
             }
 
-            // The handle beside the name: the name is what a person reads, and the handle is what they type
-            // back into the search box or into a conversation with an agent.
+            // Drawn as the band the board draws, in the goal's own colour, so "which epic is this part of"
+            // is answered the same way on both screens. The handle beside the name: the name is what a
+            // person reads, the handle is what they type back into the search box or to an agent.
             if let Some(goal) = task.goal.as_ref() {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Goal" }
-                    div {
-                        if let Some(name) = task.goal_name.as_ref() {
-                            "{name} · {goal}"
-                        } else {
-                            "{goal}"
-                        }
+                    div { class: "task-view-goal", style: "background: {goal_hex}",
+                        span { class: "task-view-goal-id", "{goal}" }
+                        span { "{goal_title}" }
                     }
                 }
             }

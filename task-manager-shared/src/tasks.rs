@@ -54,6 +54,9 @@ pub struct TaskResponse {
     // no goal, which reads the same way on purpose: such a task is standalone rather than dangling.
     pub goal: Option<String>,
     pub goal_name: Option<String>,
+    // The goal's palette colour, so the board can mark the card with it without joining a goal list. Absent
+    // exactly when `goal` is.
+    pub goal_color: Option<String>,
     pub assignee: Option<String>,
     // The assignee's display name, resolved from the roster. Absent when the assignee is `claude`
     // or an email with no user row — Home then shows the raw assignee value.

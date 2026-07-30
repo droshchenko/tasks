@@ -143,6 +143,10 @@ pub struct GoalView {
     #[property(description = "What it is about, as Markdown")]
     pub description: String,
     #[property(
+        description = "The palette colour the board marks this goal's work with. Visual only — but worth reading before colouring a new goal, so two goals on one board are not the same colour"
+    )]
+    pub color: String,
+    #[property(
         description = "`todo` while the goal is open, `done` once it is closed. Derived from whether it has been closed, so it cannot disagree with `closed_unix_seconds` — a goal has these two states and nothing in between in this version"
     )]
     pub status: String,
@@ -175,6 +179,7 @@ impl GoalView {
             project: project.prefix.clone(),
             name: goal.name.clone(),
             description: goal.description.clone(),
+            color: rust_extensions::AsStr::as_str(&goal.color).to_string(),
             status: goal.status().to_string(),
             tasks_amount: tasks_amount as i32,
             done_amount: done_amount as i32,

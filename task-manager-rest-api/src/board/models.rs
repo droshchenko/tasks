@@ -176,6 +176,9 @@ pub struct GoalModel {
     pub number: i64,
     pub name: String,
     pub description: String,
+    // Visual only, and from the same palette task types use: a goal is recognised on a board by its
+    // colour before anybody reads the strip, and a second palette would break that at a glance.
+    pub color: KindColor,
     // The discussion the work came out of. Same shape as a task's thread and the same reason it rides on
     // the row: one atomic write per comment.
     pub comments: Vec<CommentModel>,

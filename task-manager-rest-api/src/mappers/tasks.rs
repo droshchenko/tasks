@@ -105,6 +105,9 @@ pub fn task_to_response(
             .as_ref()
             .map(|itm| crate::board::compose_goal_handle(&project.prefix, itm.number)),
         goal_name: goal.as_ref().map(|itm| itm.name.clone()),
+        goal_color: goal
+            .as_ref()
+            .map(|itm| rust_extensions::AsStr::as_str(&itm.color).to_string()),
         assignee: task.assignee.clone(),
         assignee_name,
         labels: task.labels.clone(),

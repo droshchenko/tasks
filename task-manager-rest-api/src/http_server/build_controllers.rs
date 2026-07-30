@@ -45,6 +45,7 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
 
     http_server_builder.register_post_action(goals::ListGoalsAction::new(app.clone()));
     http_server_builder.register_post_action(goals::ListGoalTasksAction::new(app.clone()));
+    http_server_builder.register_post_action(goals::SetGoalColorAction::new(app.clone()));
     http_server_builder.register_post_action(tasks::ListTasksAction::new(app.clone()));
     http_server_builder.register_post_action(tasks::FindTaskAction::new(app.clone()));
 

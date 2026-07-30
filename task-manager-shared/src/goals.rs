@@ -25,6 +25,9 @@ pub struct GoalResponse {
     pub project_id: String,
     pub name: String,
     pub description: String,
+    // A palette name — `task_manager_shared::kind_color::KindColor` on the wire, read back with
+    // `parse_or_default`. Purely visual: it is how a goal is recognised on the board without reading.
+    pub color: String,
     pub status: String,
     pub tasks_amount: i32,
     pub done_amount: i32,
@@ -64,4 +67,19 @@ pub struct GetGoalTasksInputModel {
     pub project_id: String,
     #[http_body(name: "goal", description: "Which goal, by id — RMS-G7 — or by its bare number")]
     pub goal: String,
+}
+
+// Recolour one goal.
+//
+// The one write the browser makes about a goal, and it is deliberate rather than a crack in the rule that
+// every change to the board arrives through MCP: a colour is presentation, not state — the same reason a
+// task type's colour is picked in Settings with a mouse.
+#[derive(MyHttpInput)]
+pub struct SetGoalColorInputModel {
+    #[http_body(name: "projectId", description: "Which project the goal is on")]
+    pub project_id: String,
+    #[http_body(name: "goal", description: "Which goal, by id — RMS-G7 — or by its bare number")]
+    pub goal: String,
+    #[http_body(name: "color", description: "A palette colour name, e.g. blue")]
+    pub color: String,
 }

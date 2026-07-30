@@ -182,3 +182,63 @@
   color: var(--text-muted);
   flex-shrink: 0;
 }
+
+/* The colour swatch in a goal's head, and the palette it opens.
+   A button rather than a dropdown: the thing being chosen is a colour, so the control shows colours. */
+.goal-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(9, 30, 66, 0.2);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.goal-palette {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  background: var(--surface-2);
+}
+
+/* The type on a task line: the same tag the board draws on a card, so one shape means one thing across the
+   product. */
+.goal-task-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
+
+.goal-task-comments {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Fixed width so the statuses to their right line up down the list instead of stepping in and out with the
+   length of a name. */
+.goal-task-assignee {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 150px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goal-task-assignee.unassigned {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.goal-task-status {
+  width: 110px;
+  text-align: right;
+}

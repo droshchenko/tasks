@@ -670,15 +670,35 @@ input[type="text"].board-search {
   opacity: 1;
 }
 
-/* The goal a card belongs to, above its title — the context the title is read in. Small and quiet: it is
-   the same value on every card of that goal, so it must not compete with the thing that differs. */
+/* The goal a card belongs to: a band across the top of the card in the goal's own colour. Loud on purpose,
+   unlike the rest of a sticker — a column of bands says how the work divides between epics before a single
+   title has been read, which is the whole reason a goal has a colour.
+
+   Pulled out to the card's edges with negative margins that mirror `.sticker`'s padding, so it reads as a
+   header of the card rather than as a chip inside it. */
 .sticker-goal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -10px -11px 8px -11px;
+  padding: 3px 11px;
+  border-radius: var(--radius) var(--radius) 0 0;
   font-size: 11px;
-  color: var(--text-muted);
+  color: #fff;
+  /* White on amber is unreadable; a dark shadow behind the glyphs costs nothing and works on all eight. */
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+
+.sticker-goal-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.sticker-goal-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 2px;
 }
 
 .full-screen {
@@ -1091,6 +1111,25 @@ input[type="text"].board-search {
   margin-bottom: 2px;
 }
 
+/* The goal band in the task dialog, drawn as the board draws it — same shape, same colour, so the two
+   screens are recognisably talking about the same goal. */
+.task-view-goal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius);
+  padding: 2px 8px;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+  max-width: 100%;
+}
+
+.task-view-goal-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
 /* The Goals screen: the same work as the board, grouped by the epic it belongs to.
    Rows rather than cards on purpose — what this screen is for is the shape of a goal, and twenty cards per
    goal would bury it. */
@@ -1274,5 +1313,65 @@ input[type="text"].board-search {
   font-size: 11px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+/* The colour swatch in a goal's head, and the palette it opens.
+   A button rather than a dropdown: the thing being chosen is a colour, so the control shows colours. */
+.goal-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(9, 30, 66, 0.2);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.goal-palette {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  background: var(--surface-2);
+}
+
+/* The type on a task line: the same tag the board draws on a card, so one shape means one thing across the
+   product. */
+.goal-task-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
+
+.goal-task-comments {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Fixed width so the statuses to their right line up down the list instead of stepping in and out with the
+   length of a name. */
+.goal-task-assignee {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 150px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goal-task-assignee.unassigned {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.goal-task-status {
+  width: 110px;
+  text-align: right;
 }
 

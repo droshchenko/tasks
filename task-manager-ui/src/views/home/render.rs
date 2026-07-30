@@ -779,6 +779,15 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
         .or_else(|| task.assignee.clone())
         .unwrap_or_else(|| "Unassigned".to_string());
 
+    // Unknown colour falls back to the default swatch rather than to nothing, so a goal coloured by a build
+    // that knew one more swatch still draws a band.
+    let goal_hex = KindColor::parse_or_default(task.goal_color.as_deref().unwrap_or_default()).hex();
+
+    let goal_title = task
+        .goal_name
+        .clone()
+        .unwrap_or_else(|| "Goal".to_string());
+
     // Built here rather than fetched: this side already holds the whole task and the project it is on, so
     // the card opens instantly and without a round trip. `archived` is false by definition — a card that is
     // drawn is on the board.
@@ -825,14 +834,16 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
                 }
             }
 
-            // Above the title, because a goal is the context the title is read in: "add the retry" means
-            // something different under "Ship billing" than on its own. Only the name — the handle is in the
-            // dialog, and a card is a thing you scan rather than read.
-            if let Some(goal_name) = task.goal_name.as_ref() {
+            // The goal's own band across the top of the card, in the goal's colour: a column of cards then
+            // says which epics the work belongs to before a single title has been read, which is the whole
+            // reason a goal has a colour at all. Id and title both — the title is what a person reads, the
+            // id is what they type back into the search box or into a conversation with an agent.
+            if let Some(goal) = task.goal.as_ref() {
                 div {
                     class: "sticker-goal",
-                    title: "Part of {task.goal.clone().unwrap_or_default()}",
-                    "{goal_name}"
+                    style: "background: {goal_hex}",
+                    span { class: "sticker-goal-id", "{goal}" }
+                    span { class: "sticker-goal-name", "{goal_title}" }
                 }
             }
 
@@ -891,6 +902,7 @@ mod tests {
             kind: None,
             goal: None,
             goal_name: None,
+            goal_color: None,
             assignee: assignee.map(|itm| itm.to_string()),
             assignee_name: None,
             labels: labels.iter().map(|itm| itm.to_string()).collect(),

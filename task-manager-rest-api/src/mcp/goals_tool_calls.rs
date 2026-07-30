@@ -103,6 +103,10 @@ pub struct GoalsCreateInput {
         description = "What the goal is about, as Markdown. Where the shape of it goes: what is in scope, what is not, what it depends on. The reasoning as it develops belongs on the thread instead, with goals_add_comment"
     )]
     pub description: Option<String>,
+    #[property(
+        description = "A palette colour: gray, red, orange, amber, green, teal, blue or purple. Purely visual — it is how the board marks which goal a card belongs to, so pick one that is not already in use on that project. Omit for gray; a person can also recolour it in the browser"
+    )]
+    pub color: Option<String>,
 }
 
 pub struct GoalsCreateHandler {
@@ -135,6 +139,7 @@ impl McpToolCall<GoalsCreateInput, GoalWriteResponse> for GoalsCreateHandler {
                 project_prefix: model.project,
                 name: model.name,
                 description: model.description.unwrap_or_default(),
+                color: model.color,
             },
         )
         .await?;
@@ -153,6 +158,10 @@ pub struct GoalsUpdateInput {
     pub name: Option<String>,
     #[property(description = "Rewrite what the goal is about, as Markdown. Omit to leave it alone")]
     pub description: Option<String>,
+    #[property(
+        description = "Recolour it: gray, red, orange, amber, green, teal, blue or purple. Visual only — the colour the board marks this goal's cards with. Omit to leave it alone"
+    )]
+    pub color: Option<String>,
     #[property(
         description = "Pass true to CLOSE the goal, which is only allowed once every one of its tasks is `done` and always requires `comment` — the resolution. Pass false to re-open a closed goal. Omit to leave its state alone"
     )]
@@ -201,6 +210,7 @@ impl McpToolCall<GoalsUpdateInput, GoalWriteResponse> for GoalsUpdateHandler {
             GoalPatch {
                 name: model.name,
                 description: model.description,
+                color: model.color,
                 close: model.close,
                 comment: model.comment,
                 comment_by: model.comment_by,

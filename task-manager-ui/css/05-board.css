@@ -256,13 +256,33 @@ input[type="text"].board-search {
   opacity: 1;
 }
 
-/* The goal a card belongs to, above its title — the context the title is read in. Small and quiet: it is
-   the same value on every card of that goal, so it must not compete with the thing that differs. */
+/* The goal a card belongs to: a band across the top of the card in the goal's own colour. Loud on purpose,
+   unlike the rest of a sticker — a column of bands says how the work divides between epics before a single
+   title has been read, which is the whole reason a goal has a colour.
+
+   Pulled out to the card's edges with negative margins that mirror `.sticker`'s padding, so it reads as a
+   header of the card rather than as a chip inside it. */
 .sticker-goal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -10px -11px 8px -11px;
+  padding: 3px 11px;
+  border-radius: var(--radius) var(--radius) 0 0;
   font-size: 11px;
-  color: var(--text-muted);
+  color: #fff;
+  /* White on amber is unreadable; a dark shadow behind the glyphs costs nothing and works on all eight. */
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+
+.sticker-goal-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.sticker-goal-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 2px;
 }

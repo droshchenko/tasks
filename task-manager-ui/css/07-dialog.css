@@ -370,3 +370,22 @@
   font-weight: 600;
   margin-bottom: 2px;
 }
+
+/* The goal band in the task dialog, drawn as the board draws it — same shape, same colour, so the two
+   screens are recognisably talking about the same goal. */
+.task-view-goal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius);
+  padding: 2px 8px;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+  max-width: 100%;
+}
+
+.task-view-goal-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.85;
+  flex-shrink: 0;
+}

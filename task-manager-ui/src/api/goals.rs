@@ -1,10 +1,12 @@
 use flurl::HttpVerb;
-use task_manager_shared::goals::{GetGoalTasksInputModel, GetGoalsInputModel, GoalsResponse};
+use task_manager_shared::goals::{
+    GetGoalTasksInputModel, GetGoalsInputModel, GoalsResponse, SetGoalColorInputModel,
+};
 use task_manager_shared::tasks::TasksResponse;
 
 use crate::models::RequestError;
 
-use super::{authed, handle_http_response};
+use super::{authed, handle_http_empty, handle_http_response};
 
 /// Read a project's goals.
 ///
@@ -32,4 +34,23 @@ pub async fn get_goal_tasks(project_id: &str, goal: &str) -> Result<TasksRespons
     };
 
     handle_http_response(authed("/api/goals/v1/tasks", HttpVerb::Post, request).await).await
+}
+
+/// Recolour a goal.
+///
+/// The one thing the browser writes about the board, and only because a colour is presentation rather than
+/// state — the same argument that puts a task type's colour behind a mouse. Everything else about a goal
+/// still arrives through `/mcp`.
+pub async fn set_goal_color(
+    project_id: &str,
+    goal: &str,
+    color: &str,
+) -> Result<(), RequestError> {
+    let request = SetGoalColorInputModel {
+        project_id: project_id.to_string(),
+        goal: goal.to_string(),
+        color: color.to_string(),
+    };
+
+    handle_http_empty(authed("/api/goals/v1/color", HttpVerb::Post, request).await).await
 }

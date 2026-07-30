@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 use dioxus_utils::{DataState, RenderState};
 use task_manager_shared::goals::GoalResponse;
-use task_manager_shared::projects::{COLUMN_ID_DONE, ProjectResponse};
+use task_manager_shared::kind_color::KindColor;
+use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO, ProjectResponse};
 use task_manager_shared::task_id::task_id_display;
 use task_manager_shared::tasks::TaskResponse;
 
@@ -128,6 +129,7 @@ pub fn RenderGoals() -> Element {
 
     let current = current.clone();
     let expanded = cs_ra.expanded.clone();
+    let picking_color = cs_ra.picking_color.clone();
     let goal_tasks = cs_ra.goal_tasks.clone();
     drop(cs_ra);
 
@@ -149,6 +151,7 @@ pub fn RenderGoals() -> Element {
                         project: current.clone(),
                         open: expanded.contains(&goal.id),
                         tasks: goal_tasks.get(&goal.id).cloned(),
+                        picking_color: picking_color.as_deref() == Some(goal.id.as_str()),
                         cs,
                     }
                 }
@@ -194,6 +197,8 @@ struct ComponentState {
     /// Goal id -> its whole task list, archived work included. Filled when a goal is first expanded and
     /// dropped on every push, since a snapshot cannot carry archived work.
     goal_tasks: HashMap<String, GoalTasks>,
+    /// Which goal's palette is open, if any. One at a time: two open palettes ask a question nobody asked.
+    picking_color: Option<String>,
 }
 
 impl ComponentState {
@@ -209,6 +214,7 @@ impl ComponentState {
         self.tasks.reset();
         self.goal_tasks.clear();
         self.expanded.clear();
+        self.picking_color = None;
     }
 
     fn toggle(&mut self, key: &str) {
@@ -364,11 +370,13 @@ fn RenderGoal(
     project: ProjectResponse,
     open: bool,
     tasks: Option<GoalTasks>,
+    picking_color: bool,
     cs: Signal<ComponentState>,
 ) -> Element {
     let mut cs = cs;
 
     let closed = goal.closed_unix_seconds.is_some();
+    let hex = KindColor::parse_or_default(&goal.color).hex();
 
     // Counters as the server sent them. NOT recomputed from the list below: that list is absent until the
     // goal is expanded, and the numbers count archived work which a board read leaves out.
@@ -381,8 +389,17 @@ fn RenderGoal(
     let project_id = project.id.clone();
     let already_loaded = tasks.is_some();
 
+    let swatch_goal = goal.id.clone();
+    let picker_project = project.id.clone();
+    let picker_goal = goal.id.clone();
+
     rsx! {
-        div { class: if closed { "goal-card closed" } else { "goal-card" },
+        div {
+            class: if closed { "goal-card closed" } else { "goal-card" },
+            // The goal's colour on its own edge as well as on its cards, so the two are recognisably the
+            // same goal when the screens sit side by side.
+            style: "border-left: 3px solid {hex}",
+
             div {
                 class: "goal-head",
                 // Fetching from the handler, not from the render body: opening a goal IS the moment its
@@ -422,6 +439,24 @@ fn RenderGoal(
                 span { class: "goal-caret", if open { "▾" } else { "▸" } }
                 img { class: "goal-icon", src: asset!("/public/assets/images/goal.svg"), alt: "" }
 
+                // `stop_propagation` because the whole head is the fold/unfold target: without it, changing
+                // a colour would also open or close the goal, which is two things for one click.
+                button {
+                    class: "goal-swatch",
+                    style: "background: {hex}",
+                    title: "Colour this goal",
+                    onclick: move |event| {
+                        event.stop_propagation();
+
+                        let mut write = cs.write();
+                        write.picking_color = if write.picking_color.as_deref() == Some(swatch_goal.as_str()) {
+                            None
+                        } else {
+                            Some(swatch_goal.clone())
+                        };
+                    },
+                }
+
                 div { class: "goal-head-text",
                     div { class: "goal-name", "{goal.name}" }
                     if !goal.description.trim().is_empty() {
@@ -442,6 +477,33 @@ fn RenderGoal(
                         span { class: "goal-comments", title: "{goal.comments.len()} notes on the thread",
                             "💬 {goal.comments.len()}"
                         }
+                    }
+                }
+            }
+
+            if picking_color {
+                div {
+                    class: "goal-palette",
+                    onclick: move |event| event.stop_propagation(),
+                    crate::dialogs::RenderColorPicker {
+                        value: goal.color.clone(),
+                        on_pick: move |color: String| {
+                            let project_id = picker_project.clone();
+                            let goal_id = picker_goal.clone();
+
+                            // Closed first, then the request: the answer comes back as a WebSocket push
+                            // carrying the whole board, so there is nothing here to wait for and nothing to
+                            // write back by hand.
+                            cs.write().picking_color = None;
+
+                            spawn(async move {
+                                if let Err(err) = crate::api::set_goal_color(&project_id, &goal_id, &color).await {
+                                    crate::web::console_log(
+                                        format!("recolouring {goal_id} failed: {}", err.message).as_str(),
+                                    );
+                                }
+                            });
+                        },
                     }
                 }
             }
@@ -521,20 +583,42 @@ fn RenderBacklog(
 
 /// One task under a goal: a line rather than a card.
 ///
-/// A line, because what this screen is for is the shape of a goal — twenty cards would bury it. The whole
-/// task is one click away, in the same dialog the board opens.
+/// A line, because what this screen is for is the shape of a goal — twenty cards would bury it. What is on
+/// the line is what a person asks about a task without opening it: what kind of work it is, where it sits,
+/// whether anybody has said anything, and who has it. The whole task is one click away, in the same dialog
+/// the board opens.
 #[component]
 fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
     let title = task_manager_shared::task_title::task_title(&task.text);
 
-    let status_name = project
-        .columns
-        .iter()
-        .find(|column| column.id == task.status)
-        .map(|column| column.name.clone())
-        .unwrap_or_else(|| task.status.clone());
+    let kind = task
+        .kind
+        .as_ref()
+        .and_then(|kind_id| project.kinds.iter().find(|itm| &itm.id == kind_id));
+
+    let kind_hex = kind
+        .map(|itm| KindColor::parse_or_default(&itm.color).hex())
+        .unwrap_or("");
+
+    // Both anchors exist in every project but are not in `columns`, which holds the middle only — so a task
+    // in Todo or Done would otherwise show a raw id where every other row shows a name.
+    let status_name = match task.status.as_str() {
+        COLUMN_ID_TODO => "Todo".to_string(),
+        COLUMN_ID_DONE => "Done".to_string(),
+        stored => project
+            .columns
+            .iter()
+            .find(|column| column.id == stored)
+            .map(|column| column.name.clone())
+            .unwrap_or_else(|| stored.to_string()),
+    };
 
     let done = task.status == COLUMN_ID_DONE;
+
+    let assignee = task
+        .assignee_name
+        .clone()
+        .or_else(|| task.assignee.clone());
 
     let found = crate::api::find_task_locally(&task, &project);
 
@@ -546,10 +630,38 @@ fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
             },
 
             span { class: "goal-task-id", "{task_id_display(&task.id)}" }
+
+            if let Some(kind) = kind {
+                span {
+                    class: "goal-task-kind",
+                    style: "background: {kind_hex}",
+                    title: "{kind.description}",
+                    if crate::web::icon_exists(&kind.icon) {
+                        img { class: "sticker-kind-icon", src: "{crate::web::icon_url(&kind.icon)}", alt: "" }
+                    }
+                    "{kind.name}"
+                }
+            }
+
             span { class: "goal-task-title", "{title}" }
+
             if task.blocked {
                 span { class: "sticker-blocked-flag", "Blocked" }
             }
+
+            // Only when there is a thread. A `0` on every line is noise that makes the lines that do have
+            // something harder to spot.
+            if !task.comments.is_empty() {
+                span { class: "goal-task-comments", title: "{task.comments.len()} comments",
+                    "💬 {task.comments.len()}"
+                }
+            }
+
+            span {
+                class: if assignee.is_some() { "goal-task-assignee" } else { "goal-task-assignee unassigned" },
+                {assignee.clone().unwrap_or_else(|| "Unassigned".to_string())}
+            }
+
             span { class: "goal-task-status", "{status_name}" }
         }
     }

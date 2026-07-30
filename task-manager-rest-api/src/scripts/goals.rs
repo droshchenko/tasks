@@ -13,6 +13,9 @@ pub struct NewGoal {
     pub project_prefix: String,
     pub name: String,
     pub description: String,
+    /// A palette colour name. `None` takes the default swatch — a goal without an opinion about its
+    /// colour is normal, and picking one is what the browser is for.
+    pub color: Option<String>,
 }
 
 /// A change to a goal. Every field is optional; `None` means "leave it alone".
@@ -23,6 +26,7 @@ pub struct NewGoal {
 pub struct GoalPatch {
     pub name: Option<String>,
     pub description: Option<String>,
+    pub color: Option<String>,
     /// `Some(true)` closes the goal, `Some(false)` re-opens it, `None` leaves its state alone.
     pub close: Option<bool>,
     pub comment: Option<String>,
@@ -35,6 +39,7 @@ impl GoalPatch {
     pub fn is_empty(&self) -> bool {
         self.name.is_none()
             && self.description.is_none()
+            && self.color.is_none()
             && self.close.is_none()
             && self.trimmed_comment().is_none()
     }
@@ -109,6 +114,11 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
         return Err("a goal needs a name".to_string());
     }
 
+    let color = match &new_goal.color {
+        None => task_manager_shared::kind_color::KindColor::default(),
+        Some(color) => super::parse_kind_color(color)?,
+    };
+
     let number = app.board.reserve_task_number(&project.id).ok_or_else(|| {
         format!(
             "project {} vanished while creating the goal",
@@ -123,6 +133,7 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
         number,
         name: new_goal.name.trim().to_string(),
         description: new_goal.description.trim().to_string(),
+        color,
         comments: Vec::new(),
         created: now,
         updated: now,
@@ -161,7 +172,8 @@ pub async fn update_goal(
 ) -> Result<String, String> {
     if patch.is_empty() {
         return Err(
-            "nothing to update: pass at least one of name, description, close or comment".to_string(),
+            "nothing to update: pass at least one of name, description, color, close or comment"
+                .to_string(),
         );
     }
 
@@ -182,6 +194,10 @@ pub async fn update_goal(
 
     if let Some(description) = &patch.description {
         goal.description = description.trim().to_string();
+    }
+
+    if let Some(color) = &patch.color {
+        goal.color = super::parse_kind_color(color)?;
     }
 
     // Everything below is validation, and all of it runs before a single field is written back.
@@ -316,6 +332,7 @@ mod tests {
         let empty = GoalPatch {
             name: None,
             description: None,
+            color: None,
             close: None,
             comment: None,
             comment_by: None,
@@ -326,6 +343,7 @@ mod tests {
         let blank_comment = GoalPatch {
             name: None,
             description: None,
+            color: None,
             close: None,
             comment: Some("   ".to_string()),
             comment_by: None,
@@ -337,6 +355,21 @@ mod tests {
         );
     }
 
+    /// A colour is a change like any other — the Goals screen makes exactly this call and nothing else.
+    #[test]
+    fn recolouring_is_a_change() {
+        let patch = GoalPatch {
+            name: None,
+            description: None,
+            color: Some("blue".to_string()),
+            close: None,
+            comment: None,
+            comment_by: None,
+        };
+
+        assert!(!patch.is_empty());
+    }
+
     /// Re-opening is a change like any other — `close: Some(false)` on an open goal is still something to
     /// apply, and the emptiness check must not swallow it.
     #[test]
@@ -345,6 +378,7 @@ mod tests {
             let patch = GoalPatch {
                 name: None,
                 description: None,
+                color: None,
                 close: Some(close),
                 comment: None,
                 comment_by: None,

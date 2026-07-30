@@ -99,6 +99,7 @@ fn goal(project_id: &str, number: i64) -> GoalModel {
         number,
         name: format!("goal {number}"),
         description: String::new(),
+        color: KindColor::default(),
         comments: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
         updated: DateTimeAsMicroseconds::new(0),

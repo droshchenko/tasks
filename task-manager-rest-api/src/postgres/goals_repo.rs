@@ -56,6 +56,14 @@ pub struct GoalDto {
     pub number: i64,
     pub name: String,
     pub description: String,
+    // A palette name — the same palette a task type is coloured from, because a board is one visual
+    // system and two palettes would make a goal's colour mean nothing next to a type's.
+    //
+    // NULLABLE, and not because a goal can have no colour: the table already has rows, so a NOT NULL column
+    // has to arrive with a default, and whether the schema generator quotes a text default is not a thing to
+    // gamble a startup on. `None` reads as the default swatch, which is the same leniency an unrecognised
+    // name gets — and every write puts a real name in.
+    pub color: Option<String>,
     #[sql_type("jsonb")]
     #[json]
     pub comments: Vec<GoalCommentJsonModel>,

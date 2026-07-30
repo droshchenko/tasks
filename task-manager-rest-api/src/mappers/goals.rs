@@ -10,6 +10,11 @@ impl From<&GoalDto> for GoalModel {
             number: src.number,
             name: src.name.clone(),
             description: src.description.clone(),
+            // Unknown reads as the default swatch rather than failing the load, the same leniency a task
+            // type's colour gets.
+            color: task_manager_shared::kind_color::KindColor::parse_or_default(
+                src.color.as_deref().unwrap_or_default(),
+            ),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -27,6 +32,7 @@ impl From<&GoalModel> for GoalDto {
             number: src.number,
             name: src.name.clone(),
             description: src.description.clone(),
+            color: Some(rust_extensions::AsStr::as_str(&src.color).to_string()),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -72,6 +78,7 @@ pub fn goal_to_response(
         project_id: src.project_id.clone(),
         name: src.name.clone(),
         description: src.description.clone(),
+        color: rust_extensions::AsStr::as_str(&src.color).to_string(),
         status: src.status().to_string(),
         tasks_amount: tasks_amount as i32,
         done_amount: done_amount as i32,
