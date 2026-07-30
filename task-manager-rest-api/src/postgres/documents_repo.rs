@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use service_sdk::my_postgres::sql_where::NoneWhereModel;
 use service_sdk::my_postgres::{MyPostgres, UpdateConflictType};
 
 service_sdk::macros::use_my_postgres!();
@@ -47,7 +48,37 @@ pub struct DocumentDto {
     pub project_id: String,
     #[db_index(id: 1, index_name: "documents_path_idx", is_unique: true, order: "ASC")]
     pub doc_path: String,
-    pub content: String,
+    // What the payload IS — a MIME type: `text/markdown`, `application/pdf`. Metadata rather than a
+    // discriminator: which of the two payload columns is filled is what decides whether this document is
+    // text or binary, and this says how to render or download it.
+    //
+    // NULLABLE for the reason every column added to an existing table here is: the generator derives
+    // nullability from the Rust type, and a non-Option field emits `not null`, which Postgres refuses on a
+    // populated table. `None` reads as `text/markdown`, which is what every document written before this
+    // column existed was.
+    pub content_type: Option<String>,
+    // The text half. `None` for a binary document.
+    //
+    // Nullable now, where it used to be NOT NULL — my-postgres can relax NOT NULL to NULL, which is the one
+    // direction it can do (it cannot tighten it, and cannot change a type).
+    pub content: Option<String>,
+    // The binary half. `None` for a text document.
+    //
+    // **EXACTLY ONE of `content` and `binary_content` is set.** Not an enum in the row because a column
+    // cannot be one; the invariant is established on the write path — see `crate::scripts::DocumentBody` —
+    // and every read decides which kind of document it is holding by asking which one is `Some`.
+    //
+    // Real bytes in `bytea`, NOT base64. base64 exists on this feature only because JSON cannot carry
+    // bytes, so it is what an MCP argument and an HTTP response carry; storing it would cost a third more
+    // space on every version and leave the column unreadable for nothing.
+    pub binary_content: Option<Vec<u8>>,
+    // How big the payload is, in BYTES — UTF-8 bytes for text, real bytes for binary. One unit, so a list of
+    // documents is comparable whichever kind each of them is.
+    //
+    // **Stored rather than computed, and that is the point of it.** The index wants a size, and computing one
+    // means reading the payload — which for a PDF is the whole blob, for every document in the project, on
+    // every open of the Documents screen. A number written once on upload costs nothing to read.
+    pub content_size: Option<i64>,
     // Which version this row is. Starts at 1 and moves on every write of any kind — a rewrite, a move, a
     // delete, a restore — so it doubles as the count of history rows this document has.
     pub version: i64,
@@ -87,7 +118,12 @@ pub struct DocumentHistoryDto {
     // The path the document had at THIS version — which is why a move is a version of its own. Without it,
     // the history could say what a document said but never when it moved or who moved it.
     pub doc_path: String,
-    pub content: String,
+    // The payload as it was at THIS version — same split, same invariant as the working row. A version of a
+    // PDF is a PDF.
+    pub content_type: Option<String>,
+    pub content: Option<String>,
+    pub binary_content: Option<Vec<u8>>,
+    pub content_size: Option<i64>,
     pub who: String,
     // What happened: see `crate::scripts::DocumentEvent`. A plain string with no constraint, the same
     // leniency every open vocabulary in this service gets — an unrecognised value renders as itself rather
@@ -115,12 +151,66 @@ pub struct DocumentTrashDto {
     // The path it had when it was deleted. Where a restore puts it back, unless the caller names another
     // one — and where the refusal comes from when something else has taken that path since.
     pub doc_path: String,
-    pub content: String,
+    pub content_type: Option<String>,
+    pub content: Option<String>,
+    pub binary_content: Option<Vec<u8>>,
+    pub content_size: Option<i64>,
     // Carried across so the version sequence continues rather than restarting: a restored document's next
     // version is one past the version it was deleted at, and its history stays one unbroken run.
     pub version: i64,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
+    #[sql_type("timestamp")]
+    pub deleted: DateTimeAsMicroseconds,
+    pub deleted_by: String,
+}
+
+// One document WITHOUT its payload — the shape every listing reads.
+//
+// **The whole reason this type exists is that a document can now be a PDF.** `SelectDbEntity` builds its
+// column list from the struct's fields, so leaving the two payload columns out means the query never touches
+// them: drawing the Documents tree for a project costs a few hundred bytes a row instead of every blob in it.
+// `content_size` is a stored column precisely so this shape can still report a size.
+//
+// The first version of this feature selected whole rows for the index and said in a comment that the day
+// that stopped being true, this was the function to split. Binary payloads are that day.
+#[derive(SelectDbEntity, Debug)]
+pub struct DocumentIndexDto {
+    pub id: String,
+    pub project_id: String,
+    pub doc_path: String,
+    pub content_type: Option<String>,
+    pub content_size: Option<i64>,
+    pub version: i64,
+    #[sql_type("timestamp")]
+    pub created: DateTimeAsMicroseconds,
+    #[sql_type("timestamp")]
+    pub updated: DateTimeAsMicroseconds,
+    pub updated_by: String,
+}
+
+// One history entry WITHOUT its payload, for the same reason: a document rewritten twenty times would
+// otherwise answer "show me its history" with twenty copies of itself.
+#[derive(SelectDbEntity, Debug)]
+pub struct DocumentVersionDto {
+    pub version: i64,
+    pub doc_path: String,
+    pub content_type: Option<String>,
+    pub content_size: Option<i64>,
+    pub who: String,
+    pub event: String,
+    #[sql_type("timestamp")]
+    pub moment: DateTimeAsMicroseconds,
+}
+
+// One trashed document WITHOUT its payload. Restoring needs the payload and reads the full row; LISTING the
+// trash does not.
+#[derive(SelectDbEntity, Debug)]
+pub struct DocumentTrashIndexDto {
+    pub id: String,
+    pub doc_path: String,
+    pub content_type: Option<String>,
+    pub content_size: Option<i64>,
     #[sql_type("timestamp")]
     pub deleted: DateTimeAsMicroseconds,
     pub deleted_by: String,
@@ -192,22 +282,13 @@ impl DocumentsRepo {
         Self { postgres }
     }
 
-    /// Every live document of one project, content included.
-    ///
-    /// The content comes along because `SELECT` here is by whole row and there is nothing to be gained by a
-    /// second shape — the caller that wants an index throws the texts away, and a project's documents are a
-    /// hand-written set rather than a data volume. If that ever stops being true, this is the one function to
-    /// split.
-    pub async fn get_all_of_project(
-        &self,
-        project_id: &str,
-        ctx: &MyTelemetryContext,
-    ) -> Vec<DocumentDto> {
+    /// Every live document of EVERY project, WITHOUT the payloads. Called once at startup to fill the index.
+    pub async fn get_all_indexed(&self, ctx: &MyTelemetryContext) -> Vec<DocumentIndexDto> {
         self.postgres
             .with_retries(3, Duration::from_secs(1))
-            .query_rows(TABLE_NAME, Some(&ByProjectWhereModel { project_id }), Some(ctx))
+            .query_rows(TABLE_NAME, NoneWhereModel::new(), Some(ctx))
             .await
-            .expect("documents: query_rows get_all_of_project failed")
+            .expect("documents: query_rows get_all_indexed failed")
     }
 
     /// One live document by id, or `None` — which means it is in the trash or was never there. The caller
@@ -285,12 +366,13 @@ impl DocumentsRepo {
             .expect("documents: insert_or_update history failed");
     }
 
-    /// Every version of one document, in whatever order Postgres returns them — the caller sorts.
+    /// Every version of one document, WITHOUT the payloads, in whatever order Postgres returns them — the
+    /// caller sorts. One version's payload is read by [`Self::get_version`].
     pub async fn get_history(
         &self,
         document_id: &str,
         ctx: &MyTelemetryContext,
-    ) -> Vec<DocumentHistoryDto> {
+    ) -> Vec<DocumentVersionDto> {
         self.postgres
             .with_retries(3, Duration::from_secs(1))
             .query_rows(
@@ -346,12 +428,12 @@ impl DocumentsRepo {
             .expect("documents: query_single_row get_trashed failed")
     }
 
-    /// Everything in one project's trash.
+    /// Everything in one project's trash, WITHOUT the payloads. Restoring reads the full row.
     pub async fn get_trash_of_project(
         &self,
         project_id: &str,
         ctx: &MyTelemetryContext,
-    ) -> Vec<DocumentTrashDto> {
+    ) -> Vec<DocumentTrashIndexDto> {
         self.postgres
             .with_retries(3, Duration::from_secs(1))
             .query_rows(

@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 // Never put `///` doc comments on fields of a struct deriving MyHttpInput or
 // MyHttpObjectStructure: the macro's attribute parser panics with `Somehow we got Punct here: =`.
 
-// One document's index entry: everything about it EXCEPT its content.
+// One document's index entry: everything about it EXCEPT its payload.
 //
-// The split is the whole reason this type exists. A document is the one thing in the product that is not
-// held in memory — it is read out of Postgres on request — so the list a screen draws must not carry the
-// texts: a project with two hundred documents would otherwise ship every one of them to draw a tree of
-// names. Content arrives one document at a time, when somebody opens it.
+// The split is the whole reason this type exists, and a PDF is what makes it non-negotiable: the list a
+// screen draws must not carry the payloads, or opening the Documents screen would pull every file in the
+// project through JSON. A payload arrives one document at a time — text as `content` on
+// `DocumentResponse`, bytes from the raw endpoint, which the browser fetches itself.
 //
 // `path` is the document's name AND its position: folders are derived from it and are not stored anywhere,
 // so `docs/design/system.md` puts this entry two levels down without any folder having to exist.
@@ -26,8 +26,15 @@ pub struct DocumentIndexEntryResponse {
     // Which version is current. Starts at 1 and moves on every write — a rewrite, a move, a delete, a
     // restore. Shown because it is the cheapest possible answer to "has anybody touched this".
     pub version: i64,
-    // How many characters the content is. A size rather than the text: it says whether a document is a
-    // note or a specification, which is what a reader wants from a list.
+    // What the payload IS — a MIME type: `text/markdown`, `application/pdf`. Worked out from the path when
+    // nobody says otherwise, so `docs/spec.pdf` arrives as a PDF without being told.
+    pub content_type: String,
+    // Whether the payload is bytes rather than text. THE discriminator, and it is not derived from
+    // `content_type`: which of the two storage columns is filled is the fact, and the MIME type is metadata
+    // beside it. A reader uses this to decide between rendering the document and offering it for download.
+    pub is_binary: bool,
+    // How big the payload is, in BYTES — UTF-8 bytes for text, real bytes for a file. One unit for both, so
+    // a listing showing documents of both kinds is comparable down the column.
     pub size: i64,
     pub updated_unix_seconds: i64,
     // Who wrote the current version — an email or the literal `AI`, unvalidated for the same reason a
@@ -41,8 +48,17 @@ pub struct DocumentResponse {
     pub id: String,
     pub project_id: String,
     pub path: String,
-    // Markdown. Rendered by whoever draws it, never trusted as HTML — an agent wrote it.
-    pub content: String,
+    pub content_type: String,
+    pub is_binary: bool,
+    pub size: i64,
+    // The text, for a text document — Markdown, rendered by whoever draws it and never trusted as HTML,
+    // because an agent wrote it.
+    //
+    // `None` for a BINARY document, and deliberately not base64: the browser fetches those from the raw
+    // endpoint, where the bytes travel as bytes and an `<iframe>` or an `<img>` can be pointed straight at
+    // them. base64 exists on this feature only where JSON leaves no choice — an MCP argument — and putting
+    // it here as well would cost a third of the size of every file for a path nothing uses.
+    pub content: Option<String>,
     pub version: i64,
     pub created_unix_seconds: i64,
     pub updated_unix_seconds: i64,
@@ -73,12 +89,143 @@ pub struct GetDocumentsInputModel {
     pub project_id: String,
 }
 
+// Ask for a document's BYTES, as an `<iframe>` or an `<img>` asks.
+//
+// Everything is a query parameter, including the token, and that is not sloppiness: this is the one request
+// the browser makes with none of our code in the loop, and neither tag can carry an `Authorization` header.
+// The WebSocket in this same product makes the same trade for the same reason.
+#[derive(MyHttpInput)]
+pub struct GetRawDocumentInputModel {
+    #[http_query(name: "projectId", description: "Which project the document belongs to")]
+    pub project_id: String,
+    #[http_query(name: "id", description: "Which document, by id")]
+    pub id: String,
+    #[http_query(
+        name: "token",
+        description: "The session token. In the url because an <iframe> and an <img> cannot send headers"
+    )]
+    pub token: String,
+}
+
 #[derive(MyHttpInput)]
 pub struct GetDocumentInputModel {
     #[http_body(name: "projectId", description: "Which project the document belongs to")]
     pub project_id: String,
     #[http_body(name: "id", description: "Which document, by the id its index entry reports")]
     pub id: String,
+}
+
+/// What a text document is, when nobody says otherwise. Also what every document written before there was a
+/// `content_type` column was.
+pub const DEFAULT_TEXT_CONTENT_TYPE: &str = "text/markdown";
+
+/// What a binary document is when neither the caller nor the path says anything more specific. The MIME type
+/// that means "bytes, download them".
+pub const DEFAULT_BINARY_CONTENT_TYPE: &str = "application/octet-stream";
+
+/// The MIME type a path implies, or `None` when its extension says nothing.
+///
+/// An explicit table rather than a crate: the list is short, it is the same on both sides of the wire, and
+/// what is NOT in it matters as much as what is — an unknown extension has to fall through to a default that
+/// depends on whether the payload is text or bytes, which only the caller knows.
+///
+/// Here in `shared` because both sides ask: the server to decide what to store, the browser to pick an icon.
+pub fn content_type_for_path(path: &str) -> Option<&'static str> {
+    let name = document_file_name(path);
+    let (stem, extension) = name.rsplit_once('.')?;
+
+    // `.gitignore` is a name, not an extension of nothing.
+    if stem.is_empty() {
+        return None;
+    }
+
+    Some(match extension.to_lowercase().as_str() {
+        "md" | "markdown" => DEFAULT_TEXT_CONTENT_TYPE,
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "yaml" | "yml" => "application/yaml",
+        "toml" => "text/plain",
+        "html" | "htm" => "text/html",
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "zip" => "application/zip",
+        _ => return None,
+    })
+}
+
+/// Whether a MIME type is one the browser can render in place rather than only download.
+///
+/// Used by the viewer to choose between an `<iframe>`, an `<img>` and a download link. Deliberately a small
+/// allow-list: a type nobody listed is offered as a file, which is always safe, where guessing wrong leaves
+/// an empty pane.
+pub fn is_previewable_content_type(content_type: &str) -> bool {
+    content_type == "application/pdf"
+        || content_type == "text/html"
+        || content_type.starts_with("image/")
+}
+
+/// The url that serves a document's raw bytes.
+///
+/// Built rather than fetched, because the two tags that use it — `<img>` and `<iframe>` — make the request
+/// themselves; nothing in the client ever reads the bytes. Here in `shared` so the one place that spells the
+/// route is the one place both sides read it from.
+///
+/// Every value is percent-encoded: an id is a `SortableId` and safe, but a token is base64-ish and a path can
+/// hold anything, and one unescaped `&` silently truncates the url into a request for the wrong document.
+pub fn raw_document_url(project_id: &str, id: &str, token: &str) -> String {
+    format!(
+        "/api/documents/v1/raw?projectId={}&id={}&token={}",
+        percent_encode(project_id),
+        percent_encode(id),
+        percent_encode(token)
+    )
+}
+
+/// Percent-encodes one url value.
+///
+/// Hand-rolled because `task-manager-shared` has no url dependency and needs one direction only. Strict on
+/// purpose — anything outside the unreserved set is escaped, so `&`, `?`, `#`, `%`, spaces and non-ascii
+/// cannot change what the url means.
+fn percent_encode(src: &str) -> String {
+    let mut encoded = String::with_capacity(src.len());
+
+    for byte in src.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(*byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+
+    encoded
+}
+
+/// `1.2 KB`, `340 B` — enough to tell a note from a specification, which is all a listing needs a size for.
+pub fn render_size(bytes: i64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+
+    if bytes < 0 {
+        return "0 B".to_string();
+    }
+
+    let as_float = bytes as f64;
+
+    if as_float < KB {
+        return format!("{bytes} B");
+    }
+
+    if as_float < MB {
+        return format!("{:.1} KB", as_float / KB);
+    }
+
+    format!("{:.1} MB", as_float / MB)
 }
 
 /// The longest a document path may be. Generous enough for a deep folder tree, short enough that a path is
@@ -245,6 +392,48 @@ mod tests {
     fn folders_come_from_the_path_and_nothing_else() {
         assert_eq!(document_folders("docs/design/system.md"), vec!["docs", "design"]);
         assert_eq!(document_folders("notes.md"), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_raw_url_escapes_every_value_it_carries() {
+        assert_eq!(
+            raw_document_url("p1", "d1", "tok"),
+            "/api/documents/v1/raw?projectId=p1&id=d1&token=tok"
+        );
+
+        // The case that matters: an unescaped `&` in a token would truncate the url and ask for nothing.
+        let url = raw_document_url("p1", "d1", "a&b=c");
+        assert!(url.ends_with("token=a%26b%3Dc"), "{url}");
+    }
+
+    #[test]
+    fn a_size_reads_like_a_size() {
+        assert_eq!(render_size(340), "340 B");
+        assert_eq!(render_size(1536), "1.5 KB");
+        assert_eq!(render_size(3 * 1024 * 1024), "3.0 MB");
+        assert_eq!(render_size(0), "0 B");
+    }
+
+    #[test]
+    fn a_content_type_is_read_off_the_extension() {
+        assert_eq!(content_type_for_path("docs/spec.pdf"), Some("application/pdf"));
+        assert_eq!(content_type_for_path("a/b/notes.MD"), Some("text/markdown"));
+        assert_eq!(content_type_for_path("logo.png"), Some("image/png"));
+
+        // Nothing to read: the caller's declaration or a kind-dependent default decides.
+        assert_eq!(content_type_for_path("Makefile"), None);
+        assert_eq!(content_type_for_path(".gitignore"), None);
+        assert_eq!(content_type_for_path("build.sh"), None);
+    }
+
+    #[test]
+    fn only_what_a_browser_can_draw_is_previewable() {
+        assert!(is_previewable_content_type("application/pdf"));
+        assert!(is_previewable_content_type("image/png"));
+        assert!(is_previewable_content_type("text/html"));
+
+        assert!(!is_previewable_content_type("application/zip"));
+        assert!(!is_previewable_content_type("application/octet-stream"));
     }
 
     #[test]

@@ -20,6 +20,46 @@ fn project_prefix_of(app: &AppContext, project_id: &str) -> String {
         .unwrap_or_else(|| project_id.to_string())
 }
 
+/// What arrived in the two payload arguments, as the domain wants it.
+///
+/// **Exactly one of the two, and saying so is the whole job.** Both would be a caller who does not know what
+/// they are uploading; neither would be a document with nothing in it. base64 is decoded HERE — the boundary
+/// JSON forces it through — so that nothing past this point knows the encoding exists.
+fn read_payload(
+    content: Option<String>,
+    binary_base64: Option<String>,
+    content_type: Option<String>,
+) -> Result<crate::scripts::NewDocumentContent, String> {
+    use rust_extensions::base64::FromBase64;
+
+    let binary = binary_base64
+        .as_deref()
+        .map(str::trim)
+        .filter(|itm| !itm.is_empty());
+
+    let body = match (content, binary) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "pass `content` for a text document or `binary_base64` for a file — not both. A document is one or the other"
+                    .to_string(),
+            );
+        }
+        (None, None) => {
+            return Err(
+                "nothing to upload: pass `content` for text, or `binary_base64` for a file".to_string(),
+            );
+        }
+        (Some(text), None) => crate::scripts::DocumentBody::Text(text),
+        (None, Some(encoded)) => crate::scripts::DocumentBody::Binary(
+            encoded
+                .from_base64()
+                .map_err(|err| format!("`binary_base64` is not valid base64: {err}"))?,
+        ),
+    };
+
+    Ok(crate::scripts::NewDocumentContent { body, content_type })
+}
+
 // -------------------------------------------------------------------------------------------- list
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
@@ -69,11 +109,12 @@ impl McpToolCall<DocumentsListInput, DocumentsListResponse> for DocumentsListHan
         &self,
         model: DocumentsListInput,
     ) -> Result<DocumentsListResponse, String> {
-        let rows = crate::scripts::list_documents(&self.app, &model.project).await?;
+        // No `await`: the index is in memory, which is the one part of a document that is cached.
+        let rows = crate::scripts::list_documents(&self.app, &model.project)?;
 
         let documents: Vec<DocumentView> = rows
             .iter()
-            .map(|row| DocumentView::from_dto(row, &project_prefix_of(&self.app, &row.project_id)))
+            .map(|row| DocumentView::from_entry(row, &project_prefix_of(&self.app, &row.project_id)))
             .collect();
 
         Ok(DocumentsListResponse {
@@ -191,9 +232,17 @@ pub struct DocumentsUploadInput {
     )]
     pub path: String,
     #[property(
-        description = "The document, as Markdown. Sent whole every time: there is no partial write, and what arrives here becomes the current version in one go. The previous text is not lost — it stays as the previous version"
+        description = "The document as TEXT — Markdown usually. Sent whole every time: there is no partial write, and what arrives becomes the current version in one go. The previous text is not lost, it stays as the previous version. Pass this OR `binary_base64`, never both"
     )]
-    pub content: String,
+    pub content: Option<String>,
+    #[property(
+        description = "The document as a FILE, base64-encoded — a PDF, an image. base64 because JSON cannot carry bytes; it is decoded here and stored as real bytes, so nothing downstream pays for the encoding. Pass this OR `content`, never both. Remember base64 is a third larger than the file"
+    )]
+    pub binary_base64: Option<String>,
+    #[property(
+        description = "The MIME type — `application/pdf`, `image/png`. OMIT IT and the path decides: `docs/spec.pdf` is a PDF without being told. Worth passing only when the extension is missing or lies"
+    )]
+    pub content_type: Option<String>,
     #[property(
         description = "Who is writing it: an email, or the literal `AI` when it is you. Recorded on the version, which is what makes the history answer 'who changed this'"
     )]
@@ -234,7 +283,7 @@ impl McpToolCall<DocumentsUploadInput, DocumentView> for DocumentsUploadHandler 
             &self.app,
             &model.project,
             &model.path,
-            &model.content,
+            read_payload(model.content, model.binary_base64, model.content_type)?,
             &model.who,
         )
         .await?;

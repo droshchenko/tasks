@@ -5,6 +5,7 @@ use app::AppContext;
 mod app;
 mod auth;
 mod board;
+mod documents;
 mod http_server;
 mod mappers;
 mod mcp;

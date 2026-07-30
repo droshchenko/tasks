@@ -1,14 +1,16 @@
-use task_manager_shared::documents::{DocumentIndexEntryResponse, document_file_name};
+use dioxus::prelude::*;
+use task_manager_shared::documents::{DocumentIndexEntryResponse, document_file_name, render_size};
 
-/// One node of the tree the screen draws: a folder with children, or a document.
+use super::{DocumentsState, file_icon, folder_icon};
+
+/// How far one level is pushed in, in pixels.
+const INDENT: usize = 14;
+
+/// One node of the tree: a folder with children, or a document.
 ///
-/// `Clone` and `PartialEq` because a level of it is handed to a child component as a prop, which Dioxus
-/// requires both of. Compared by value rather than by pointer: an index that came back identical draws an
-/// identical tree, and a level that has not changed then does not repaint.
-///
-/// **Built on every render out of the index, and stored nowhere.** That is not a shortcut — it is the model:
-/// a folder does not exist on the server either, it is read off the paths of the documents in it. So an empty
-/// folder cannot appear here, and the last document leaving one makes it vanish, with nothing to clean up.
+/// **Built from the index on every render, and stored nowhere.** That is not a shortcut, it is the model: a
+/// folder does not exist on the server either — it is read off the paths of the documents in it. So an empty
+/// folder cannot appear here, and the last document leaving one makes it vanish with nothing to clean up.
 #[derive(Clone, PartialEq)]
 pub enum DocumentNode {
     Folder {
@@ -40,9 +42,9 @@ impl DocumentNode {
 
 /// Turn a flat index into the tree.
 ///
-/// The entries are expected sorted by path — the server sorts them — but nothing here relies on it: each path
-/// is walked segment by segment into the structure, and the result is sorted at every level afterwards. So an
-/// index that arrived in any order draws the same tree.
+/// The entries arrive sorted by path — the server sorts them — but nothing here relies on it: each path is
+/// walked segment by segment into the structure and every level is sorted afterwards, so an index in any order
+/// draws the same tree.
 pub fn build_tree(entries: &[DocumentIndexEntryResponse]) -> Vec<DocumentNode> {
     let mut roots: Vec<DocumentNode> = Vec::new();
 
@@ -53,9 +55,9 @@ pub fn build_tree(entries: &[DocumentIndexEntryResponse]) -> Vec<DocumentNode> {
             .filter(|itm| !itm.is_empty())
             .collect();
 
-        // The file name comes off the end; what is left is the folders it sits in. A path with nothing in it
-        // is skipped rather than turned into a nameless row — the server refuses to store one, so this only
-        // guards against a shape nobody predicted.
+        // The file name comes off the end; what is left is the folders it sits in. A path with nothing in it is
+        // skipped rather than drawn as a nameless row — the server refuses to store one, so this only guards
+        // against a shape nobody predicted.
         if segments.pop().is_none() {
             continue;
         }
@@ -79,8 +81,6 @@ fn insert(
 ) {
     let Some((head, rest)) = folders.split_first() else {
         level.push(DocumentNode::Document {
-            // From the whole path rather than from the last segment, so it agrees with what the rest of the
-            // product calls the document's name.
             name: document_file_name(&entry.path).to_string(),
             entry: entry.clone(),
         });
@@ -131,21 +131,123 @@ fn sort_level(level: &mut Vec<DocumentNode>) {
     }
 }
 
-/// Every folder path in a tree, so a screen can open all of them at once.
-///
-/// Used for the initial state: a tree that arrives entirely folded shows a reader one row and hides the
-/// documents they came for. Folding is then something they do, not something they have to undo.
-pub fn all_folder_paths(nodes: &[DocumentNode]) -> Vec<String> {
-    let mut paths = Vec::new();
-    collect_folders(nodes, &mut paths);
-    paths
+/// The document the url is pointing at, or `""` when it points at none.
+fn selected_id() -> String {
+    match use_route::<crate::AppRoute>() {
+        crate::AppRoute::Documents { selected } => selected,
+        _ => String::new(),
+    }
 }
 
-fn collect_folders(nodes: &[DocumentNode], into: &mut Vec<String>) {
-    for node in nodes {
-        if let DocumentNode::Folder { path, children, .. } = node {
-            into.push(path.clone());
-            collect_folders(children, into);
+/// One level of the tree.
+///
+/// Split from [`DocumentTreeRow`] so the recursion goes through two components rather than one calling itself
+/// — the same shape the file browser this screen is modelled on uses.
+#[component]
+pub fn DocumentNodes(
+    nodes: Vec<DocumentNode>,
+    depth: usize,
+    cs: Signal<DocumentsState>,
+) -> Element {
+    rsx! {
+        for node in nodes.iter() {
+            DocumentTreeRow {
+                key: "{node_key(node)}",
+                node: node.clone(),
+                depth,
+                cs,
+            }
+        }
+    }
+}
+
+/// A key that survives a rebuild: a folder by its path, a document by its id.
+fn node_key(node: &DocumentNode) -> String {
+    match node {
+        DocumentNode::Folder { path, .. } => format!("folder:{path}"),
+        DocumentNode::Document { entry, .. } => format!("doc:{}", entry.id),
+    }
+}
+
+/// One row — a folder that opens and closes, or a document that can be selected.
+#[component]
+pub fn DocumentTreeRow(
+    node: DocumentNode,
+    depth: usize,
+    cs: Signal<DocumentsState>,
+) -> Element {
+    let mut cs = cs;
+
+    // Read off the url rather than out of the state: the url is what says which document is open, and reading
+    // it here also means a row re-draws when the selection moves — including when it moves by the back button.
+    //
+    // Read into a variable first and not behind a short-circuit: it is a hook, and skipping it on a folder row
+    // would make the hook order depend on what the row happens to be.
+    let selected = selected_id();
+
+    let indent = format!("padding-left: {}px", depth * INDENT + 6);
+
+    match node {
+        DocumentNode::Folder {
+            name,
+            path,
+            children,
+        } => {
+            let expanded = cs.read().is_expanded(&path);
+            let icon = folder_icon(expanded);
+            let for_toggle = path.clone();
+
+            rsx! {
+                div {
+                    class: "tree-row",
+                    style: "{indent}",
+                    onclick: move |_| cs.write().toggle(&for_toggle),
+
+                    img { class: "tree-icon", src: "{icon}" }
+                    span { class: "tree-name truncate", "{name}" }
+                    span { class: "tree-size dim", "{children.len()}" }
+                }
+
+                // Only mounted while open, so collapsing a folder stops its children rendering at all.
+                if expanded {
+                    DocumentNodes {
+                        nodes: children.clone(),
+                        depth: depth + 1,
+                        cs,
+                    }
+                }
+            }
+        }
+        DocumentNode::Document { name, entry } => {
+            let icon = file_icon(&name);
+            let is_selected = selected == entry.id;
+
+            let row_class = if is_selected {
+                "tree-row selected"
+            } else {
+                "tree-row"
+            };
+
+            let id = entry.id.clone();
+            let size = render_size(entry.size);
+
+            rsx! {
+                div {
+                    class: "{row_class}",
+                    style: "{indent}",
+                    title: "{entry.path}",
+                    // Selecting is navigating: the id goes into the url and the viewer follows from there.
+                    // Nothing about the selection is written to the state — which is what makes a document
+                    // linkable and the back button work.
+                    onclick: move |_| {
+                        navigator().push(crate::AppRoute::Documents { selected: id.clone() });
+                    },
+
+                    img { class: "tree-icon", src: "{icon}" }
+                    span { class: "tree-name truncate", "{name}" }
+                    span { class: "tree-size dim", "{size}" }
+                }
+            }
         }
     }
 }
@@ -159,6 +261,8 @@ mod tests {
             id: format!("id-{path}"),
             project_id: "p".to_string(),
             path: path.to_string(),
+            content_type: "text/markdown".to_string(),
+            is_binary: false,
             version: 1,
             size: 0,
             updated_unix_seconds: 0,
@@ -226,13 +330,17 @@ mod tests {
         assert_eq!(names(&tree), vec!["aa/(one.md)", "zz.md"]);
     }
 
+    /// A folder is keyed by its path and a document by its id, so a repaint does not swap rows around.
     #[test]
-    fn every_folder_can_be_opened_at_once() {
-        let tree = build_tree(&[entry("docs/design/system.md"), entry("top.md")]);
+    fn every_node_has_a_key_of_its_own() {
+        let tree = build_tree(&[entry("docs/a.md")]);
 
-        let mut folders = all_folder_paths(&tree);
-        folders.sort();
+        assert_eq!(node_key(&tree[0]), "folder:docs");
 
-        assert_eq!(folders, vec!["docs", "docs/design"]);
+        if let DocumentNode::Folder { children, .. } = &tree[0] {
+            assert_eq!(node_key(&children[0]), "doc:id-docs/a.md");
+        } else {
+            panic!("expected a folder");
+        }
     }
 }

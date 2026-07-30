@@ -1,121 +1,195 @@
-/* The Documents screen and the document dialog.
+/* The Documents screen: a tree that scrolls on its own, next to a viewer that scrolls on its own.
  *
- * Its own file rather than lines added to the board's: a tree of files is not a board and shares nothing
- * with one but the tokens. The dialog reuses the task dialog's shell (`modal-task`, `task-view-*`) on
- * purpose — a text with a header is the same shape of thing — so only what is genuinely new is here.
- */
+ * Lifted from the file browser in `remote-development-mcp`, class names and all — it is the same problem, and
+ * a second design for it would be a second thing to maintain. What is NOT copied is that console's markdown
+ * block: every text in this product carries `.md` and 09-markdown.css is the whole of how they look. */
 
 .docs-page {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Both this and the row below need it: without `min-height: 0` a long document pushes the page taller
+   * instead of scrolling inside its own pane, and the tree scrolls off the top of the window. */
   min-height: 0;
+  flex: 1 1 auto;
 }
 
-/* The tree scrolls on its own rather than the page: the header with the project picker has to stay
- * reachable on a project with two hundred documents. */
-.docs-tree {
+.files-layout {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
-  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  overflow-y: auto;
-  padding: 4px 0;
+  overflow: hidden;
 }
 
-.docs-node {
+.files-tree {
+  flex: 0 0 300px;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  padding: 6px 0 12px 0;
+  /* The whole row is a click target, and a click on a row of text otherwise selects it. */
+  user-select: none;
+}
+
+.files-viewer {
+  flex: 1 1 auto;
+  /* Without this a wide table stretches the column instead of scrolling inside it, and the tree gets squeezed
+   * off the screen. */
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-/* One row, folder or file. Both are buttons and both are the full width of the tree, so the hit area is
- * the row and not the few characters of its name. */
-.docs-folder,
-.docs-file {
+.tree-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  padding: 5px 12px;
+  gap: 6px;
+  padding: 3px 8px 3px 0;
   cursor: pointer;
-  /* The whole row is the click target, and a click on a row of text otherwise selects it — the same reason
-   * the goal head does this. */
-  user-select: none;
 }
 
-.docs-folder:hover,
-.docs-file:hover {
+.tree-row:hover {
   background: var(--surface-2);
 }
 
-/* The caret is the whole of the affordance, and it points at what a click does rather than at the state —
- * the same rule the checklist follows. A fixed width so names line up down the level. */
-.docs-caret {
-  width: 10px;
-  flex: 0 0 10px;
-  color: var(--text-faint);
-  font-size: 11px;
+.tree-row.selected {
+  background: var(--surface-2);
+  color: var(--accent);
 }
 
-.docs-folder-name {
-  font-weight: 600;
+/* Drawn as they are, not re-tinted: an icon with its own colours would lose them, and carrying colours that
+ * read on the page is the artwork's job. */
+.tree-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
 }
 
-.docs-file-icon {
-  width: 16px;
-  flex: 0 0 16px;
-}
-
-/* The name takes the room and the metadata is pushed to the right edge, so a column of sizes and versions
- * is scannable instead of ragged. */
-.docs-file-name {
+.tree-name {
   flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.docs-file-meta,
-.docs-file-by {
-  color: var(--text-muted);
-  font-size: 12px;
+.tree-size {
   flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
 }
 
-/* One document, in the dialog. */
-.docs-page .docs-tree:empty {
-  display: none;
+.tree-note {
+  color: var(--text-muted);
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
-.doc-view {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
+.tree-note.failed,
+.viewer-note.failed {
+  color: var(--danger);
 }
 
-.doc-view-meta {
+.viewer-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.doc-view-by {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 12px;
 }
 
-/* The text scrolls, the header does not: a specification is long, and the path in the title is what says
- * which document you are reading. How the Markdown inside it LOOKS is not here — it carries `.md` and
- * 09-markdown.css is the whole of that, for every text in the product. */
-.doc-view-body {
-  overflow-y: auto;
+.viewer-head .spacer {
+  flex: 1 1 auto;
+}
+
+.viewer-head .truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Shared by the source/rendered switch and the download link, so the two sit in the head as one kind of
+ * control. `text-decoration` is here because one of them is an <a>. */
+.viewer-toggle {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.viewer-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.viewer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.viewer-note {
+  padding: 24px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+/* The rendered document. Padding only — everything about how the Markdown itself looks comes from `.md`. */
+.viewer-markdown {
+  padding: 16px 20px 40px 20px;
+  overflow: auto;
+  line-height: 1.6;
+}
+
+/* `pre` keeps the document's own whitespace; the overflow is what stops one long line making the whole pane
+ * scroll sideways for ever. */
+.viewer-text {
+  margin: 0;
+  padding: 12px;
+  white-space: pre;
+  tab-size: 4;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.viewer-image {
+  padding: 16px;
+  overflow: auto;
+}
+
+.viewer-image img {
+  max-width: 100%;
+  /* Transparent artwork is unreadable against an unknown background, and this side has no say in what an
+   * uploaded image looks like. */
+  background: #ffffff;
+}
+
+/* A PDF, drawn by the browser's own viewer. It takes the pane it is given, which is why the head also offers
+ * "open full screen" — one column of a split view is not what a PDF was laid out for. */
+.viewer-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  background: #ffffff;
 }
 
 /* The reference rows on a task or a goal. One per line, because they are targets to hit with a mouse in a
@@ -145,8 +219,8 @@
   background: var(--surface-2);
 }
 
-/* The id, which is all this side knows until the document is opened. Monospace because it is an
- * identifier and not a word, and truncated rather than wrapped so the rows stay one line each. */
+/* The id, which is all this side knows until the document is opened. Monospace because it is an identifier and
+ * not a word, and truncated rather than wrapped so the rows stay one line each. */
 .doc-ref-id {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow: hidden;

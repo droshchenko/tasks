@@ -350,7 +350,15 @@ pub struct DocumentView {
     )]
     pub version: i64,
     #[property(
-        description = "How many characters the text is. Read it before reading the document: it is the difference between a note and a specification"
+        description = "What it IS — a MIME type: `text/markdown`, `application/pdf`. Worked out from the path when nobody says otherwise, so `docs/spec.pdf` is a PDF without being told"
+    )]
+    pub content_type: String,
+    #[property(
+        description = "True when the document is a FILE rather than text — a PDF, an image. documents_get returns its bytes base64-encoded, and nothing about it can be diffed or searched. False for anything you can read"
+    )]
+    pub is_binary: bool,
+    #[property(
+        description = "How big it is, in BYTES — for text and files alike, so a listing is comparable. Read it before reading the document: it is the difference between a note and a specification, and between a note and a 10 MB file"
     )]
     pub size: i64,
     #[property(description = "When it was first created, unix seconds (UTC)")]
@@ -362,13 +370,37 @@ pub struct DocumentView {
 }
 
 impl DocumentView {
+    /// From a whole row, which a write has just produced.
     pub fn from_dto(src: &crate::postgres::DocumentDto, project_prefix: &str) -> Self {
+        let body = crate::scripts::body_of(src);
+
         Self {
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.doc_path.clone(),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            is_binary: body.is_binary(),
+            size: body.size_bytes(),
             version: src.version,
-            size: src.content.chars().count() as i64,
+            created_unix_seconds: src.created.unix_microseconds / 1_000_000,
+            updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
+            updated_by: src.updated_by.clone(),
+        }
+    }
+
+    /// From the in-memory index, which is what a listing reads — no payload involved at all.
+    pub fn from_entry(
+        src: &crate::documents::DocumentIndexEntry,
+        project_prefix: &str,
+    ) -> Self {
+        Self {
+            id: src.id.clone(),
+            project: project_prefix.to_string(),
+            path: src.path.clone(),
+            content_type: src.content_type.clone(),
+            is_binary: src.is_binary,
+            size: src.size,
+            version: src.version,
             created_unix_seconds: src.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
             updated_by: src.updated_by.clone(),
@@ -389,8 +421,24 @@ pub struct DocumentContentView {
         description = "Which version this text is. Not necessarily the current one: documents_history can hand back an older version, and this says which"
     )]
     pub version: i64,
-    #[property(description = "The document, as Markdown")]
-    pub content: String,
+    #[property(
+        description = "What it IS — a MIME type. `text/*` and a few `application/*` types are text; everything else is a file"
+    )]
+    pub content_type: String,
+    #[property(
+        description = "True when this document is a FILE rather than text. Then `content` is absent and `content_base64` carries it"
+    )]
+    pub is_binary: bool,
+    #[property(description = "How big it is, in bytes")]
+    pub size: i64,
+    #[property(
+        description = "The document as text, when it IS text — Markdown usually. Absent for a file, which arrives in `content_base64` instead"
+    )]
+    pub content: Option<String>,
+    #[property(
+        description = "The document as base64, when it is a FILE. base64 because JSON cannot carry bytes and there is no other way to hand you a PDF through a tool call — it is NOT how it is stored, and the browser never sees base64 at all. Absent for a text document. Remember it is a third larger than the file: check `size` first"
+    )]
+    pub content_base64: Option<String>,
     #[property(description = "When this version was written, unix seconds (UTC)")]
     pub updated_unix_seconds: i64,
     #[property(description = "Who wrote this version — an email, or `AI`")]
@@ -399,12 +447,18 @@ pub struct DocumentContentView {
 
 impl DocumentContentView {
     pub fn from_dto(src: &crate::postgres::DocumentDto, project_prefix: &str) -> Self {
+        let (content, content_base64, is_binary, size) = split_body(crate::scripts::body_of(src));
+
         Self {
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.doc_path.clone(),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            is_binary,
+            size,
             version: src.version,
-            content: src.content.clone(),
+            content,
+            content_base64,
             updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
             updated_by: src.updated_by.clone(),
         }
@@ -418,16 +472,41 @@ impl DocumentContentView {
         src: &crate::postgres::DocumentHistoryDto,
         project_prefix: &str,
     ) -> Self {
+        let (content, content_base64, is_binary, size) =
+            split_body(crate::scripts::body_of_version(src));
+
         Self {
             id: src.document_id.clone(),
             project: project_prefix.to_string(),
             // The path AT THAT VERSION, not the current one — which is the whole reason a move is recorded
             // as a version.
             path: src.doc_path.clone(),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            is_binary,
+            size,
             version: src.version,
-            content: src.content.clone(),
+            content,
+            content_base64,
             updated_unix_seconds: src.moment.unix_microseconds / 1_000_000,
             updated_by: src.who.clone(),
+        }
+    }
+}
+
+/// A payload as the two optional wire fields: `(content, content_base64, is_binary, size)`.
+///
+/// One function because both constructors above need the identical four-way split, and because base64 belongs
+/// in exactly one place on this surface — here, at the boundary JSON forces it through.
+fn split_body(
+    body: crate::scripts::DocumentBody,
+) -> (Option<String>, Option<String>, bool, i64) {
+    let size = body.size_bytes();
+
+    match body {
+        crate::scripts::DocumentBody::Text(text) => (Some(text), None, false, size),
+        crate::scripts::DocumentBody::Binary(bytes) => {
+            use rust_extensions::base64::IntoBase64;
+            (None, Some(bytes.into_base64()), true, size)
         }
     }
 }
@@ -448,8 +527,10 @@ pub struct DocumentVersionView {
         description = "The path the document had AT THIS VERSION. This is what answers 'when did it move, and from where' — the reason a move is a version of its own"
     )]
     pub path: String,
-    #[property(description = "How many characters the text was at this version")]
+    #[property(description = "How big the payload was at this version, in bytes")]
     pub size: i64,
+    #[property(description = "What it was at this version — a MIME type. A rewrite may change it")]
+    pub content_type: String,
     #[property(description = "Who did it — an email, or `AI`")]
     pub who: String,
     #[property(description = "When, unix seconds (UTC)")]
@@ -457,12 +538,14 @@ pub struct DocumentVersionView {
 }
 
 impl DocumentVersionView {
-    pub fn from_dto(src: &crate::postgres::DocumentHistoryDto) -> Self {
+    /// From the blob-free history shape: listing a history must not read twenty copies of the document.
+    pub fn from_dto(src: &crate::postgres::DocumentVersionDto) -> Self {
         Self {
             version: src.version,
             event: src.event.clone(),
             path: src.doc_path.clone(),
-            size: src.content.chars().count() as i64,
+            size: src.content_size.unwrap_or(0),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
             who: src.who.clone(),
             moment_unix_seconds: src.moment.unix_microseconds / 1_000_000,
         }
@@ -480,8 +563,10 @@ pub struct TrashedDocumentView {
         description = "The path it had when it was deleted. A restore puts it back here unless you name another path, and is refused if something has taken this one since"
     )]
     pub path: String,
-    #[property(description = "How many characters the text is — it is kept in full")]
+    #[property(description = "How big it is, in bytes — the payload is kept in full")]
     pub size: i64,
+    #[property(description = "What it is — a MIME type")]
+    pub content_type: String,
     #[property(description = "When it was deleted, unix seconds (UTC)")]
     pub deleted_unix_seconds: i64,
     #[property(description = "Who deleted it — an email, or `AI`")]
@@ -489,11 +574,12 @@ pub struct TrashedDocumentView {
 }
 
 impl TrashedDocumentView {
-    pub fn from_dto(src: &crate::postgres::DocumentTrashDto) -> Self {
+    pub fn from_dto(src: &crate::postgres::DocumentTrashIndexDto) -> Self {
         Self {
             id: src.id.clone(),
             path: src.doc_path.clone(),
-            size: src.content.chars().count() as i64,
+            size: src.content_size.unwrap_or(0),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
             deleted_unix_seconds: src.deleted.unix_microseconds / 1_000_000,
             deleted_by: src.deleted_by.clone(),
         }

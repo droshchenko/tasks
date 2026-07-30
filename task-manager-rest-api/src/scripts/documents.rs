@@ -1,35 +1,187 @@
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use service_sdk::my_telemetry::MyTelemetryContext;
-use task_manager_shared::documents::normalise_document_path;
+use task_manager_shared::documents::{
+    DEFAULT_BINARY_CONTENT_TYPE, DEFAULT_TEXT_CONTENT_TYPE, content_type_for_path,
+    normalise_document_path,
+};
 
 use crate::app::AppContext;
-use crate::postgres::{DocumentDto, DocumentHistoryDto, DocumentTrashDto};
+use crate::documents::DocumentIndexEntry;
+use crate::postgres::{
+    DocumentDto, DocumentHistoryDto, DocumentTrashDto, DocumentTrashIndexDto, DocumentVersionDto,
+};
 
 use super::resolve_project_by_prefix;
 
-/// The longest a document may be, in characters.
+/// The longest a TEXT document may be, in characters.
 ///
-/// A constant rather than a setting on purpose: a setting would need a deployment to change and a template
-/// to carry it, and nobody has an opinion about this number until a write is refused — at which point the
-/// message says what the limit is. One MiB of text is a long specification; a document that does not fit is
-/// two documents.
+/// A constant rather than a setting: a setting needs a deployment to change and a template to carry it, and
+/// nobody has an opinion about this number until a write is refused — at which point the message says what
+/// the limit is. One MiB of prose is a long specification; a text that does not fit is two documents.
 pub const MAX_CONTENT_LEN: usize = 1_000_000;
+
+/// The largest BINARY document, in bytes.
+///
+/// Higher than the text limit and still deliberately modest, for three reasons that compound: **every version
+/// is kept whole**, so a 16 MiB file rewritten five times is 80 MiB of history that nothing prunes; the
+/// payload crosses the MCP boundary base64-encoded, which inflates it by a third; and the whole thing is held
+/// in memory on both sides of a single `INSERT` — there is no streaming here.
+///
+/// If real files start bouncing off this, the answer is not a bigger number: it is storing blobs outside
+/// Postgres and keeping only a key in the row.
+pub const MAX_BINARY_LEN: usize = 16 * 1024 * 1024;
+
+/// What a document actually holds. **Exactly one of the two, never both and never neither.**
+///
+/// An enum rather than two optional fields threaded through every function, because the invariant is the
+/// point: a document is text or it is bytes, and everything downstream — how it is drawn, whether it can be
+/// searched, whether a line in it could ever be referenced — follows from which. A row cannot hold an enum,
+/// so the two nullable columns are the storage and this is the truth that writes them.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DocumentBody {
+    /// Markdown, or any other text. The kind a person reads in the browser and an agent can diff.
+    Text(String),
+    /// A file — a PDF, an image, anything whose bytes are not text.
+    Binary(Vec<u8>),
+}
+
+impl DocumentBody {
+    pub fn is_binary(&self) -> bool {
+        matches!(self, Self::Binary(_))
+    }
+
+    /// The size in BYTES either way — UTF-8 bytes for text, real bytes for a file.
+    ///
+    /// One unit on purpose: a listing shows sizes of both kinds down one column, and two units would make it
+    /// a lie half the time.
+    pub fn size_bytes(&self) -> i64 {
+        match self {
+            Self::Text(text) => text.len() as i64,
+            Self::Binary(bytes) => bytes.len() as i64,
+        }
+    }
+
+    /// Refuse a payload that is too big, or one a text column cannot physically hold.
+    ///
+    /// The `NUL` check is the one that looks pedantic and is not: Postgres rejects `\0` in a `text` column,
+    /// and a JSON string may legally contain one. Without this the write fails inside the driver, which
+    /// reaches the caller as "it did not save" with no reason attached — and the fix they would reach for is
+    /// to try again. Bytes containing NUL are not a text document; they are a binary one.
+    fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Text(text) => {
+                let length = text.chars().count();
+
+                if length > MAX_CONTENT_LEN {
+                    return Err(format!(
+                        "that document is {length} characters — the limit is {MAX_CONTENT_LEN}. A text that does not fit is two documents"
+                    ));
+                }
+
+                if text.contains('\0') {
+                    return Err(
+                        "that text contains a NUL byte, which Postgres cannot store in a text column — upload it as binary if it is a file"
+                            .to_string(),
+                    );
+                }
+            }
+            Self::Binary(bytes) => {
+                if bytes.is_empty() {
+                    return Err("that file is empty".to_string());
+                }
+
+                if bytes.len() > MAX_BINARY_LEN {
+                    return Err(format!(
+                        "that file is {} bytes — the limit is {MAX_BINARY_LEN}. Every version is kept whole, so a large file is a large history",
+                        bytes.len()
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// The two columns this payload writes: `(content, binary_content)`.
+    fn into_columns(self) -> (Option<String>, Option<Vec<u8>>) {
+        match self {
+            Self::Text(text) => (Some(text), None),
+            Self::Binary(bytes) => (None, Some(bytes)),
+        }
+    }
+
+    /// Read a payload back out of the two columns.
+    ///
+    /// `binary_content` wins if both are somehow set, and a row with neither reads as empty text. Lenient
+    /// rather than fatal on purpose: the invariant is enforced where rows are written, and one odd row must
+    /// not make a document unreadable — the same leniency an unknown status or colour gets everywhere else.
+    pub fn from_columns(content: Option<String>, binary_content: Option<Vec<u8>>) -> Self {
+        match binary_content {
+            Some(bytes) => Self::Binary(bytes),
+            None => Self::Text(content.unwrap_or_default()),
+        }
+    }
+
+    /// The text, for a text document; `None` for a file.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text.as_str()),
+            Self::Binary(_) => None,
+        }
+    }
+
+}
+
+/// A document as a caller hands it over: what it holds, and what it is.
+pub struct NewDocumentContent {
+    pub body: DocumentBody,
+    /// The MIME type. `None` is worked out from the path — see `content_type_for_path` — which is what makes
+    /// `docs/spec.pdf` arrive as `application/pdf` without anybody saying so.
+    pub content_type: Option<String>,
+}
+
+impl NewDocumentContent {
+    /// The content type to store: what the caller said, else what the path implies, else a default that
+    /// depends on which kind of payload this is.
+    fn resolve_content_type(&self, path: &str) -> String {
+        if let Some(declared) = self
+            .content_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|itm| !itm.is_empty())
+        {
+            return declared.to_lowercase();
+        }
+
+        if let Some(guessed) = content_type_for_path(path) {
+            return guessed.to_string();
+        }
+
+        // Nothing said and nothing to guess from. The fallbacks differ because the payloads do: an unknown
+        // text is still text, and unknown bytes are a file to be downloaded rather than shown.
+        if self.body.is_binary() {
+            DEFAULT_BINARY_CONTENT_TYPE.to_string()
+        } else {
+            DEFAULT_TEXT_CONTENT_TYPE.to_string()
+        }
+    }
+}
 
 /// What a version of a document records having happened to it.
 ///
-/// Five values rather than a bool, because "the text changed" and "it moved" are the two questions a history
-/// is asked and a single flag answers neither. Stored as the string these produce, with no constraint in
-/// Postgres — the same leniency every open vocabulary here gets, so an unrecognised value renders as itself
-/// instead of failing a read of the history.
+/// Five values rather than a bool, because "the payload changed" and "it moved" are the two questions a
+/// history is asked and a single flag answers neither. Stored as the string these produce, with no constraint
+/// in Postgres — the same leniency every open vocabulary here gets, so an unrecognised value renders as
+/// itself instead of failing a read of the history.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DocumentEvent {
     /// The first version. There is exactly one of these per document, for ever.
     Created,
-    /// The text was rewritten at the same path.
+    /// The payload was rewritten at the same path.
     Updated,
-    /// The path changed; the text did not.
+    /// The path changed; the payload did not.
     Moved,
-    /// It went to the trash. The version records the path and text it had when it went.
+    /// It went to the trash. The version records the path and payload it had when it went.
     Deleted,
     /// It came back out of the trash, at the path this version records.
     Restored,
@@ -51,19 +203,20 @@ impl DocumentEvent {
 ///
 /// **The path is the key, and the id is the identity.** An upload never takes an id: it looks the path up
 /// within the project, and either writes a new version of what it found or creates something new. That is
-/// what makes "just upload the file again" the whole of the editing story — a caller holding a file and a
-/// path needs to know nothing else.
+/// what makes "just upload the file again" the whole of the editing story.
 ///
-/// Which is also why moving is a *different* call. If an upload could take a new path together with new
-/// text, the history could not tell "somebody rewrote it" from "somebody moved it", and those are the two
+/// Which is also why moving is a *different* call. If an upload could carry a new path together with a new
+/// payload, the history could not tell "somebody rewrote it" from "somebody moved it", and those are the two
 /// things a history is for. See [`update_document_path`].
 ///
-/// Returns the document as it now stands.
+/// **A rewrite may change the KIND of a document**, text to binary or back, and that is allowed: it is one
+/// document at one path whose payload was replaced, and the history records what each version held. Refusing
+/// it would only push somebody into deleting and re-uploading, which loses the thread.
 pub async fn upload_document(
     app: &AppContext,
     project_prefix: &str,
     path: &str,
-    content: &str,
+    content: NewDocumentContent,
     who: &str,
 ) -> Result<DocumentDto, String> {
     let project_id = {
@@ -74,12 +227,11 @@ pub async fn upload_document(
     let path = normalise_document_path(path)?;
     let who = require_author(who)?;
 
-    if content.chars().count() > MAX_CONTENT_LEN {
-        return Err(format!(
-            "that document is {} characters — the limit is {MAX_CONTENT_LEN}. A text that does not fit is two documents",
-            content.chars().count()
-        ));
-    }
+    content.body.validate()?;
+
+    let content_type = content.resolve_content_type(&path);
+    let size = content.body.size_bytes();
+    let (text, binary) = content.body.into_columns();
 
     let ctx = MyTelemetryContext::create_empty();
     let now = DateTimeAsMicroseconds::now();
@@ -96,7 +248,10 @@ pub async fn upload_document(
             id: existing.id,
             project_id,
             doc_path: path,
-            content: content.to_string(),
+            content_type: Some(content_type),
+            content: text,
+            binary_content: binary,
+            content_size: Some(size),
             version: existing.version + 1,
             // Kept, not restamped: a document was created once, and that is a different fact from when it
             // was last written.
@@ -109,7 +264,10 @@ pub async fn upload_document(
             id: rust_extensions::SortableId::generate().to_string(),
             project_id,
             doc_path: path,
-            content: content.to_string(),
+            content_type: Some(content_type),
+            content: text,
+            binary_content: binary,
+            content_size: Some(size),
             version: 1,
             created: now,
             updated: now,
@@ -124,19 +282,19 @@ pub async fn upload_document(
     };
 
     write_version(app, &row, &who, event, &ctx).await;
+    app.documents_index.upsert(&row);
 
     Ok(row)
 }
 
-/// Move a document to another path. The text is untouched and the id does not change.
+/// Move a document to another path. The payload is untouched and the id does not change.
 ///
 /// Its own call rather than a field on the upload, so the history says which of the two happened — see
 /// [`upload_document`]. It is also how a document is renamed, and how a "folder" is renamed: there is no
 /// folder to rename, so moving every document under a prefix is the operation, one call each.
 ///
-/// Refused when the destination is taken, rather than overwriting: two documents at one path is the one
-/// state the working table must never be in, and silently replacing somebody else's document with this one
-/// would lose it from the tree while leaving it in the history, which is the worst of both.
+/// **The content type is left exactly as it was**, even when the new path implies another one. A guess from
+/// an extension is how a type is chosen when nobody said; it is not a reason to overwrite what was said.
 pub async fn update_document_path(
     app: &AppContext,
     id: &str,
@@ -170,7 +328,10 @@ pub async fn update_document_path(
         id: existing.id,
         project_id: existing.project_id,
         doc_path: path,
+        content_type: existing.content_type,
         content: existing.content,
+        binary_content: existing.binary_content,
+        content_size: existing.content_size,
         version: existing.version + 1,
         created: existing.created,
         updated: DateTimeAsMicroseconds::now(),
@@ -178,14 +339,15 @@ pub async fn update_document_path(
     };
 
     write_version(app, &row, &who, DocumentEvent::Moved, &ctx).await;
+    app.documents_index.upsert(&row);
 
     Ok(row)
 }
 
 /// Put a document in the trash.
 ///
-/// Not a deletion: the row moves to a second table, keeping its id, its text and the last path it had. Which
-/// is why nothing prunes the references to it on tasks and goals — restoring is one call away, and a
+/// Not a deletion: the row moves to a second table, keeping its id, its payload and the last path it had.
+/// Which is why nothing prunes the references to it on tasks and goals — restoring is one call away, and a
 /// reference quietly removed here would not come back with the document.
 ///
 /// Returns the path it had, which is what a caller wants echoed back: it is what the document was called.
@@ -198,8 +360,8 @@ pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<St
     let now = DateTimeAsMicroseconds::now();
     let version = existing.version + 1;
 
-    // The version is written first, as always — see `write_version`. Recorded at the path and text it had
-    // when it went, so the history answers "what was in it when it was thrown away".
+    // The version is written first, as always — see `write_version`. Recorded with the path and payload it
+    // had when it went, so the history answers "what was in it when it was thrown away".
     app.documents_repo
         .upsert_history(
             &DocumentHistoryDto {
@@ -207,7 +369,10 @@ pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<St
                 version,
                 project_id: existing.project_id.clone(),
                 doc_path: existing.doc_path.clone(),
+                content_type: existing.content_type.clone(),
                 content: existing.content.clone(),
+                binary_content: existing.binary_content.clone(),
+                content_size: existing.content_size,
                 who: who.clone(),
                 event: DocumentEvent::Deleted.as_str().to_string(),
                 moment: now,
@@ -226,7 +391,10 @@ pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<St
                 id: existing.id.clone(),
                 project_id: existing.project_id.clone(),
                 doc_path: existing.doc_path.clone(),
-                content: existing.content.clone(),
+                content_type: existing.content_type,
+                content: existing.content,
+                binary_content: existing.binary_content,
+                content_size: existing.content_size,
                 version,
                 created: existing.created,
                 deleted: now,
@@ -237,6 +405,9 @@ pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<St
         .await;
 
     app.documents_repo.delete_row(&existing.id, &ctx).await;
+
+    app.documents_index
+        .remove(&existing.project_id, &existing.id);
 
     Ok(existing.doc_path)
 }
@@ -289,7 +460,10 @@ pub async fn restore_document(
         id: trashed.id.clone(),
         project_id: trashed.project_id.clone(),
         doc_path: path,
+        content_type: trashed.content_type.clone(),
         content: trashed.content.clone(),
+        binary_content: trashed.binary_content.clone(),
+        content_size: trashed.content_size,
         // One past the version it was deleted at, so its history is a single unbroken run rather than two.
         version: trashed.version + 1,
         created: trashed.created,
@@ -303,10 +477,12 @@ pub async fn restore_document(
     // reads as live, which is the harmless half of the two failure modes.
     app.documents_repo.delete_trash_row(&trashed.id, &ctx).await;
 
+    app.documents_index.upsert(&row);
+
     Ok(row)
 }
 
-/// One live document by id.
+/// One live document by id, payload included.
 pub async fn read_document(app: &AppContext, id: &str) -> Result<DocumentDto, String> {
     let ctx = MyTelemetryContext::create_empty();
     require_live(app, id, &ctx).await
@@ -334,48 +510,34 @@ pub async fn read_document_by_path(
     app.documents_repo
         .get_by_path(&project_id, &path, &ctx)
         .await
-        .ok_or_else(|| {
-            format!("no document at '{path}' on {}", project_prefix.to_uppercase())
-        })
+        .ok_or_else(|| format!("no document at '{path}' on {}", project_prefix.to_uppercase()))
 }
 
-/// Every live document of one project, by path.
+/// Every live document of one project, by path, WITHOUT the payloads.
 ///
-/// Sorted by path, which is what makes a folder tree fall out of a flat list: everything under `docs/` is
-/// contiguous, so a reader can group it in one pass.
-pub async fn list_documents(
+/// **Served from memory.** The index is the one part of a document that is cached — see
+/// `crate::documents::DocumentsIndex` — because it is what the tree is drawn from and what a card counts.
+/// The payloads are not, which is the whole point of splitting them.
+pub fn list_documents(
     app: &AppContext,
     project_prefix: &str,
-) -> Result<Vec<DocumentDto>, String> {
+) -> Result<Vec<DocumentIndexEntry>, String> {
     let project_id = {
         let board = app.board.read();
         resolve_project_by_prefix(&board, project_prefix)?.id.clone()
     };
 
-    Ok(list_documents_of_project(app, &project_id).await)
+    Ok(app.documents_index.of_project(&project_id))
 }
 
-/// The same list, for a caller that already holds the project id — the HTTP side, which is given one.
-pub async fn list_documents_of_project(app: &AppContext, project_id: &str) -> Vec<DocumentDto> {
-    let ctx = MyTelemetryContext::create_empty();
-
-    let mut rows = app
-        .documents_repo
-        .get_all_of_project(project_id, &ctx)
-        .await;
-
-    rows.sort_by(|left, right| left.doc_path.cmp(&right.doc_path));
-    rows
-}
-
-/// One project's trash, most recently deleted first.
+/// One project's trash, most recently deleted first, WITHOUT the payloads.
 ///
-/// Newest first, unlike the index: the trash is not browsed, it is looked at when something needs restoring,
-/// and what needs restoring is almost always what just went in.
+/// From Postgres rather than from memory, unlike the index: the trash is not drawn anywhere and is asked for
+/// rarely, so caching it would be a second copy to keep in step for nothing.
 pub async fn list_trash(
     app: &AppContext,
     project_prefix: &str,
-) -> Result<Vec<DocumentTrashDto>, String> {
+) -> Result<Vec<DocumentTrashIndexDto>, String> {
     let project_id = {
         let board = app.board.read();
         resolve_project_by_prefix(&board, project_prefix)?.id.clone()
@@ -398,27 +560,29 @@ pub async fn list_trash(
     Ok(rows)
 }
 
-/// Every version of one document, oldest first.
+/// Every version of one document, oldest first, WITHOUT the payloads.
 ///
 /// Works for a trashed document as well as a live one, and that is deliberate: the history is the reason the
 /// id is stable, so it must not stop answering the moment somebody deletes the thing.
 pub async fn document_history(
     app: &AppContext,
     id: &str,
-) -> Result<Vec<DocumentHistoryDto>, String> {
+) -> Result<Vec<DocumentVersionDto>, String> {
     let ctx = MyTelemetryContext::create_empty();
 
     let mut rows = app.documents_repo.get_history(id, &ctx).await;
 
     if rows.is_empty() {
-        return Err(format!("no document {id} — nothing has ever been written under that id"));
+        return Err(format!(
+            "no document {id} — nothing has ever been written under that id"
+        ));
     }
 
     rows.sort_by_key(|itm| itm.version);
     Ok(rows)
 }
 
-/// One version of one document, content included — how an old text is read back.
+/// One version of one document, payload included — how an old text or an old file is read back.
 pub async fn document_version(
     app: &AppContext,
     id: &str,
@@ -440,6 +604,26 @@ pub async fn document_version(
             })
         }
     }
+}
+
+/// The payload of a live document row.
+pub fn body_of(row: &DocumentDto) -> DocumentBody {
+    DocumentBody::from_columns(row.content.clone(), row.binary_content.clone())
+}
+
+/// The payload of one history row.
+pub fn body_of_version(row: &DocumentHistoryDto) -> DocumentBody {
+    DocumentBody::from_columns(row.content.clone(), row.binary_content.clone())
+}
+
+/// The content type to report for a row that may predate the column. `text/markdown` is what every document
+/// written before it existed was.
+pub fn content_type_of(stored: Option<&str>) -> String {
+    stored
+        .map(str::trim)
+        .filter(|itm| !itm.is_empty())
+        .unwrap_or(DEFAULT_TEXT_CONTENT_TYPE)
+        .to_string()
 }
 
 /// What a caller wants to change about the documents a task or a goal references.
@@ -469,6 +653,10 @@ impl DocumentsPatch {
     /// reference to one somebody cannot see would read as a broken link to them and as a working one to
     /// whoever wrote it.
     ///
+    /// **Checked against the in-memory index**, not Postgres: the index holds every live document's
+    /// reference, which is exactly what this question needs, and it is the reason the index exists. Only the
+    /// "is it in the trash" half — the branch that produces a better message — goes to the database.
+    ///
     /// Removal happens after addition, so an id passed to both ends up removed — the order labels use.
     pub async fn apply(
         &self,
@@ -477,8 +665,6 @@ impl DocumentsPatch {
         ids: &mut Vec<String>,
         owner: &str,
     ) -> Result<(), String> {
-        let ctx = MyTelemetryContext::create_empty();
-
         for id in &self.add {
             let id = id.trim();
 
@@ -486,10 +672,12 @@ impl DocumentsPatch {
                 return Err("a document reference needs an id".to_string());
             }
 
-            let Some(document) = app.documents_repo.get_by_id(id, &ctx).await else {
+            let Some(entry) = app.documents_index.get(id) else {
                 // A trashed document is named as trashed rather than as missing: attaching one is still
                 // refused — a reference should point at something a reader can open — but the fix is
                 // different, and it is one call away.
+                let ctx = MyTelemetryContext::create_empty();
+
                 return Err(match app.documents_repo.get_trashed(id, &ctx).await {
                     Some(trashed) => format!(
                         "document {id} is in the trash (it was at '{}') — restore it before attaching it to {owner}",
@@ -501,7 +689,7 @@ impl DocumentsPatch {
                 });
             };
 
-            if document.project_id != project_id {
+            if entry.project_id != project_id {
                 return Err(format!(
                     "document {id} belongs to another project, and a reference does not cross projects — {owner} can only point at documents of its own board"
                 ));
@@ -538,7 +726,9 @@ fn require_author(who: &str) -> Result<String, String> {
     let who = who.trim();
 
     if who.is_empty() {
-        return Err("a document write needs an author — pass `who` as an email, or `AI`".to_string());
+        return Err(
+            "a document write needs an author — pass `who` as an email, or `AI`".to_string(),
+        );
     }
 
     Ok(super::normalise_actor(who))
@@ -571,6 +761,9 @@ async fn require_live(
 /// a version nobody is serving: one row too many, which the next attempt overwrites, since history is
 /// upserted rather than inserted. The other order loses a version outright, and a history with a hole in it
 /// is not a history.
+///
+/// Memory comes after both, in the callers — the same order `scripts/` writes everything else in: Postgres
+/// first, then the copy that is served.
 async fn write_version(
     app: &AppContext,
     row: &DocumentDto,
@@ -585,7 +778,10 @@ async fn write_version(
                 version: row.version,
                 project_id: row.project_id.clone(),
                 doc_path: row.doc_path.clone(),
+                content_type: row.content_type.clone(),
                 content: row.content.clone(),
+                binary_content: row.binary_content.clone(),
+                content_size: row.content_size,
                 who: who.to_string(),
                 event: event.as_str().to_string(),
                 moment: row.updated,
@@ -650,5 +846,123 @@ mod tests {
             }
             .is_empty()
         );
+    }
+
+    /// Exactly one column each way. This is the invariant the two nullable columns cannot express on their
+    /// own, so it is worth a test rather than a comment.
+    #[test]
+    fn a_payload_writes_exactly_one_column() {
+        let (text, binary) = DocumentBody::Text("hello".to_string()).into_columns();
+        assert_eq!(text.as_deref(), Some("hello"));
+        assert!(binary.is_none());
+
+        let (text, binary) = DocumentBody::Binary(vec![1, 2, 3]).into_columns();
+        assert!(text.is_none());
+        assert_eq!(binary, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn a_payload_round_trips_through_its_columns() {
+        for body in [
+            DocumentBody::Text("# spec".to_string()),
+            DocumentBody::Binary(vec![0, 1, 2, 255]),
+        ] {
+            let (text, binary) = body.clone().into_columns();
+            assert_eq!(DocumentBody::from_columns(text, binary), body);
+        }
+    }
+
+    /// A row with neither column set must read as something rather than break: writes enforce the invariant,
+    /// reads are lenient — the rule the whole service follows.
+    #[test]
+    fn a_row_with_no_payload_reads_as_empty_text() {
+        assert_eq!(
+            DocumentBody::from_columns(None, None),
+            DocumentBody::Text(String::new())
+        );
+    }
+
+    /// Bytes for both kinds. Two units would make a listing's size column mean two different things.
+    #[test]
+    fn size_is_bytes_whichever_kind_it_is() {
+        // Two bytes in UTF-8, one character — which is exactly why the unit has to be said out loud.
+        assert_eq!(DocumentBody::Text("é".to_string()).size_bytes(), 2);
+        assert_eq!(DocumentBody::Binary(vec![0; 10]).size_bytes(), 10);
+    }
+
+    /// The check that stops a write failing inside the driver with no reason attached.
+    #[test]
+    fn a_nul_byte_is_refused_in_text() {
+        assert!(DocumentBody::Text("a\0b".to_string()).validate().is_err());
+        assert!(DocumentBody::Text("ab".to_string()).validate().is_ok());
+
+        // In BINARY it is perfectly normal — every PDF has them.
+        assert!(DocumentBody::Binary(vec![0, 1, 0]).validate().is_ok());
+    }
+
+    #[test]
+    fn an_oversized_payload_is_refused() {
+        let long = "a".repeat(MAX_CONTENT_LEN + 1);
+        assert!(DocumentBody::Text(long).validate().is_err());
+
+        let big = vec![0u8; MAX_BINARY_LEN + 1];
+        assert!(DocumentBody::Binary(big).validate().is_err());
+    }
+
+    #[test]
+    fn an_empty_file_is_refused_but_an_empty_text_is_not() {
+        assert!(DocumentBody::Binary(Vec::new()).validate().is_err());
+        // An empty text document is a real thing somebody created and will fill in.
+        assert!(DocumentBody::Text(String::new()).validate().is_ok());
+    }
+
+    /// What the caller said wins; then the path; then a default that depends on the kind of payload.
+    #[test]
+    fn the_content_type_is_declared_then_guessed_then_defaulted() {
+        let declared = NewDocumentContent {
+            body: DocumentBody::Binary(vec![1]),
+            content_type: Some("  Application/PDF ".to_string()),
+        };
+        assert_eq!(
+            declared.resolve_content_type("whatever.bin"),
+            "application/pdf",
+            "a declared type is taken, lower-cased"
+        );
+
+        let guessed = NewDocumentContent {
+            body: DocumentBody::Binary(vec![1]),
+            content_type: None,
+        };
+        assert_eq!(
+            guessed.resolve_content_type("docs/spec.pdf"),
+            "application/pdf"
+        );
+
+        let binary_fallback = NewDocumentContent {
+            body: DocumentBody::Binary(vec![1]),
+            content_type: None,
+        };
+        assert_eq!(
+            binary_fallback.resolve_content_type("docs/thing"),
+            DEFAULT_BINARY_CONTENT_TYPE
+        );
+
+        let text_fallback = NewDocumentContent {
+            body: DocumentBody::Text("x".to_string()),
+            content_type: None,
+        };
+        assert_eq!(
+            text_fallback.resolve_content_type("docs/thing"),
+            DEFAULT_TEXT_CONTENT_TYPE,
+            "unknown text is still text"
+        );
+    }
+
+    /// A row written before these columns existed reads as the Markdown document it was.
+    #[test]
+    fn a_row_predating_the_columns_reads_sensibly() {
+        assert_eq!(content_type_of(None), DEFAULT_TEXT_CONTENT_TYPE);
+        assert_eq!(content_type_of(Some("  ")), DEFAULT_TEXT_CONTENT_TYPE);
+        assert_eq!(content_type_of(Some("application/pdf")), "application/pdf");
     }
 }

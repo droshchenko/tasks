@@ -47,7 +47,7 @@ pub fn TopBar(active: &'static str) -> Element {
                 Link { class: class_of("goals"), to: AppRoute::Goals {}, "Goals" }
                 // Visible to everybody, unlike the admin screens: a document is the work's reference material,
                 // and reading it is what every member of a project needs.
-                Link { class: class_of("documents"), to: AppRoute::Documents {}, "Documents" }
+                Link { class: class_of("documents"), to: AppRoute::Documents { selected: String::new() }, "Documents" }
                 if is_admin {
                     Link {
                         class: class_of("projects"),

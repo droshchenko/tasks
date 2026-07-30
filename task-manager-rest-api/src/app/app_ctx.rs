@@ -6,6 +6,7 @@ use task_manager_shared::tasks::TaskResponse;
 use task_manager_shared::ws::{BoardSnapshot, ServerWsPayload};
 
 use crate::board::Board;
+use crate::documents::DocumentsIndex;
 use crate::postgres::{
     ColumnTemplatesRepo, DocumentsRepo, GoalsRepo, KindTemplatesRepo, ProjectMembersRepo,
     ProjectsRepo, TasksRepo, UsersRepo,
@@ -43,6 +44,14 @@ pub struct AppContext {
 
     // The state every read actually serves from.
     pub board: Board,
+
+    // Documents, minus their payloads — see `crate::documents::DocumentsIndex`.
+    //
+    // Its own field rather than a collection inside `board`, and that separation is the point: `board` is
+    // what the WebSocket pushes WHOLE to every open screen on every change, and a document index has no
+    // business travelling with it. A screen asks for the index over HTTP and is answered from here; the
+    // payloads are the only part that goes to Postgres per read.
+    pub documents_index: DocumentsIndex,
 
     // The Homes to tell when a board changes.
     pub subscribers: ProjectSubscribers,
@@ -87,6 +96,7 @@ impl AppContext {
             users_repo: UsersRepo::new(settings_reader.clone()).await,
             documents_repo: DocumentsRepo::new(settings_reader.clone()).await,
             board: Board::new(),
+            documents_index: DocumentsIndex::new(),
             subscribers: ProjectSubscribers::new(),
             session_key,
             settings_reader,

@@ -212,10 +212,7 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
             // snapshot carries the references and not the documents, so a path costs a request per card and
             // this screen deliberately does not make one until a row is clicked.
             if !task.documents.is_empty() {
-                super::DocumentRefs {
-                    project_id: found.project_id.clone(),
-                    ids: task.documents.clone(),
-                }
+                super::DocumentRefs { ids: task.documents.clone() }
             }
 
             if !task.labels.is_empty() {

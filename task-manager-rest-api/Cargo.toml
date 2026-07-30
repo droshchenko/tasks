@@ -28,7 +28,12 @@ my-ai-agent = { tag = "0.1.0", git = "https://github.com/my-ai-utils/my-ai-agent
 
 # `SortableId` for project ids. Direct dependency rather than through service-sdk because
 # task-manager-shared names the same crate and the two must not resolve to different versions.
-rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
+# `base64` for the binary half of a document. Only on this side: base64 exists because JSON cannot carry
+# bytes, so it is the wire format for a binary payload and never the storage format — Postgres gets the real
+# bytes in `bytea`. The browser needs no decoder either: it puts the same string straight into a `data:` URL.
+rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git", features = [
+    "base64",
+] }
 
 # The Google OAuth code->token exchange and the userinfo read. FlUrl is the only HTTP client
 # allowed in MyJetTools projects — reqwest is not.

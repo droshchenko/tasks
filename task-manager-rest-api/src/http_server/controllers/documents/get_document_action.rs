@@ -14,7 +14,7 @@ use_my_http_server!();
     route: "/api/documents/v1/get",
     controller: "Documents",
     summary: "Read one document",
-    description: "One document with its text. This is the fetch-on-demand half of the design: a board read carries only the IDS of the documents a task or a goal references, and the text is asked for here when somebody opens one. A miss comes back as prose rather than as an empty body — most usefully for a document that has been deleted, which reads as 'it is in the trash' and not as a blank pane, because restoring it is one MCP call away. The trash itself is not readable from here: what is in it, and putting anything back, are MCP-only.",
+    description: "One document with its TEXT, and metadata for one that has none. This is the fetch-on-demand half of the design: the index carries no payloads, and a text arrives here when somebody opens it. A BINARY document comes back with `content` absent and `isBinary` true — its bytes are not in this response on purpose, because the browser fetches those from /api/documents/v1/raw, where an <iframe> or an <img> can be pointed straight at them and nothing pays for base64. A miss is prose rather than an empty body: a reference to a deleted document reads as 'it is in the trash', which is a different thing to be told than 'it is not there', because restoring it is one MCP call away.",
     input_data: "GetDocumentInputModel",
     result: [
         {status_code: 200, description: "The document, or why there is none", model: "FindDocumentResponse"},
@@ -58,7 +58,7 @@ async fn handle_request(
         .into_ok_result(true);
     }
 
-    // Not live. The trash is asked ONLY to say which of the two misses this is — the row itself is not
+    // Not live. The trash is asked ONLY to say which of the two misses this is — the row itself is never
     // returned, because the browser does not show trashed documents at all.
     let in_trash = action
         .app

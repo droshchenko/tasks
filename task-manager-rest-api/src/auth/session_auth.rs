@@ -50,7 +50,20 @@ pub async fn resolve_auth_user(
         return Err(unauthorized("Not authenticated"));
     };
 
-    let Some(session) = crate::auth::SessionToken::parse(&token, &app.session_key) else {
+    resolve_auth_user_from_token(app, &token).await
+}
+
+/// The same resolution, from a token that did NOT arrive in a header.
+///
+/// It exists for the one request a browser makes without our code in the loop: an `<iframe>` or an `<img>`
+/// pointed at a document's bytes. Neither tag can carry an `Authorization` header, so the token travels as a
+/// query parameter — exactly the trade the WebSocket already makes here, and for exactly the same reason. It
+/// is the same token, checked the same way; only the envelope differs.
+pub async fn resolve_auth_user_from_token(
+    app: &Arc<AppContext>,
+    token: &str,
+) -> Result<AuthUser, HttpFailResult> {
+    let Some(session) = crate::auth::SessionToken::parse(token, &app.session_key) else {
         return Err(unauthorized("Not authenticated"));
     };
 
@@ -105,7 +118,25 @@ pub async fn require_project_access(
     project_id: &str,
 ) -> Result<AuthUser, HttpFailResult> {
     let user = resolve_auth_user(app, ctx).await?;
+    check_project_access(app, user, project_id)
+}
 
+/// Board access for a caller whose token came from a query parameter — see
+/// [`resolve_auth_user_from_token`].
+pub async fn require_project_access_with_token(
+    app: &Arc<AppContext>,
+    token: &str,
+    project_id: &str,
+) -> Result<AuthUser, HttpFailResult> {
+    let user = resolve_auth_user_from_token(app, token).await?;
+    check_project_access(app, user, project_id)
+}
+
+fn check_project_access(
+    app: &Arc<AppContext>,
+    user: AuthUser,
+    project_id: &str,
+) -> Result<AuthUser, HttpFailResult> {
     if user.is_admin {
         return Ok(user);
     }

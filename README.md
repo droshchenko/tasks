@@ -51,11 +51,12 @@ What this buys, beyond speed: the id counter has no race (it is a field under a 
 `MAX(number)+1`), prefix uniqueness and the `RMS-42` → project resolution are in-process lookups,
 and `blocked` / `blocks` / the label set are derived on every read for free.
 
-**There is exactly one exception, and it is deliberate: documents.** A document is a text somebody opens
-occasionally, and the board is pushed *whole* down a WebSocket on every change — holding documents in memory
-would mean shipping every text to every open screen every time anybody moved a sticker. So they live in
-Postgres and are read on request. What travels in the snapshot is the *ids* of the documents a task or a goal
-references: a handful of short strings, enough to draw a count without a query. See **Documents** below.
+**There is one exception, and it is narrower than it sounds: a document's PAYLOAD.** Everything *about* a
+document — its path, size, kind and id — is held in memory like everything else, in its own collection beside
+the board. What is not is the bytes: a document can be a PDF, and the board is pushed *whole* down a WebSocket
+on every change, so caching payloads would ship every file on the board to every open screen every time
+anybody moved a sticker. Payloads are read from Postgres one document at a time, when somebody opens one. See
+**Documents** below.
 
 What it costs: **`task-manager-rest-api` is single-instance.** State is authoritative in the
 process and the WebSocket fan-out is in-process, so a second replica would both diverge and fail
@@ -276,7 +277,21 @@ reference. It belongs to one project, it lives at a path — `docs/design/system
 **reference** it instead of copying it into their own text. That is the whole point: one place that gets
 edited, rather than three copies that drift apart in silence.
 
-**The path is the key; the id is the identity.** `documents_upload` takes a project, a path and the text, and
+**A document is text OR bytes.** A specification in Markdown and an uploaded PDF are both documents at both
+paths, and exactly one of two nullable columns holds each: `content` for text, `binary_content` — a `bytea` —
+for a file. Not an enum, because a column cannot be one; the invariant is established on the write path and
+every read decides which kind it is holding by asking which column is filled. `content_type` sits beside them
+as metadata (worked out from the extension when nobody says), and `content_size` is stored rather than computed
+— a listing wants a size, and computing one means reading the payload.
+
+**base64 appears in exactly one place: an MCP argument.** JSON cannot carry bytes, so `documents_upload` takes
+`binary_base64` and `documents_get` hands one back, decoded and encoded at that boundary and nowhere else. The
+browser never sees base64 at all — it points an `<img>` or an `<iframe>` at `/api/documents/v1/raw`, which
+serves the real bytes with the document's own `Content-Type`, so a PDF opens in the browser's own viewer. That
+endpoint takes the session token as a QUERY PARAMETER, because neither tag can send an `Authorization`
+header — the same trade the WebSocket already makes here, for the same reason.
+
+**The path is the key; the id is the identity.** `documents_upload` takes a project, a path and a payload, and
 looks the path up: found, and it writes a *new version* of the document that lives there, keeping its id and
 its whole history; not found, and it creates one. So "upload the file again" is the entire editing story, and
 a caller holding a file and a path needs to know nothing else. The id, by contrast, is a `SortableId` minted
@@ -333,12 +348,21 @@ Validating an added id is the one piece of validation in `scripts/` that reads P
 in memory. It happens before a task number is reserved, like everything else, so a refused reference does not
 burn an id.
 
-In the browser: a **Documents** screen with the tree, and a document opens in a dialog that fetches its own
-text — the only dialog on that side that fetches anything, because it is the only one whose model is not
-already in hand. The task and goal dialogs draw their references as rows labelled by *id*, which looks
-unfriendly and is the honest shape of what the client knows: the path appears the moment the document is
-opened, as the dialog's title. And nothing on that screen is live, deliberately: the socket carries the
-board, so a Refresh button is the answer to "an agent just uploaded something".
+In the browser: a **Documents** screen with the tree on the left and the selected document on the right,
+modelled on the file browser in `remote-development-mcp` down to the class names — it is the same problem, and
+a second design for it would be a second thing to maintain. The selection lives in the URL
+(`/documents?selected=<id>`), so a document is linkable, survives a reload and works with the back button;
+which folders are open is remembered per project in local storage, and every folder down to a linked document
+is opened so a link lands ON it. Markdown is rendered with a source toggle, an image is drawn in place, a PDF
+is framed with a way out to a full tab, and anything else is offered as a download.
+
+A reference on a task or a goal is a row labelled by *id* — the honest shape of what the client knows, since
+the snapshot carries ids and not documents — and clicking it LEAVES the dialog for that screen rather than
+opening a window over it: a PDF wants the pane the browser's viewer needs, which a modal over a board cannot
+give it.
+
+Nothing on that screen is live, deliberately: the socket carries the board, and documents must not ride along,
+so Refresh is the answer to "an agent just uploaded something".
 
 **The `(project_id, doc_path)` index is unique**, as the backstop under the path-is-the-key rule: the
 application checks before it writes, and the index is what stops two writes racing past that check.

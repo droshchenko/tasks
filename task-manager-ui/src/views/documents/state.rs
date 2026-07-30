@@ -1,0 +1,148 @@
+use std::collections::HashSet;
+
+use dioxus_utils::DataState;
+use task_manager_shared::documents::{DocumentIndexEntryResponse, FindDocumentResponse};
+use task_manager_shared::projects::ProjectResponse;
+
+/// The document browser, for one project at a time.
+///
+/// **Which document is SELECTED is deliberately not here: it lives in the url.** That is what makes a document
+/// linkable — `/documents?selected=<id>` opens it, survives a reload and works with the back button — and it
+/// is the pattern the file browser in `remote-development-mcp` uses, which this screen is modelled on.
+///
+/// What is below is the state that has no business being in an address: which project, which folders are
+/// open, and the payload of whatever is being read.
+#[derive(Default)]
+pub struct DocumentsState {
+    pub projects: DataState<Vec<ProjectResponse>>,
+    /// Which project is being browsed.
+    pub selected_project: String,
+    /// The project's whole index — paths, sizes and kinds, no payloads. One request rather than a fetch per
+    /// folder: the server holds the index in memory, so the whole of it costs less than the round trips
+    /// walking it one level at a time would.
+    pub index: DataState<Vec<DocumentIndexEntryResponse>>,
+    /// Which folders are drawn open, by full path. Mirrored into storage on every change.
+    expanded: HashSet<String>,
+    /// The document being read. Only ever a text one — a file's bytes are fetched by the browser itself from
+    /// the raw endpoint, and never pass through here.
+    pub content: DataState<FindDocumentResponse>,
+    /// Which document `content` holds. The selection lives in the url and can change without this state being
+    /// touched, so the two are compared rather than assumed to agree — without it the pane would show the
+    /// previous document under the new one's name.
+    content_id: Option<String>,
+    /// Markdown is shown rendered; this is the reader asking for the source it was rendered from. Kept across
+    /// documents on purpose — somebody reading sources stays reading sources.
+    pub show_source: bool,
+}
+
+impl DocumentsState {
+    pub fn is_expanded(&self, path: &str) -> bool {
+        self.expanded.contains(path)
+    }
+
+    /// Open or close one folder.
+    ///
+    /// Unlike the file browser this is modelled on, closing drops nothing: the whole index arrived in one
+    /// response, so re-opening a folder costs no request and there is nothing to re-fetch.
+    pub fn toggle(&mut self, path: &str) {
+        if !self.expanded.remove(path) {
+            self.expanded.insert(path.to_string());
+        }
+
+        self.persist_expanded();
+    }
+
+    /// Switch projects, dropping everything that belonged to the old one — a path from one project names
+    /// nothing in another. The open folders are not cleared but swapped for the ones this project was left
+    /// with.
+    pub fn select_project(&mut self, project_id: String) {
+        if self.selected_project == project_id {
+            return;
+        }
+
+        self.expanded = crate::web::storage::get_expanded_folders(&project_id);
+        self.selected_project = project_id;
+        self.index.reset();
+        self.content.reset();
+        self.content_id = None;
+    }
+
+    /// Adopt a project and the folders it was left open at, plus every folder on the way down to whatever the
+    /// url points at — so a link to a document lands ON the document rather than on a collapsed tree with it
+    /// somewhere inside.
+    pub fn adopt_project(&mut self, project_id: String, selected_path: &str) {
+        self.expanded = crate::web::storage::get_expanded_folders(&project_id);
+        self.expanded.extend(ancestors_of(selected_path));
+        self.selected_project = project_id;
+    }
+
+    /// Open every folder on the way down to a path, for a selection that arrived after the first render —
+    /// following a reference from a task, say.
+    pub fn reveal(&mut self, selected_path: &str) {
+        let before = self.expanded.len();
+        self.expanded.extend(ancestors_of(selected_path));
+
+        if self.expanded.len() != before {
+            self.persist_expanded();
+        }
+    }
+
+    /// Whether `content` holds this document rather than one read before it.
+    pub fn content_is_for(&self, id: &str) -> bool {
+        self.content_id.as_deref() == Some(id)
+    }
+
+    /// Claim `content` for a document and mark it in flight — both in one write, so no render sees the slot
+    /// claimed while it still holds the previous document.
+    pub fn begin_content_load(&mut self, id: &str) {
+        self.content_id = Some(id.to_string());
+        self.content.set_loading();
+    }
+
+    pub fn toggle_source(&mut self) {
+        self.show_source = !self.show_source;
+    }
+
+    /// Re-read the index. The one refresh gesture the screen has: there is no WebSocket for documents — the
+    /// socket carries the board, and payloads must not ride along — so a document an agent uploads while this
+    /// is open does not appear on its own.
+    pub fn refresh(&mut self) {
+        self.index.reset();
+        self.content.reset();
+        self.content_id = None;
+    }
+
+    fn persist_expanded(&self) {
+        if !self.selected_project.is_empty() {
+            crate::web::storage::set_expanded_folders(&self.selected_project, &self.expanded);
+        }
+    }
+}
+
+/// Every folder on the way down to a document — `docs` and `docs/design` for `docs/design/system.md`. The
+/// document itself is not one of them, and neither is the root, which is always drawn open.
+fn ancestors_of(path: &str) -> Vec<String> {
+    path.char_indices()
+        .filter(|(_, character)| *character == '/')
+        .map(|(at, _)| path[..at].to_string())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_document_names_every_folder_above_it() {
+        assert_eq!(
+            ancestors_of("docs/design/system.md"),
+            vec!["docs", "docs/design"]
+        );
+    }
+
+    #[test]
+    fn a_document_at_the_root_names_none() {
+        assert!(ancestors_of("notes.md").is_empty());
+        assert!(ancestors_of("").is_empty());
+    }
+}

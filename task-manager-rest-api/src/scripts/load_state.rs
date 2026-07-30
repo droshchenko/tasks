@@ -26,6 +26,11 @@ pub async fn load_state(app: &AppContext) {
     let kind_template_rows = app.kind_templates_repo.get_all(&ctx).await;
     let goal_rows = app.goals_repo.get_all(&ctx).await;
 
+    // Documents come in WITHOUT their payloads — that is what the index shape is for. A project's documents
+    // can include PDFs, and loading those into the process would defeat the one decision this feature is
+    // built around.
+    let document_rows = app.documents_repo.get_all_indexed(&ctx).await;
+
     // Membership lives in its own table, so it is folded back onto the projects here — the only place
     // the two halves are joined.
     let mut members_by_project: AHashMap<String, BTreeSet<String>> = AHashMap::new();
@@ -57,6 +62,10 @@ pub async fn load_state(app: &AppContext) {
 
     let kind_templates: Vec<KindTemplateModel> =
         kind_template_rows.iter().map(|row| row.into()).collect();
+
+    // Its own collection, installed beside the board rather than inside it — the board is pushed whole down a
+    // socket and documents must not ride along.
+    app.documents_index.replace_all(&document_rows);
 
     app.board.replace_all(BoardInner::from_loaded(
         projects,

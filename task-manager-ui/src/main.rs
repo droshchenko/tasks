@@ -48,10 +48,11 @@ pub enum AppRoute {
     // arguments — nothing here is searched, and which project is showing is remembered rather than linked.
     #[route("/goals")]
     Goals {},
-    // The project's documents, as folders and files. No query arguments and nothing remembered in the URL:
-    // which document is open is a dialog, and a dialog is not a place.
-    #[route("/documents")]
-    Documents {},
+    // The project's documents: the tree on the left, whatever is selected on the right. The selection is IN
+    // the url so a document can be linked to — an agent can say "see TM/docs/design.md" as an address, and a
+    // reload lands back on it. Modelled on the file browser in `remote-development-mcp`.
+    #[route("/documents?:selected")]
+    Documents { selected: String },
     #[route("/projects-setup")]
     ProjectsSetup {},
     #[route("/users")]
@@ -189,10 +190,10 @@ fn Goals() -> Element {
 }
 
 #[component]
-fn Documents() -> Element {
+fn Documents(selected: String) -> Element {
     rsx! {
         Shell { active: "documents",
-            crate::views::documents::RenderDocuments {}
+            crate::views::documents::RenderDocuments { selected }
         }
     }
 }
