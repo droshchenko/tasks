@@ -499,7 +499,14 @@ input[readonly] {
      `.sticker-body` instead. Doing it with negative margins on the band was arithmetic against the card's
      padding and its left border, and it hung over the right edge. */
   border-left: 3px solid transparent;
-  overflow: hidden;
+  /* NOT `overflow: hidden`, however tempting it looks for clipping the band's corners. A flex item whose
+     overflow is not `visible` loses its automatic minimum size — `min-height: auto` stops meaning "as tall
+     as the content" — and a column of 61 cards then squashes every one of them into a 1px line to fit the
+     scroll area. The band rounds its own top corners instead, which needs no clipping at all.
+
+     `flex-shrink: 0` says the same thing outright: a card is as tall as what is on it, and a full column
+     scrolls rather than compressing. */
+  flex-shrink: 0;
   /* The card is a double-click target, and a double-click selects a word. Without this, opening a task
      leaves half its title highlighted behind the dialog. Nothing is lost — the text is selectable in the
      dialog, which is where it is read. */
@@ -689,6 +696,9 @@ input[type="text"].board-search {
   align-items: center;
   gap: 6px;
   padding: 4px 11px;
+  /* Its own top corners, so the card does not have to clip it — see the note on `.sticker` about what
+     clipping cost. The bottom stays square: the band meets the body, not the card's edge. */
+  border-radius: var(--radius) var(--radius) 0 0;
   font-size: 11px;
   color: #fff;
   /* White on amber is unreadable; a dark shadow behind the glyphs costs nothing and works on all eight. */
