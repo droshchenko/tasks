@@ -281,6 +281,43 @@ select:focus {
   box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.16);
 }
 
+/* A file input, which the rules above cannot reach: `input[type="file"]` is not a text box and styling the
+   control itself is largely refused by browsers. What CAN be styled is its button, via
+   `::file-selector-button` — so the field is given the same border and padding as its neighbours, and the
+   button inside it is made to look like the product's own. Without this the row is the browser's raw widget
+   sitting between two styled boxes, which is what it looked like. */
+input[type="file"] {
+  font: inherit;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 6px 9px;
+  min-width: 0;
+}
+
+input[type="file"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.16);
+}
+
+input[type="file"]::file-selector-button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  margin-right: 10px;
+  cursor: pointer;
+}
+
+input[type="file"]::file-selector-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 input[readonly] {
   background: var(--surface-2);
   color: var(--text-muted);
@@ -1955,11 +1992,16 @@ button.task-view-check-row:hover {
 
 /* The upload form. The only place in this product a person puts something INTO it with a mouse, so it is
  * deliberately plain: three fields, and the path they add up to spelled out underneath. */
+/* The rows bring their own bottom margin — `.form-row` is the product's field, and this form uses it rather
+ * than inventing a second one. So no `gap` here, or every field would be spaced twice. */
 .upload-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
   min-width: 420px;
+}
+
+/* The last row sits on the footer otherwise: `.form-row`'s margin is for stacking, and there is nothing
+ * below it to stack against. */
+.upload-form > .form-row:last-of-type {
+  margin-bottom: 0;
 }
 
 /* The typed folder and the dropdown of the ones that exist, side by side — the dropdown writes into the box,

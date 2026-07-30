@@ -48,6 +48,43 @@ select:focus {
   box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.16);
 }
 
+/* A file input, which the rules above cannot reach: `input[type="file"]` is not a text box and styling the
+   control itself is largely refused by browsers. What CAN be styled is its button, via
+   `::file-selector-button` — so the field is given the same border and padding as its neighbours, and the
+   button inside it is made to look like the product's own. Without this the row is the browser's raw widget
+   sitting between two styled boxes, which is what it looked like. */
+input[type="file"] {
+  font: inherit;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 6px 9px;
+  min-width: 0;
+}
+
+input[type="file"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.16);
+}
+
+input[type="file"]::file-selector-button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  margin-right: 10px;
+  cursor: pointer;
+}
+
+input[type="file"]::file-selector-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 input[readonly] {
   background: var(--surface-2);
   color: var(--text-muted);

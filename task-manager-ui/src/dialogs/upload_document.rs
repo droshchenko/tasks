@@ -65,11 +65,11 @@ pub fn UploadDocumentDialog(
 
     let content = rsx! {
         div { class: "upload-form",
-            div { class: "field",
-                label { class: "field-label", "Folder" }
+            div { class: "form-row",
+                label { "Folder" }
                 div { class: "upload-folder",
                     input {
-                        class: "input",
+                        r#type: "text",
                         placeholder: "docs/design — leave empty for the top level",
                         value: "{folder}",
                         oninput: move |event| cs.write().folder = event.value(),
@@ -78,7 +78,7 @@ pub fn UploadDocumentDialog(
                     // folder, and it can then be edited into a new one.
                     if !folders.is_empty() {
                         select {
-                            class: "input upload-folder-pick",
+                            class: "upload-folder-pick",
                             onchange: move |event| cs.write().folder = event.value(),
                             option { value: "", "— existing folders —" }
                             for existing in folders.iter() {
@@ -92,8 +92,8 @@ pub fn UploadDocumentDialog(
                 }
             }
 
-            div { class: "field",
-                label { class: "field-label", "File" }
+            div { class: "form-row",
+                label { "File" }
                 input {
                     r#type: "file",
                     onchange: move |event| {
@@ -147,10 +147,10 @@ pub fn UploadDocumentDialog(
                 }
             }
 
-            div { class: "field",
-                label { class: "field-label", "Name" }
+            div { class: "form-row",
+                label { "Name" }
                 input {
-                    class: "input",
+                    r#type: "text",
                     placeholder: "system.md",
                     value: "{name}",
                     oninput: move |event| cs.write().name = event.value(),

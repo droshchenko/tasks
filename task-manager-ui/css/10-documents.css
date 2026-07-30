@@ -256,11 +256,16 @@
 
 /* The upload form. The only place in this product a person puts something INTO it with a mouse, so it is
  * deliberately plain: three fields, and the path they add up to spelled out underneath. */
+/* The rows bring their own bottom margin — `.form-row` is the product's field, and this form uses it rather
+ * than inventing a second one. So no `gap` here, or every field would be spaced twice. */
 .upload-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
   min-width: 420px;
+}
+
+/* The last row sits on the footer otherwise: `.form-row`'s margin is for stacking, and there is nothing
+ * below it to stack against. */
+.upload-form > .form-row:last-of-type {
+  margin-bottom: 0;
 }
 
 /* The typed folder and the dropdown of the ones that exist, side by side — the dropdown writes into the box,
