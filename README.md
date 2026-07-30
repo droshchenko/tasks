@@ -388,6 +388,18 @@ give it.
 Nothing on that screen is live, deliberately: the socket carries the board, and documents must not ride along,
 so Refresh is the answer to "an agent just uploaded something".
 
+**Uploading is the second exception in the product to "MCP writes, the UI reads"** — the first being a goal's
+colour. It earns it: the alternative is not a person using MCP, it is a person unable to upload at all, because
+a PDF on a laptop cannot reach an agent without being base64-ed by hand into a tool call. Everything else about
+a document — moving, deleting, restoring — is still MCP only, and the browser's upload is a second DOOR into
+the same write path rather than a second path: uploading onto a taken path writes a new version of what is
+there, keeping its id and its history, exactly as the tool does. The author comes from the session rather than
+from an argument, which is the one thing this side does better than MCP.
+
+The form has no "create folder", because there is nothing to create: a folder exists for as long as a document
+is in it. Choosing an existing folder and making a new one are one act — typing a path — and the dropdown
+beside the box is a shortcut that fills it in.
+
 **The `(project_id, doc_path)` index is unique**, as the backstop under the path-is-the-key rule: the
 application checks before it writes, and the index is what stops two writes racing past that check.
 
