@@ -92,6 +92,43 @@ pub struct GetDocumentsInputModel {
     pub project: String,
 }
 
+// Upload a document from the browser.
+//
+// **The one write the browser makes about a document, and the second exception in the whole product to
+// "MCP writes, the UI reads"** — the first being a goal's colour. It is here because the alternative is not a
+// person using MCP, it is a person unable to upload at all: a PDF on a laptop cannot reach an agent without
+// being base64-ed by hand into a tool call.
+//
+// The payload is base64 in a JSON body rather than multipart. It costs a third of the size on the way up,
+// once per upload, and it buys the same request path everything else on this surface already uses — where
+// multipart would mean a road through FlUrl's wasm backend that nothing here has travelled.
+//
+// There is no `who`: the browser HAS a session, so the author is the person signed in. That is strictly better
+// than the MCP side, where `who` is an argument because there is nobody to ask.
+#[derive(MyHttpInput)]
+pub struct UploadDocumentInputModel {
+    #[http_body(name: "project", description: "Which project to put it on, by prefix")]
+    pub project: String,
+    #[http_body(
+        name: "path",
+        description: "Where it goes — `notes.md`, or `docs/design/system.md`. Uploading to a path that is taken writes a new version of the document already there"
+    )]
+    pub path: String,
+    #[http_body(name: "contentBase64", description: "The file, base64-encoded")]
+    pub content_base64: String,
+    #[http_body(
+        name: "contentType",
+        description: "The MIME type the browser reported for the file. Omitted or empty lets the path decide"
+    )]
+    pub content_type: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct UploadDocumentResponse {
+    pub id: String,
+    pub path: String,
+}
+
 #[derive(MyHttpInput)]
 pub struct GetDocumentInputModel {
     #[http_body(name: "project", description: "Which project the document belongs to, by prefix")]

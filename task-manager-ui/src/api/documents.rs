@@ -1,6 +1,7 @@
 use flurl::HttpVerb;
 use task_manager_shared::documents::{
     DocumentsResponse, FindDocumentResponse, GetDocumentInputModel, GetDocumentsInputModel,
+    UploadDocumentInputModel, UploadDocumentResponse,
 };
 
 use crate::models::RequestError;
@@ -34,4 +35,31 @@ pub async fn get_document(
     };
 
     handle_http_response(authed("/api/documents/v1/get", HttpVerb::Post, request).await).await
+}
+
+/// Upload a file into a project's documents.
+///
+/// **The only write this client makes about a document.** Everything else — moving, deleting, restoring —
+/// arrives through `/mcp`, like every change to the board. This exists because the alternative is not a person
+/// using MCP, it is a person unable to upload at all: a PDF on a laptop cannot reach an agent without being
+/// base64-ed by hand into a tool call.
+///
+/// The bytes go up base64-encoded in a JSON body. It costs a third of the size on the way up, once per upload,
+/// and it buys the same request path every other call here already uses.
+pub async fn upload_document(
+    project_prefix: &str,
+    path: &str,
+    bytes: &[u8],
+    content_type: Option<String>,
+) -> Result<UploadDocumentResponse, RequestError> {
+    use rust_extensions::base64::IntoBase64;
+
+    let request = UploadDocumentInputModel {
+        project: project_prefix.to_string(),
+        path: path.to_string(),
+        content_base64: bytes.into_base64(),
+        content_type,
+    };
+
+    handle_http_response(authed("/api/documents/v1/upload", HttpVerb::Post, request).await).await
 }

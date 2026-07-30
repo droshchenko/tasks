@@ -78,6 +78,10 @@ pub fn RenderDocuments(selected: String) -> Element {
         Err(_) => Vec::new(),
     };
 
+    // Every folder that exists, for the upload dialog to offer. Off the tree rather than off the paths, so it
+    // is the same set the reader is looking at.
+    let folders = super::all_folder_paths(&nodes);
+
     let tree_note = index.err();
 
     let document = match found.as_ref() {
@@ -147,6 +151,26 @@ pub fn RenderDocuments(selected: String) -> Element {
                     title: "Read the index again",
                     onclick: move |_| cs.write().refresh(),
                     "Refresh"
+                }
+                button {
+                    class: "btn btn-primary",
+                    title: "Put a file into this project's documents",
+                    onclick: {
+                        let project = project_id.clone();
+                        let folders = folders.clone();
+
+                        move |_| {
+                            crate::dialogs::open(crate::dialogs::DialogState::UploadDocument {
+                                project: project.clone(),
+                                folders: folders.clone(),
+                                // The index is read again rather than patched: the upload may have written a
+                                // NEW VERSION of a document already there, which changes a size and a version
+                                // as well as adding a row.
+                                on_uploaded: EventHandler::new(move |_| cs.write().refresh()),
+                            });
+                        }
+                    },
+                    "Upload"
                 }
             }
 

@@ -47,6 +47,8 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
     // is not exposed here at all — it is not a place a person browses.
     http_server_builder.register_post_action(documents::ListDocumentsAction::new(app.clone()));
     http_server_builder.register_post_action(documents::GetDocumentAction::new(app.clone()));
+    // The one write on this surface — see the action for why it is allowed to exist.
+    http_server_builder.register_post_action(documents::UploadDocumentAction::new(app.clone()));
 
     http_server_builder.register_post_action(goals::ListGoalsAction::new(app.clone()));
     http_server_builder.register_post_action(goals::SetGoalColorAction::new(app.clone()));

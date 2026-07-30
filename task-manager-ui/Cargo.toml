@@ -22,9 +22,14 @@ flurl = { tag = "0.7.0", git = "https://github.com/MyJetTools/fl-url.git" }
 # Names the `THttpRequestBuilder` bound the authed-request helpers are written against.
 my-http-utils = { tag = "0.1.0", git = "https://github.com/MyJetTools/my-http-utils.git" }
 # `KindColor` — the palette a kind's colour is drawn from, and `AsStr` to read it.
-rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git" }
+# `base64` for the one thing this client uploads: a file's bytes, which JSON cannot carry. Encoding happens at
+# that boundary and nowhere else — a document read back is bytes from the raw endpoint, never base64.
+rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git", features = [
+    "base64",
+] }
 
-# The WebSocket Home holds open. Browser API, so no custom headers — the token rides in the query.
+# The WebSocket Home holds open. A browser cannot put headers on it — the session rides as a cookie, which it
+# does send on the handshake.
 reqwasm = "*"
 futures = { version = "*" }
 

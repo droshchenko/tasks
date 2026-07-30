@@ -253,3 +253,29 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The upload form. The only place in this product a person puts something INTO it with a mouse, so it is
+ * deliberately plain: three fields, and the path they add up to spelled out underneath. */
+.upload-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 420px;
+}
+
+/* The typed folder and the dropdown of the ones that exist, side by side — the dropdown writes into the box,
+ * so choosing an existing folder and typing a new one are visibly the same act. */
+.upload-folder {
+  display: flex;
+  gap: 8px;
+}
+
+.upload-folder input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.upload-folder-pick {
+  flex: 0 0 auto;
+  max-width: 180px;
+}

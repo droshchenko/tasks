@@ -25,6 +25,8 @@ mod md;
 pub use md::*;
 mod message;
 pub use message::*;
+mod upload_document;
+pub use upload_document::*;
 mod view_document;
 pub use view_document::*;
 mod view_goal;
@@ -71,6 +73,14 @@ pub enum DialogState {
     ViewTask {
         found: FindTaskResponse,
     },
+    /// Upload a file into a project's documents — the one dialog here that writes anything but a colour. It
+    /// is handed the folders that already exist so it can offer them; creating one is typing a path, because
+    /// a folder is not a thing that exists until a document is in it.
+    UploadDocument {
+        project: String,
+        folders: Vec<String>,
+        on_uploaded: EventHandler<()>,
+    },
     /// One goal, in full: its text and its thread. Handed the whole goal rather than an id, because the
     /// screen that opens it is already holding one — a goal arrives with the board on every push.
     ViewGoal {
@@ -113,6 +123,35 @@ pub fn RenderDialog() -> Element {
         },
         DialogState::ViewGoal { goal } => rsx! {
             ViewGoalDialog { goal }
+        },
+        DialogState::UploadDocument {
+            project,
+            folders,
+            on_uploaded,
+        } => rsx! {
+            UploadDocumentDialog {
+                project,
+                folders,
+                on_submit: move |submit: UploadSubmit| {
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::upload_document(
+                                &submit.project,
+                                &submit.path,
+                                &submit.bytes,
+                                submit.content_type.clone(),
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                on_uploaded.call(());
+                                close();
+                            }
+                            Err(err) => submit_failed(err.message),
+                        }
+                    });
+                },
+            }
         },
         DialogState::Message { title, text } => rsx! {
             MessageDialog { title, text }

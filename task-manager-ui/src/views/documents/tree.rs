@@ -131,6 +131,25 @@ fn sort_level(level: &mut Vec<DocumentNode>) {
     }
 }
 
+/// Every folder path in a tree, outermost first, for offering as a place to put something.
+///
+/// Off the tree rather than off the raw paths, so it is exactly the set of folders the reader can see — an
+/// upload dialog offering a folder that is not drawn would be offering a folder that does not exist.
+pub fn all_folder_paths(nodes: &[DocumentNode]) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_folders(nodes, &mut paths);
+    paths
+}
+
+fn collect_folders(nodes: &[DocumentNode], into: &mut Vec<String>) {
+    for node in nodes {
+        if let DocumentNode::Folder { path, children, .. } = node {
+            into.push(path.clone());
+            collect_folders(children, into);
+        }
+    }
+}
+
 /// The document the url is pointing at, or `""` when it points at none.
 fn selected_id() -> String {
     match use_route::<crate::AppRoute>() {
