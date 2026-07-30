@@ -71,7 +71,7 @@ The unit of everything. A task cannot exist outside one.
 |---|---|
 | `id` | `rust_extensions::SortableId` — `{unix_micros}-{uuid}` truncated to 25 chars. Chronologically sortable, never shown to a user. |
 | `name`, `description` | Free text. Editable. |
-| `prefix` | The human-facing half of a task id: `RMS` → `RMS-000042`. Renameable. |
+| `prefix` | The human-facing half of a task id: `RMS` → `RMS-42`. Renameable. |
 | `prefix_history` | Every prefix this project has ever had. |
 | `columns` | Ordered. See below. |
 | `kinds` | See below. |
@@ -85,7 +85,7 @@ for a project holding `RMS` **now**, and only then falls back to prefix history.
 **Which is why a task's human id is not stored.** A per-project counter plus a reusable prefix means
 two projects can both produce `RMS-1` — project A while it held `RMS`, project B after taking it
 over. Materialising that string would put two different tasks under one id. So the row holds only
-`number`, and `RMS-000042` is composed on read from the project's *current* prefix. Nothing can
+`number`, and `RMS-42` is composed on read from the project's *current* prefix. Nothing can
 collide, "the current holder wins" is automatic rather than a rule to enforce, and the cost is
 explicit: after a rename A's tasks read as `TM-1`, and the old `RMS-1` link dies at the moment
 another project takes `RMS` over.
@@ -158,7 +158,7 @@ a task assigned `AI` have to be the same string or a filter on one would miss th
 |---|---|
 | `project_id` | Owner. |
 | `number` | Sequential within the project, from the project's own counter. Not reused after a delete. |
-| — | The human id `PREFIX-000042` is **composed on read**, never stored — see above. Zero-padded; `RMS-1` typed by a human parses the same way. |
+| — | The human id `PREFIX-42` is **composed on read**, never stored — see above. Not padded: the number as it reads. The zero-padded `PREFIX-000042` this board used to hand out still parses, so an id quoted from an old chat or link resolves. |
 | `text` | Markdown — the UI renders it. |
 | `status` | A column id of this project. Unknown → reads as `todo`. **Always `todo` on creation** — `tasks_create` takes no status. |
 | `priority` | One of five: `super-high`, `high`, `normal`, `low`, `super-low`. Decides where the card sits in its column. See below. |

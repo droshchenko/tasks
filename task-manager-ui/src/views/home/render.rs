@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::priority::Priority;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO, ProjectResponse};
-use task_manager_shared::task_id::task_id_display;
 use task_manager_shared::tasks::TaskResponse;
 
 use dioxus_utils::{DataState, RenderState};
@@ -471,9 +470,9 @@ fn matches_search(task: &TaskResponse, search: &str) -> bool {
 
 /// Whether a task's number begins with the digits typed so far.
 ///
-/// Leading zeros come off both sides first. A task is stored padded — `RMS-000042` — and nobody types the
-/// padding, so comparing as written would match nothing until all six digits were in, which is the opposite
-/// of narrowing as you type.
+/// Leading zeros come off both sides first. Ids are no longer padded, so this is now about what gets PASTED
+/// into the box: `RMS-000042` out of an old link or an old chat has to find the task that now calls itself
+/// `RMS-42`, and comparing as written would say there is no such card.
 fn id_number_starts_with(task_id: &str, digits: &str) -> bool {
     let Some((_, number)) = task_id.rsplit_once('-') else {
         return false;
@@ -1083,7 +1082,7 @@ fn RenderSticker(
 
             div { class: "sticker-body",
                 div { class: "sticker-top",
-                    span { class: "sticker-id", "{task_id_display(&task.id)}" }
+                    span { class: "sticker-id", "{task.id}" }
                     // Only when somebody actually ranked it. Normal is what most work is, so a badge on every
                     // card would be a badge nobody reads — and the position in the column already says as
                     // much as the badge does. This is here to answer "why is that at the top".
@@ -1181,12 +1180,9 @@ fn board_order(tasks: &mut [&TaskResponse]) {
     });
 }
 
-/// A list of handles as a tooltip reads them — shown short, like every other handle on the card.
+/// A list of handles as a tooltip reads them.
 fn handles(ids: &[String]) -> String {
-    ids.iter()
-        .map(|itm| task_id_display(itm))
-        .collect::<Vec<String>>()
-        .join(", ")
+    ids.join(", ")
 }
 
 #[cfg(test)]
@@ -1230,15 +1226,15 @@ mod tests {
     fn the_board_hides_work_past_the_projects_archive_window() {
         let now = 1_000 * 24 * 60 * 60;
 
-        let mut fresh = task("RMS-000001", "just closed", &[], None);
+        let mut fresh = task("RMS-1", "just closed", &[], None);
         fresh.status = COLUMN_ID_DONE.to_string();
         fresh.closed_unix_seconds = Some(now - 60);
 
-        let mut old_news = task("RMS-000002", "closed ages ago", &[], None);
+        let mut old_news = task("RMS-2", "closed ages ago", &[], None);
         old_news.status = COLUMN_ID_DONE.to_string();
         old_news.closed_unix_seconds = Some(now - 30 * 24 * 60 * 60);
 
-        let open = task("RMS-000003", "still open", &[], None);
+        let open = task("RMS-3", "still open", &[], None);
 
         let archived = |task: &TaskResponse, days| {
             task_manager_shared::tasks::is_task_archived(task, days, now)
@@ -1257,7 +1253,10 @@ mod tests {
     #[test]
     fn a_handle_is_told_apart_from_a_search() {
         assert!(looks_like_a_task_id("RMS-42"));
-        assert!(looks_like_a_task_id("RMS-000042"));
+        assert!(
+            looks_like_a_task_id("RMS-000042"),
+            "the padded spelling is not composed any more, but it is still an id somebody may paste"
+        );
         assert!(
             looks_like_a_task_id("TM_2-7"),
             "an underscore is legal in a prefix"
@@ -1374,13 +1373,13 @@ mod tests {
         assert_eq!(initial_project(&[], "AAA-1", None), "");
     }
 
-    /// Typing a handle narrows the board digit by digit. The padding is what makes this need saying: the
-    /// stored id is `RMS-000042` and nobody types the zeros.
+    /// Typing a handle narrows the board digit by digit — and a padded handle pasted out of an old link has
+    /// to land on the same card, which is the case that needs saying now that ids read `RMS-42`.
     #[test]
     fn a_handle_narrows_by_number_as_it_is_typed() {
-        let one = task("RMS-000042", "Fix the login redirect", &[], None);
-        let two = task("RMS-000004", "Something else", &[], None);
-        let three = task("RMS-000420", "And another", &[], None);
+        let one = task("RMS-42", "Fix the login redirect", &[], None);
+        let two = task("RMS-4", "Something else", &[], None);
+        let three = task("RMS-420", "And another", &[], None);
 
         assert!(matches_search(&one, "RMS-4"));
         assert!(matches_search(&two, "RMS-4"));
@@ -1390,7 +1389,10 @@ mod tests {
         assert!(!matches_search(&two, "RMS-42"));
         assert!(matches_search(&three, "RMS-42"));
 
-        assert!(matches_search(&one, "RMS-000042"), "the padded form as well");
+        assert!(
+            matches_search(&one, "RMS-000042"),
+            "the padded form as well, so an old link still finds its card"
+        );
         assert!(!matches_search(&one, "RMS-43"));
 
         // The prefix chooses the board, not the cards on it: an id looked up by a prefix the project has
@@ -1403,7 +1405,7 @@ mod tests {
     /// Text and handles are the same box, and the two must not bleed into each other.
     #[test]
     fn text_is_still_matched_as_text() {
-        let one = task("RMS-000042", "Fix the login redirect", &["auth"], None);
+        let one = task("RMS-42", "Fix the login redirect", &["auth"], None);
 
         assert!(matches_search(&one, "login"));
         assert!(matches_search(&one, "AUTH"));
@@ -1413,14 +1415,14 @@ mod tests {
     #[test]
     fn the_filter_looks_at_the_face_of_a_card() {
         let one = task(
-            "RMS-000001",
+            "RMS-1",
             "Fix the login redirect",
             &["auth"],
             Some("ann@x.io"),
         );
 
         assert!(matches_text(&one, "login"));
-        assert!(matches_text(&one, "rms-000001"), "the id is searchable too");
+        assert!(matches_text(&one, "rms-1"), "the id is searchable too");
         assert!(matches_text(&one, "auth"), "and its labels");
         assert!(matches_text(&one, "ann"), "and who has it");
         assert!(!matches_text(&one, "logout"));
@@ -1429,14 +1431,14 @@ mod tests {
     /// Case must not matter: what gets typed is lower case and what is stored is however it was written.
     #[test]
     fn the_type_filter_is_exact_and_empty_means_any() {
-        let mut one = task("RMS-000001", "text", &[], None);
+        let mut one = task("RMS-1", "text", &[], None);
         one.kind = Some("bug".to_string());
 
         assert!(matches_kind(&one, ""), "empty means any");
         assert!(matches_kind(&one, "bug"));
         assert!(!matches_kind(&one, "feature"));
 
-        let none = task("RMS-000002", "text", &[], None);
+        let none = task("RMS-2", "text", &[], None);
         assert!(matches_kind(&none, ""));
         assert!(
             !matches_kind(&none, "bug"),
@@ -1448,8 +1450,8 @@ mod tests {
     /// exactly what you want to filter for.
     #[test]
     fn the_assignee_filter_tells_anyone_from_unassigned() {
-        let taken = task("RMS-000001", "text", &[], Some("ann@x.io"));
-        let free = task("RMS-000002", "text", &[], None);
+        let taken = task("RMS-1", "text", &[], Some("ann@x.io"));
+        let free = task("RMS-2", "text", &[], None);
 
         assert!(matches_assignee(&taken, ""));
         assert!(matches_assignee(&free, ""));
@@ -1464,7 +1466,7 @@ mod tests {
     /// The reserved assignee is stored as `AI` and an address lower-cased, so the compare cannot be exact.
     #[test]
     fn the_assignee_filter_ignores_case() {
-        let ai = task("RMS-000001", "text", &[], Some("AI"));
+        let ai = task("RMS-1", "text", &[], Some("AI"));
 
         assert!(matches_assignee(&ai, "AI"));
         assert!(matches_assignee(&ai, "ai"));
@@ -1472,14 +1474,14 @@ mod tests {
 
     #[test]
     fn the_assignee_list_comes_from_the_board_and_is_deduplicated() {
-        let mut named = task("RMS-000001", "text", &[], Some("ann@x.io"));
+        let mut named = task("RMS-1", "text", &[], Some("ann@x.io"));
         named.assignee_name = Some("Ann".to_string());
 
         let tasks = vec![
             named,
-            task("RMS-000002", "text", &[], Some("ANN@x.io")),
-            task("RMS-000003", "text", &[], Some("AI")),
-            task("RMS-000004", "text", &[], None),
+            task("RMS-2", "text", &[], Some("ANN@x.io")),
+            task("RMS-3", "text", &[], Some("AI")),
+            task("RMS-4", "text", &[], None),
         ];
 
         let list = assignees_on_board(&tasks);
@@ -1496,7 +1498,7 @@ mod tests {
 
     #[test]
     fn the_filter_ignores_case() {
-        let one = task("RMS-000001", "Fix the LOGIN redirect", &["Auth"], None);
+        let one = task("RMS-1", "Fix the LOGIN redirect", &["Auth"], None);
 
         assert!(matches_text(&one, "login"));
         assert!(matches_text(&one, "auth"));
@@ -1505,11 +1507,11 @@ mod tests {
     /// Goal-bearing cards rise, same-goal cards group, and the board's own order survives inside a group.
     #[test]
     fn a_column_puts_goals_first_and_keeps_them_together() {
-        let mut loose_one = task("RMS-000001", "loose", &[], None);
-        let mut under_a = task("RMS-000002", "a", &[], None);
-        let mut loose_two = task("RMS-000003", "loose", &[], None);
-        let mut under_b = task("RMS-000004", "b", &[], None);
-        let mut under_a_again = task("RMS-000005", "a again", &[], None);
+        let mut loose_one = task("RMS-1", "loose", &[], None);
+        let mut under_a = task("RMS-2", "a", &[], None);
+        let mut loose_two = task("RMS-3", "loose", &[], None);
+        let mut under_b = task("RMS-4", "b", &[], None);
+        let mut under_a_again = task("RMS-5", "a again", &[], None);
 
         under_a.goal = Some("RMS-G10".to_string());
         under_b.goal = Some("RMS-G20".to_string());
@@ -1532,11 +1534,11 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                "RMS-000002",
-                "RMS-000005",
-                "RMS-000004",
-                "RMS-000001",
-                "RMS-000003",
+                "RMS-2",
+                "RMS-5",
+                "RMS-4",
+                "RMS-1",
+                "RMS-3",
             ],
             "both cards of RMS-G10 first and in board order, then RMS-G20, then the loose pile in board order"
         );
@@ -1547,9 +1549,9 @@ mod tests {
     /// two cards that belong to goals.
     #[test]
     fn priority_outranks_the_goal_grouping() {
-        let mut normal_under_a = task("RMS-000001", "a", &[], None);
-        let mut urgent_loose = task("RMS-000002", "urgent", &[], None);
-        let mut quiet_under_a = task("RMS-000003", "later", &[], None);
+        let mut normal_under_a = task("RMS-1", "a", &[], None);
+        let mut urgent_loose = task("RMS-2", "urgent", &[], None);
+        let mut quiet_under_a = task("RMS-3", "later", &[], None);
 
         normal_under_a.goal = Some("RMS-G10".to_string());
         quiet_under_a.goal = Some("RMS-G10".to_string());
@@ -1565,7 +1567,7 @@ mod tests {
 
         assert_eq!(
             ids,
-            vec!["RMS-000002", "RMS-000001", "RMS-000003"],
+            vec!["RMS-2", "RMS-1", "RMS-3"],
             "super-high first even with no goal, then the normal one, then super-low last"
         );
     }
@@ -1574,9 +1576,9 @@ mod tests {
     /// `normal` one does — otherwise the first push after a deploy would reshuffle half a board.
     #[test]
     fn an_empty_priority_sits_where_normal_sits() {
-        let mut blank = task("RMS-000001", "blank", &[], None);
-        let mut normal = task("RMS-000002", "normal", &[], None);
-        let mut low = task("RMS-000003", "low", &[], None);
+        let mut blank = task("RMS-1", "blank", &[], None);
+        let mut normal = task("RMS-2", "normal", &[], None);
+        let mut low = task("RMS-3", "low", &[], None);
 
         blank.priority = String::new();
         normal.priority = "normal".to_string();
@@ -1588,7 +1590,7 @@ mod tests {
 
         let ids: Vec<&str> = column.iter().map(|itm| itm.id.as_str()).collect();
 
-        assert_eq!(ids, vec!["RMS-000001", "RMS-000002", "RMS-000003"]);
+        assert_eq!(ids, vec!["RMS-1", "RMS-2", "RMS-3"]);
     }
 }
 

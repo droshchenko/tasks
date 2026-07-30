@@ -1,10 +1,3 @@
-/// How many digits a task number is padded to when it is shown to a person.
-///
-/// Padding is cosmetic — `RMS-000042` sorts and reads better in a list than `RMS-42` — and it is
-/// deliberately not part of the identity: [`parse_task_handle`] accepts either spelling, because a
-/// human quoting an id from a chat writes `RMS-42`.
-const NUMBER_WIDTH: usize = 6;
-
 /// The characters a prefix may be made of.
 ///
 /// `-` is excluded on purpose: it is the separator in a handle, and allowing it would make
@@ -18,9 +11,16 @@ pub fn is_valid_prefix(prefix: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Build the handle a person sees: `RMS` + 42 -> `RMS-000042`.
+/// Build the handle a person sees: `RMS` + 42 -> `RMS-42`.
+///
+/// The number as it reads, with nothing added to it. This used to be padded to six digits so a Done
+/// list would line up, and the padding cost more than the column it bought: every id an agent handed
+/// back had to be read past the zeros, and the UI carried a whole module whose only job was taking
+/// them off again.
+///
+/// The padded spelling is still PARSED — see [`parse_task_handle`]. Nothing composes it any more.
 pub fn compose_task_handle(prefix: &str, number: i64) -> String {
-    format!("{}-{:0width$}", prefix, number, width = NUMBER_WIDTH)
+    format!("{prefix}-{number}")
 }
 
 /// The letter that marks a goal inside a handle: `RMS-G7`.
@@ -42,9 +42,8 @@ pub struct ParsedTaskHandle {
 
 /// Build the handle a person sees for a goal: `RMS` + 7 -> `RMS-G7`.
 ///
-/// Deliberately NOT padded, unlike a task handle. Padding exists to make a long Done list line up, and a
-/// project has orders of magnitude fewer goals than tasks — `RMS-G000007` would be a spelling nobody
-/// types and nobody reads back.
+/// The marker and the number, and never anything else — a goal has never had a padded spelling, so
+/// unlike a task there is no second form of this to accept back.
 pub fn compose_goal_handle(prefix: &str, number: i64) -> String {
     format!("{prefix}-{GOAL_MARKER}{number}")
 }
@@ -90,6 +89,11 @@ pub fn parse_goal_handle(src: &str) -> Option<ParsedTaskHandle> {
 
 /// Split `RMS-42` / `RMS-000042` / `rms-42` into its prefix and number.
 ///
+/// The padded spelling is accepted although nothing composes it any more: it was what this board
+/// handed out for months, so it is sitting in chat logs, in commit messages and in `?search=` links
+/// that were shared before the change. Leading zeros carry no meaning here — a number is a number —
+/// so refusing them would break those references to prove a point nobody benefits from.
+///
 /// Returns `None` for anything that is not a handle at all — no separator, an empty half, a
 /// non-numeric or non-positive number, or a prefix that no project could legally hold. The prefix
 /// comes back upper-cased, which is the spelling prefixes are stored in, so a caller never has to
@@ -133,19 +137,16 @@ pub fn parse_task_handle(src: &str) -> Option<ParsedTaskHandle> {
 mod tests {
     use super::*;
 
+    /// The number as it reads, at every width. A composed handle is now exactly what a person would
+    /// type, which is the whole point of the change.
     #[test]
-    fn a_composed_handle_is_padded() {
-        assert_eq!(compose_task_handle("RMS", 42), "RMS-000042");
-        assert_eq!(compose_task_handle("RMS", 1), "RMS-000001");
-    }
-
-    /// A number wider than the padding must not be truncated — padding is a minimum, not a cap.
-    #[test]
-    fn a_number_wider_than_the_padding_is_kept_whole() {
+    fn a_composed_handle_carries_the_bare_number() {
+        assert_eq!(compose_task_handle("RMS", 42), "RMS-42");
+        assert_eq!(compose_task_handle("RMS", 1), "RMS-1");
         assert_eq!(compose_task_handle("RMS", 12_345_678), "RMS-12345678");
     }
 
-    /// The point of parsing: what a human types and what the board composes are the same handle.
+    /// The padded form is history, not output — anything still quoting it has to keep resolving.
     #[test]
     fn padded_and_unpadded_spellings_parse_to_the_same_task() {
         let expected = ParsedTaskHandle {
@@ -194,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn a_goal_handle_carries_its_marker_and_no_padding() {
+    fn a_goal_handle_carries_its_marker_and_nothing_else() {
         assert_eq!(compose_goal_handle("RMS", 7), "RMS-G7");
         assert_eq!(compose_goal_handle("RMS", 1_234), "RMS-G1234");
     }

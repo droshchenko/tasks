@@ -67,10 +67,11 @@ requires a resolution comment, for the same reason landing a task does. Goals ar
 with no goal is a perfectly normal thing and not an unfinished one — but if a goal fits, put it there, \
 because a board of loose tasks is a board nobody can see the shape of.\
 \
-EVERYTHING IS NAMED BY ITS HUMAN HANDLE. A project is its prefix, `RMS`. A task is `RMS-42` — or \
-`RMS-000042`, which is the same id padded; both are accepted, and the padded form is what comes back. \
-Never name a task by its text: two tasks may read alike, and the text is the one part of a task that \
-gets rewritten.\
+EVERYTHING IS NAMED BY ITS HUMAN HANDLE. A project is its prefix, `RMS`. A task is `RMS-42` — the \
+number as it reads, no leading zeros, and that is the form every tool hands back. The zero-padded \
+`RMS-000042` is an older spelling of the same id and is still accepted on the way in, so an id quoted \
+out of an old chat resolves; nothing produces it any more. Never name a task by its text: two tasks \
+may read alike, and the text is the one part of a task that gets rewritten.\
 \
 AN ID FROM OUTSIDE THIS CONVERSATION IS NOT SAFE TO TRUST — USE tasks_resolve_id. A project's prefix \
 can be renamed, and the freed prefix can then be taken by a different project, so `RMS-42` can mean \

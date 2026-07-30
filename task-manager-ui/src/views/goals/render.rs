@@ -5,7 +5,6 @@ use dioxus_utils::{DataState, RenderState};
 use task_manager_shared::goals::GoalResponse;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO, ProjectResponse};
-use task_manager_shared::task_id::task_id_display;
 use task_manager_shared::tasks::TaskResponse;
 
 use crate::states::AppState;
@@ -642,7 +641,7 @@ fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
                 crate::dialogs::open(crate::dialogs::DialogState::ViewTask { found: found.clone() });
             },
 
-            span { class: "goal-task-id", "{task_id_display(&task.id)}" }
+            span { class: "goal-task-id", "{task.id}" }
 
             // Same rule as on a card: drawn only when it was ranked, because the row's position already says
             // it and a label on every line says nothing.

@@ -256,7 +256,7 @@ pub fn EditProjectDialog(
                 oninput: move |event| cs.write().draft.prefix = event.value().to_uppercase(),
             }
             div { class: "field-hint",
-                "The first half of every task id on this board — RMS-000042. Two projects cannot hold the same prefix at once, and a prefix another project once used is refused too, because its old ids still resolve through it."
+                "The first half of every task id on this board — RMS-42. Two projects cannot hold the same prefix at once, and a prefix another project once used is refused too, because its old ids still resolve through it."
             }
         }
         div { class: "form-row",

@@ -608,7 +608,7 @@ pub struct CommentView {
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct TaskView {
     #[property(
-        description = "The task id, like `RMS-000042`. This is the only way to name a task — never its text, since two tasks may read alike. `RMS-42` is accepted wherever an id is taken"
+        description = "The task id, like `RMS-42`. This is the only way to name a task — never its text, since two tasks may read alike. The older padded spelling `RMS-000042` is still accepted wherever an id is taken"
     )]
     pub id: String,
     #[property(description = "The prefix of the project this task is on")]

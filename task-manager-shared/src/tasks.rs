@@ -230,7 +230,7 @@ mod tests {
 
     fn done_task(closed_unix_seconds: Option<i64>) -> TaskResponse {
         TaskResponse {
-            id: "RMS-000001".to_string(),
+            id: "RMS-1".to_string(),
             project_id: "p".to_string(),
             text: "text".to_string(),
             status: crate::projects::COLUMN_ID_DONE.to_string(),

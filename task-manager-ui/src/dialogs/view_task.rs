@@ -1,6 +1,5 @@
 use dioxus::prelude::*;
 use task_manager_shared::projects::COLUMN_ID_DONE;
-use task_manager_shared::task_id::task_id_display;
 use task_manager_shared::task_title::{task_text_without_title, task_title};
 use task_manager_shared::tasks::{FindTaskResponse, TaskLinkResponse, TaskResponse};
 
@@ -37,11 +36,7 @@ pub fn ViewTaskDialog(found: FindTaskResponse) -> Element {
     // The handle and the title, which is what a person calls this task when they talk about it. The project
     // was here instead and is now an attribute — it is the same project for every card you open off a board,
     // so it was paying for the one line that identifies the task.
-    let title = format!(
-        "{} · {}",
-        task_id_display(&task.id),
-        task_title(&task.text)
-    );
+    let title = format!("{} · {}", task.id, task_title(&task.text));
     let content = render_task(&task, &found);
 
     // Its own size class rather than `modal-lg`: this one takes 95% of the window. A dialog sized to its
@@ -284,18 +279,16 @@ fn render_links(ids: &[String], statuses: &[TaskLinkResponse]) -> Element {
                 {
                     let status = statuses.iter().find(|itm| &itm.id == id).map(|itm| itm.status.clone());
                     let done = status.as_deref() == Some(COLUMN_ID_DONE);
-                    // Shown short, looked up long: what goes to the server is the id exactly as it arrived.
-                    let handle = task_id_display(id);
                     rsx! {
                         div { class: "task-view-linked", key: "{id}",
                             button {
                                 class: "task-view-link",
-                                title: "Open {handle}",
+                                title: "Open {id}",
                                 onclick: {
                                     let id = id.clone();
                                     move |_| show(id.clone())
                                 },
-                                "{handle}"
+                                "{id}"
                             }
                             // No status at all when the id names no task — a typo or a deleted blocker, which
                             // is exactly the case that keeps this task blocked. Better a visible gap than an
