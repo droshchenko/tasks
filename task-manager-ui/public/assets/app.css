@@ -983,12 +983,124 @@ input[type="text"].board-search {
   min-height: 0;
 }
 
-.task-view-text {
-  font-size: 14px;
-  line-height: 1.5;
+/* The text and the checklist under it, as one scrolling column.
+   The scrolling lives here rather than on the text, so a long text and a long checklist share one scrollbar
+   instead of two: the checklist is the breakdown of the text and a reader moves between them continuously. */
+.task-view-left {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   overflow-y: auto;
   min-height: 0;
   padding-right: 4px;
+}
+
+.task-view-text {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* The checklist. Separated from the text by a rule rather than boxed: it is part of the same task, and a
+   panel around it would read as something attached to the task instead of as the task's own breakdown. */
+.task-view-checklist {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Same shape as the thread's header, because it answers the same question — what is this list and how much
+   of it is there. The count is progress rather than a total: it is what a reader is looking for. */
+.task-view-checklist-header {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+/* One row, plus its text when it is open. The button fills the row so the whole line is the target — an
+   item is opened by clicking the item, not by hitting a caret four pixels wide. */
+.task-view-check-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 4px 2px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  border-radius: var(--radius);
+}
+
+button.task-view-check-row {
+  cursor: pointer;
+}
+
+button.task-view-check-row:hover {
+  background: var(--surface-2);
+}
+
+.task-view-check-caret {
+  color: var(--text-faint);
+  font-size: 10px;
+  /* A fixed width, occupied or not, so every title starts on the same column whether its item opens or not. */
+  width: 10px;
+  flex-shrink: 0;
+}
+
+.task-view-check-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The tick, drawn as a state rather than as a control: nothing in this dialog is editable, and a checkbox
+   somebody cannot click is worse than a mark somebody can read. */
+.task-view-check-box {
+  flex-shrink: 0;
+  /* Centred rather than on the row's baseline: an empty box has no inline content to take a baseline from,
+     so baseline alignment would put a ticked box and an unticked one a couple of pixels apart — visible as
+     a jitter down the right-hand edge of the list. */
+  align-self: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  color: #1a7f37;
+}
+
+/* A done item goes quiet — the same thing a struck-through line says, without making the title harder to
+   read for anybody who wants to know what was done. */
+.task-view-check.done .task-view-check-title {
+  color: var(--text-faint);
+}
+
+.task-view-check.done .task-view-check-box {
+  border-color: #1a7f37;
+}
+
+/* Indented to the title's column, so an open item reads as belonging to the row above it rather than as the
+   next item in the list. */
+.task-view-check-text {
+  margin: 2px 0 8px 19px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 /* Labelled values down the right-hand side, separated by a rule rather than by a box — it is the same task,

@@ -149,6 +149,7 @@ a task assigned `AI` have to be the same string or a filter on one would miss th
 | `assignee` | An email, or the reserved `AI`. |
 | `labels` | Free tags, lowercased and de-duplicated. |
 | `depends_on` | **Numbers** of blocking tasks, within the same project. |
+| `subtasks` | A checklist. Each item: a `SortableId`, a one-line `title`, a longer Markdown `text`, and `done`. See below. |
 | `comments` | A thread. Each comment: moment, `who`, Markdown text. |
 | `close_moment` | When the task landed in Done; absent whenever it is not there. Cleared on re-open, so a re-closed task is dated by its latest close. |
 | `created`, `updated` | A comment does not move `updated` — the thread is a separate record from the work. |
@@ -170,6 +171,50 @@ reachable by its id, and `include_archived` brings the history back. The window 
 a typo or a deleted blocker does not silently free the task. `blocks` is the reverse edge, read
 off the rest of the board — the only way to see who is waiting on you. Closing the last blocker
 clears `blocked` on the next read, with nothing to update by hand.
+
+## The checklist — subtasks that never leave the task
+
+A task **and a goal** each carry an ordered list of checklist items: an id, a one-line `title`, a longer
+Markdown `text`, and `done`. It lives in a `jsonb` column on the row it belongs to, exactly like the
+thread and for the same reason — ticking an item is then one atomic upsert of one row.
+
+**Nothing is derived from it, and that is the whole design.** An unticked item does not make a task
+`blocked`, does not stop it moving to `done`, and does not hold a goal open — a goal still closes on
+whether its *tasks* are done. So a checklist somebody abandoned half-way is not a state the board has to
+have an opinion about, and the rule an agent has to learn is one line: if a step only matters to whoever is
+doing this one task, it is a checklist item; if somebody else has to see it, schedule it, be assigned it or
+depend on it, it is a task of its own under the same goal. The failure this prevents is real work hidden
+inside a card, which is the one thing a board exists to stop.
+
+Which is also why it is **not** folded into a goal's `done_amount` / `tasks_amount`. Those count tasks and
+are what decides whether the goal may close; mixing a private breakdown into them would make one counter
+mean two things.
+
+**An item is named by its id, never by its title** — two items may read alike, and a title is the part that
+gets rewritten. The id is a `SortableId` minted server-side, is not a task handle, resolves nowhere else,
+and is never shown to a person: the screen draws the title. It is not reused after a removal, so an id
+quoted from a stale read names nothing rather than the wrong item.
+
+**Edits are operations, not a new list.** `tasks_update` / `goals_update` take `add_subtasks`,
+`edit_subtasks`, `check_subtasks`, `uncheck_subtasks` and `remove_subtasks`, applied in that order — the
+same shape and the same reason as `add_labels` / `remove_labels`. A whole-list write would silently drop
+whatever the caller did not know about, which on a list two people are adding to is a lost item nobody
+notices. An id naming no item is **refused**, unlike a label that is not there: an unknown id means the
+caller is working from a read that has moved on, and quietly doing nothing would report a tick that never
+happened.
+
+Ticking an item **does** move `updated` — a checklist is the work, not the conversation about it, which is
+what separates it from a comment.
+
+In the browser it is read-only, like everything else about a task: the dialog draws the titles under the
+text, greys out what is done and marks it with a tick, and a click expands one item's `text` (an item with
+no text is drawn as a plain row, so there is no affordance for an expansion that would show nothing).
+
+**Both jsonb columns are nullable**, and not because "no checklist" needs its own spelling — an empty array
+says that perfectly well. The columns arrive on tables that already have rows, and the schema generator
+derives a column's nullability from the Rust type: a non-`Option` field would emit
+`alter table … add subtasks jsonb not null`, which Postgres refuses on a populated table. `NULL` reads as an
+empty checklist and every write puts a real array in. Same arrangement, and same reason, as `goals.color`.
 
 ## Who is who
 

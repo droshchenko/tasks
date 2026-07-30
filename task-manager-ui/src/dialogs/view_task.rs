@@ -80,12 +80,24 @@ fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
     rsx! {
         div { class: "task-view",
             div { class: "task-view-top",
-                if body.is_empty() {
-                    // Said rather than left blank: an empty pane reads as something that failed to load,
-                    // whereas most one-line tasks are one line on purpose.
-                    div { class: "field-hint", "Nothing beyond the title." }
-                } else {
-                    div { class: "task-view-text", dangerous_inner_html: "{text_html}" }
+                // The text and the checklist are one scrolling column, and the attribute column is the
+                // other: the checklist is the breakdown OF the text, so it belongs under it and moves with
+                // it. Wrapped even when there is no checklist, because the top area is a two-column grid
+                // and a third child would drop onto a second row.
+                div { class: "task-view-left",
+                    if body.is_empty() {
+                        // Said rather than left blank: an empty pane reads as something that failed to
+                        // load, whereas most one-line tasks are one line on purpose.
+                        div { class: "field-hint", "Nothing beyond the title." }
+                    } else {
+                        div { class: "task-view-text", dangerous_inner_html: "{text_html}" }
+                    }
+
+                    // Nothing at all when there is no checklist, rather than an empty heading: most tasks
+                    // have none, and a "Checklist 0/0" on every card would be noise on all of them.
+                    if !task.subtasks.is_empty() {
+                        super::Checklist { items: task.subtasks.clone() }
+                    }
                 }
                 {render_attributes(task, found)}
             }

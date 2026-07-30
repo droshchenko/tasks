@@ -28,6 +28,21 @@ pub struct TaskCommentJsonModel {
     pub text: String,
 }
 
+// One checklist item, inside the task row's `subtasks` jsonb.
+//
+// Rides on the row for the same reason the thread does: ticking an item is then one atomic upsert of one
+// row, and the in-memory copy is replaced whole rather than reconciled against a half-applied change.
+//
+// `id` is a `SortableId` generated when the item is created. It is not a task number — nothing here comes
+// out of the project's counter, because a checklist item is not a task and never gets a handle.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TaskSubtaskJsonModel {
+    pub id: String,
+    pub title: String,
+    pub text: String,
+    pub done: bool,
+}
+
 // One task.
 //
 // The primary key is `(project_id, number)`, and there is deliberately **no** column for the human
@@ -65,6 +80,14 @@ pub struct TaskDto {
     #[sql_type("jsonb")]
     #[json]
     pub comments: Vec<TaskCommentJsonModel>,
+    // NULLABLE, and not because a task can have no checklist — an empty list says that perfectly well.
+    // The table already has rows, and the schema generator adds a new column with the nullability it
+    // derives from the Rust type: a non-Option field would emit `alter table … add subtasks jsonb not
+    // null`, which Postgres refuses on a populated table. `None` reads as an empty checklist, and every
+    // write puts a real array in. Same arrangement and same reason as `goals.color`.
+    #[sql_type("jsonb")]
+    #[json]
+    pub subtasks: Option<Vec<TaskSubtaskJsonModel>>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
     #[sql_type("timestamp")]

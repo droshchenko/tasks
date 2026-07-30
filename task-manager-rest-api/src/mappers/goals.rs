@@ -1,7 +1,7 @@
 use task_manager_shared::goals::GoalResponse;
 
-use crate::board::{CommentModel, GoalModel, compose_goal_handle};
-use crate::postgres::{GoalCommentJsonModel, GoalDto};
+use crate::board::{CommentModel, GoalModel, SubtaskModel, compose_goal_handle};
+use crate::postgres::{GoalCommentJsonModel, GoalDto, GoalSubtaskJsonModel};
 
 impl From<&GoalDto> for GoalModel {
     fn from(src: &GoalDto) -> Self {
@@ -15,6 +15,14 @@ impl From<&GoalDto> for GoalModel {
             color: task_manager_shared::kind_color::KindColor::parse_or_default(
                 src.color.as_deref().unwrap_or_default(),
             ),
+            // A NULL column is a goal written before checklists existed, and it reads as having none.
+            subtasks: src
+                .subtasks
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|itm| itm.into())
+                .collect(),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -33,10 +41,35 @@ impl From<&GoalModel> for GoalDto {
             name: src.name.clone(),
             description: src.description.clone(),
             color: Some(rust_extensions::AsStr::as_str(&src.color).to_string()),
+            // Always a real array, even when empty — the column is nullable only so it could be added to a
+            // populated table.
+            subtasks: Some(src.subtasks.iter().map(|itm| itm.into()).collect()),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
             close_moment: src.close_moment,
+        }
+    }
+}
+
+impl From<&GoalSubtaskJsonModel> for SubtaskModel {
+    fn from(src: &GoalSubtaskJsonModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            title: src.title.clone(),
+            text: src.text.clone(),
+            done: src.done,
+        }
+    }
+}
+
+impl From<&SubtaskModel> for GoalSubtaskJsonModel {
+    fn from(src: &SubtaskModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            title: src.title.clone(),
+            text: src.text.clone(),
+            done: src.done,
         }
     }
 }
@@ -82,6 +115,7 @@ pub fn goal_to_response(
         status: src.status().to_string(),
         tasks_amount: tasks_amount as i32,
         done_amount: done_amount as i32,
+        subtasks: super::subtasks_to_response(&src.subtasks),
         comments: src
             .comments
             .iter()

@@ -59,12 +59,8 @@ async fn handle_request(
         &action.app,
         &handle,
         crate::scripts::GoalPatch {
-            name: None,
-            description: None,
             color: Some(input_data.color),
-            close: None,
-            comment: None,
-            comment_by: None,
+            ..Default::default()
         },
     )
     .await

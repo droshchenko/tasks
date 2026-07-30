@@ -4,7 +4,7 @@ use mcp_server_middleware::*;
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppContext;
-use crate::mcp::{CommentView, GoalView};
+use crate::mcp::{CommentView, GoalView, SubtaskEditInput, SubtaskInput, SubtaskOps};
 use crate::scripts::{GoalPatch, NewGoal};
 
 /// What every goal write returns: the goal as it now stands.
@@ -107,6 +107,10 @@ pub struct GoalsCreateInput {
         description = "A palette colour: gray, red, orange, amber, green, teal, blue or purple. Purely visual — it is how the board marks which goal a card belongs to, so pick one that is not already in use on that project. Omit for gray; a person can also recolour it in the browser"
     )]
     pub color: Option<String>,
+    #[property(
+        description = "A checklist for the goal itself, each item a `title` and optionally a longer `text`. For the small things an epic drags along that are not worth a card — NOT for the work, which is tasks under the goal. An unticked item does not hold the goal open. Usually omitted"
+    )]
+    pub subtasks: Option<Vec<SubtaskInput>>,
 }
 
 pub struct GoalsCreateHandler {
@@ -140,6 +144,7 @@ impl McpToolCall<GoalsCreateInput, GoalWriteResponse> for GoalsCreateHandler {
                 name: model.name,
                 description: model.description.unwrap_or_default(),
                 color: model.color,
+                subtasks: SubtaskInput::into_new(model.subtasks),
             },
         )
         .await?;
@@ -166,6 +171,26 @@ pub struct GoalsUpdateInput {
         description = "Pass true to CLOSE the goal, which is only allowed once every one of its tasks is `done` and always requires `comment` — the resolution. Pass false to re-open a closed goal. Omit to leave its state alone"
     )]
     pub close: Option<bool>,
+    #[property(
+        description = "Checklist items to add to the goal, each a `title` and optionally a longer `text`. Added to what it already carries. For the goal's own loose ends — the work belongs in tasks under it"
+    )]
+    pub add_subtasks: Option<Vec<SubtaskInput>>,
+    #[property(
+        description = "TICK the goal's checklist items off, by the `id` each one reports. An id that names no item is refused rather than ignored"
+    )]
+    pub check_subtasks: Option<Vec<String>>,
+    #[property(
+        description = "Un-tick items, by id. Applied after check_subtasks, so an id passed to both ends up unticked"
+    )]
+    pub uncheck_subtasks: Option<Vec<String>>,
+    #[property(
+        description = "Reword items in place: each entry an `id` plus the `title` and/or `text` to replace. Keeps the item's id and its place in the list"
+    )]
+    pub edit_subtasks: Option<Vec<SubtaskEditInput>>,
+    #[property(
+        description = "Take items off the list, by id. Applied last. A done item is normally left ticked rather than removed — it is the record of what the goal involved"
+    )]
+    pub remove_subtasks: Option<Vec<String>>,
     #[property(
         description = "A note for the goal's thread as part of this same change, as Markdown. REQUIRED when closing, where it is the resolution: what came of the goal and anything the next person should know. Optional otherwise"
     )]
@@ -212,6 +237,14 @@ impl McpToolCall<GoalsUpdateInput, GoalWriteResponse> for GoalsUpdateHandler {
                 description: model.description,
                 color: model.color,
                 close: model.close,
+                subtasks: SubtaskOps {
+                    add: model.add_subtasks,
+                    edit: model.edit_subtasks,
+                    check: model.check_subtasks,
+                    uncheck: model.uncheck_subtasks,
+                    remove: model.remove_subtasks,
+                }
+                .into_patch(),
                 comment: model.comment,
                 comment_by: model.comment_by,
             },

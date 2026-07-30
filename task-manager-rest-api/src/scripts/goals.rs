@@ -16,6 +16,8 @@ pub struct NewGoal {
     /// A palette colour name. `None` takes the default swatch — a goal without an opinion about its
     /// colour is normal, and picking one is what the browser is for.
     pub color: Option<String>,
+    /// The goal's own checklist, if it opens with one.
+    pub subtasks: Vec<super::NewSubtask>,
 }
 
 /// A change to a goal. Every field is optional; `None` means "leave it alone".
@@ -23,12 +25,16 @@ pub struct NewGoal {
 /// There is deliberately no `status`: a goal has two states and `close` is the transition between them,
 /// which is also where the resolution is demanded. Passing a column id would invite the second iteration's
 /// vocabulary a version early.
+#[derive(Default)]
 pub struct GoalPatch {
     pub name: Option<String>,
     pub description: Option<String>,
     pub color: Option<String>,
     /// `Some(true)` closes the goal, `Some(false)` re-opens it, `None` leaves its state alone.
     pub close: Option<bool>,
+    /// Changes to the goal's checklist. Says nothing about whether the goal may close — that is decided by
+    /// its tasks, and an unticked item is not unfinished work the board knows about.
+    pub subtasks: super::SubtasksPatch,
     pub comment: Option<String>,
     pub comment_by: Option<String>,
 }
@@ -41,6 +47,7 @@ impl GoalPatch {
             && self.description.is_none()
             && self.color.is_none()
             && self.close.is_none()
+            && self.subtasks.is_empty()
             && self.trimmed_comment().is_none()
     }
 
@@ -119,6 +126,10 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
         Some(color) => super::parse_kind_color(color)?,
     };
 
+    // Before the number is reserved, with the rest of the validation: a checklist item with no title must not
+    // burn a goal number.
+    let subtasks = super::build_subtasks(&new_goal.subtasks)?;
+
     let number = app.board.reserve_task_number(&project.id).ok_or_else(|| {
         format!(
             "project {} vanished while creating the goal",
@@ -134,6 +145,7 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
         name: new_goal.name.trim().to_string(),
         description: new_goal.description.trim().to_string(),
         color,
+        subtasks,
         comments: Vec::new(),
         created: now,
         updated: now,
@@ -172,7 +184,7 @@ pub async fn update_goal(
 ) -> Result<String, String> {
     if patch.is_empty() {
         return Err(
-            "nothing to update: pass at least one of name, description, color, close or comment"
+            "nothing to update: pass at least one of name, description, color, close, a checklist change or comment"
                 .to_string(),
         );
     }
@@ -199,6 +211,10 @@ pub async fn update_goal(
     if let Some(color) = &patch.color {
         goal.color = super::parse_kind_color(color)?;
     }
+
+    // On the clone, like every other field here: an op naming an item that is not there refuses the whole
+    // call rather than half of it.
+    patch.subtasks.apply(&mut goal.subtasks, &handle)?;
 
     // Everything below is validation, and all of it runs before a single field is written back.
     let closing = patch.close == Some(true) && !was_closed;
@@ -329,24 +345,11 @@ mod tests {
     /// still pushes a snapshot to every screen watching the project.
     #[test]
     fn an_empty_patch_is_recognised() {
-        let empty = GoalPatch {
-            name: None,
-            description: None,
-            color: None,
-            close: None,
-            comment: None,
-            comment_by: None,
-        };
-
-        assert!(empty.is_empty());
+        assert!(GoalPatch::default().is_empty());
 
         let blank_comment = GoalPatch {
-            name: None,
-            description: None,
-            color: None,
-            close: None,
             comment: Some("   ".to_string()),
-            comment_by: None,
+            ..Default::default()
         };
 
         assert!(
@@ -359,12 +362,8 @@ mod tests {
     #[test]
     fn recolouring_is_a_change() {
         let patch = GoalPatch {
-            name: None,
-            description: None,
             color: Some("blue".to_string()),
-            close: None,
-            comment: None,
-            comment_by: None,
+            ..Default::default()
         };
 
         assert!(!patch.is_empty());
@@ -376,16 +375,27 @@ mod tests {
     fn asking_to_close_or_re_open_is_never_empty() {
         for close in [true, false] {
             let patch = GoalPatch {
-                name: None,
-                description: None,
-                color: None,
                 close: Some(close),
-                comment: None,
-                comment_by: None,
+                ..Default::default()
             };
 
             assert!(!patch.is_empty(), "close: {close} is a change");
         }
+    }
+
+    /// A checklist change arrives with nothing else set — the emptiness check has to see it, or ticking an
+    /// item on a goal is refused as "nothing to update".
+    #[test]
+    fn a_checklist_change_alone_is_not_an_empty_update() {
+        let patch = GoalPatch {
+            subtasks: crate::scripts::SubtasksPatch {
+                check: vec!["some-id".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!patch.is_empty());
     }
 
     /// Text without an author is refused. A goal's thread is the record of how the work was decided, and an

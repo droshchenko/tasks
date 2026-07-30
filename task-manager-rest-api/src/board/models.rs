@@ -179,6 +179,10 @@ pub struct GoalModel {
     // Visual only, and from the same palette task types use: a goal is recognised on a board by its
     // colour before anybody reads the strip, and a second palette would break that at a glance.
     pub color: KindColor,
+    // The goal's own checklist, in the order it was written. Private to the goal: it says nothing about
+    // whether the goal can close — that is decided by its TASKS, and folding the two together would make
+    // one counter mean two things.
+    pub subtasks: Vec<SubtaskModel>,
     // The discussion the work came out of. Same shape as a task's thread and the same reason it rides on
     // the row: one atomic write per comment.
     pub comments: Vec<CommentModel>,
@@ -205,6 +209,26 @@ impl GoalModel {
             task_manager_shared::projects::COLUMN_ID_TODO
         }
     }
+}
+
+/// One checklist item, in memory. Carried identically by a task and by a goal.
+///
+/// **Not a task.** It has no number from the project's counter, no status, no assignee and no thread; it is
+/// never drawn on a board and nothing derived reads it — an unticked item does not block a task from
+/// landing and does not count towards a goal's progress. It is the breakdown one person wrote to keep
+/// track of one piece of work. Work somebody else has to see, schedule or depend on is a task under a
+/// goal, and that distinction is the whole reason this type is this small.
+///
+/// `id` is a `SortableId`, minted when the item is created and never shown to a person: an agent names the
+/// item it means to tick, and the screen draws `title`. It is not reused after a removal, so an id in a
+/// stale message names nothing rather than the wrong item.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubtaskModel {
+    pub id: String,
+    pub title: String,
+    /// The longer half, as Markdown. Empty is normal — a one-line item has nothing to expand.
+    pub text: String,
+    pub done: bool,
 }
 
 /// One comment on a task's thread.
@@ -240,6 +264,10 @@ pub struct TaskModel {
     // Lower-cased and de-duplicated on write, sorted so a listing is reproducible.
     pub labels: Vec<String>,
     pub depends_on: Vec<i64>,
+    // The checklist, in the order it was written. Deliberately outside everything derived: `blocked` reads
+    // `depends_on` and nothing else, and moving a task to Done reads its status and nothing else. A
+    // checklist somebody abandoned half-way is therefore not a state the board has to have an opinion on.
+    pub subtasks: Vec<SubtaskModel>,
     pub comments: Vec<CommentModel>,
     pub created: DateTimeAsMicroseconds,
     // Moved by a change to the task itself. A comment does NOT move it: the thread is a separate

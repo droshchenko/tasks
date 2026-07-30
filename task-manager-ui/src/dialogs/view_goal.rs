@@ -32,14 +32,23 @@ fn render_goal(goal: &GoalResponse) -> Element {
     rsx! {
         div { class: "task-view",
             div { class: "task-view-top",
-                if has_description {
-                    div { class: "task-view-text", dangerous_inner_html: "{description_html}" }
-                } else {
-                    // Said rather than left blank: a goal with no text is a goal whose shape lives in its
-                    // thread, which is normal — the conversation comes first and the summary often never
-                    // gets written.
-                    div { class: "field-hint",
-                        "No description. What this goal is about may be in the comments below."
+                // One scrolling column for the description and the checklist under it, exactly as the task
+                // dialog arranges the same two things — see the note there for why it is wrapped even when
+                // there is no checklist.
+                div { class: "task-view-left",
+                    if has_description {
+                        div { class: "task-view-text", dangerous_inner_html: "{description_html}" }
+                    } else {
+                        // Said rather than left blank: a goal with no text is a goal whose shape lives in
+                        // its thread, which is normal — the conversation comes first and the summary often
+                        // never gets written.
+                        div { class: "field-hint",
+                            "No description. What this goal is about may be in the comments below."
+                        }
+                    }
+
+                    if !goal.subtasks.is_empty() {
+                        super::Checklist { items: goal.subtasks.clone() }
                     }
                 }
                 {render_attributes(goal)}

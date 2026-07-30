@@ -157,6 +157,10 @@ pub struct GoalView {
     #[property(description = "How many of those tasks are done. The goal is closable when it equals `tasks_amount`")]
     pub done_amount: i32,
     #[property(
+        description = "The goal's own checklist, in the order it was written — the notes-to-self of the epic, kept inside it. Separate from `tasks_amount` / `done_amount`, which count its TASKS and are what decide whether it can close: an unticked item here does not hold the goal open. Use it for the small things an epic drags along that are not worth a card of their own. Usually empty"
+    )]
+    pub subtasks: Vec<SubtaskView>,
+    #[property(
         description = "How many notes are on the goal's thread. This is where the reasoning lives — read it with goals_get_comments before acting on a goal somebody else shaped"
     )]
     pub comments_amount: i32,
@@ -183,12 +187,117 @@ impl GoalView {
             status: goal.status().to_string(),
             tasks_amount: tasks_amount as i32,
             done_amount: done_amount as i32,
+            subtasks: SubtaskView::from_models(&goal.subtasks),
             comments_amount: goal.comments.len() as i32,
             created_unix_seconds: goal.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: goal.updated.unix_microseconds / 1_000_000,
             closed_unix_seconds: goal
                 .close_moment
                 .map(|itm| itm.unix_microseconds / 1_000_000),
+        }
+    }
+}
+
+/// One checklist item, as a tool sees it. The same shape on a task and on a goal.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct SubtaskView {
+    #[property(
+        description = "The item's id. This is what goes into check_subtasks, uncheck_subtasks, edit_subtasks and remove_subtasks — it is the ONLY way to name an item, since two items may read alike. Internal to the checklist: it is not a task id, it resolves nowhere else, and nobody is shown it"
+    )]
+    pub id: String,
+    #[property(description = "The one-line title, which is what the board's card shows")]
+    pub title: String,
+    #[property(
+        description = "The longer half, as Markdown — what the item actually involves. Often empty, which is normal for a one-line item"
+    )]
+    pub text: String,
+    #[property(description = "Whether it has been ticked off")]
+    pub done: bool,
+}
+
+impl SubtaskView {
+    pub fn from_models(src: &[crate::board::SubtaskModel]) -> Vec<Self> {
+        src.iter()
+            .map(|itm| Self {
+                id: itm.id.clone(),
+                title: itm.title.clone(),
+                text: itm.text.clone(),
+                done: itm.done,
+            })
+            .collect()
+    }
+}
+
+/// One checklist item to add, as a write tool takes it.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct SubtaskInput {
+    #[property(
+        description = "The one-line title — what the item is, short enough to read at a glance. This is all a person sees until they open the item"
+    )]
+    pub title: String,
+    #[property(
+        description = "The longer half, as Markdown: what the item actually involves, where to look, what to watch out for. Omit for a one-line item, which is the usual case"
+    )]
+    pub text: Option<String>,
+}
+
+impl SubtaskInput {
+    /// The items a create tool was handed, as the write path takes them.
+    pub fn into_new(src: Option<Vec<Self>>) -> Vec<crate::scripts::NewSubtask> {
+        src.unwrap_or_default()
+            .into_iter()
+            .map(|itm| crate::scripts::NewSubtask {
+                title: itm.title,
+                text: itm.text,
+            })
+            .collect()
+    }
+}
+
+/// A rewrite of one existing checklist item.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct SubtaskEditInput {
+    #[property(
+        description = "Which item, by the `id` its checklist reported. Not its title — two items may read alike"
+    )]
+    pub id: String,
+    #[property(description = "Reword the title. Omit to leave it as it is")]
+    pub title: Option<String>,
+    #[property(
+        description = "Rewrite the longer half. Pass an empty string to clear it; omit to leave it as it is"
+    )]
+    pub text: Option<String>,
+}
+
+/// The checklist fields of a write tool, gathered so a task and a goal convert them the same way.
+///
+/// Named fields rather than five positional arguments: three of them are `Option<Vec<String>>` and would be
+/// silently swappable, which for check / uncheck / remove is the worst possible mix-up.
+pub struct SubtaskOps {
+    pub add: Option<Vec<SubtaskInput>>,
+    pub edit: Option<Vec<SubtaskEditInput>>,
+    pub check: Option<Vec<String>>,
+    pub uncheck: Option<Vec<String>>,
+    pub remove: Option<Vec<String>>,
+}
+
+impl SubtaskOps {
+    pub fn into_patch(self) -> crate::scripts::SubtasksPatch {
+        crate::scripts::SubtasksPatch {
+            add: SubtaskInput::into_new(self.add),
+            edit: self
+                .edit
+                .unwrap_or_default()
+                .into_iter()
+                .map(|itm| crate::scripts::SubtaskEdit {
+                    id: itm.id,
+                    title: itm.title,
+                    text: itm.text,
+                })
+                .collect(),
+            check: self.check.unwrap_or_default(),
+            uncheck: self.uncheck.unwrap_or_default(),
+            remove: self.remove.unwrap_or_default(),
         }
     }
 }
@@ -247,6 +356,10 @@ pub struct TaskView {
         description = "Derived, not stored: true while any task in `depends_on` is not `done` — including an id matching no task at all, so a mistyped or deleted blocker keeps the task blocked rather than silently freeing it. Do NOT start a blocked task"
     )]
     pub blocked: bool,
+    #[property(
+        description = "The task's checklist, in the order it was written — the breakdown of THIS piece of work, kept inside it. Read it before starting: it says what the task actually involves, and ticking items off with tasks_update as you go is how the next reader sees where you got to. It is not a list of tasks: nothing here has a status, an assignee or a place on the board, and an unticked item does not stop the task from landing. Work somebody else has to see or depend on is a task of its own, under the same goal. Usually empty"
+    )]
+    pub subtasks: Vec<SubtaskView>,
     #[property(description = "How many comments are on the thread")]
     pub comments_amount: i32,
     #[property(description = "When the task was created, unix seconds (UTC)")]
@@ -294,6 +407,7 @@ impl TaskView {
                 .map(|number| compose_task_handle(&project.prefix, *number))
                 .collect(),
             blocked: board.is_blocked(task),
+            subtasks: SubtaskView::from_models(&task.subtasks),
             comments_amount: task.comments.len() as i32,
             created_unix_seconds: task.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: task.updated.unix_microseconds / 1_000_000,

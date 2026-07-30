@@ -1,9 +1,11 @@
+use task_manager_shared::subtasks::SubtaskResponse;
 use task_manager_shared::tasks::{TaskCommentResponse, TaskLinkResponse, TaskResponse};
 
 use crate::board::{
-    BoardInner, CommentModel, ProjectModel, TaskModel, compose_task_handle, parse_task_handle,
+    BoardInner, CommentModel, ProjectModel, SubtaskModel, TaskModel, compose_task_handle,
+    parse_task_handle,
 };
-use crate::postgres::{TaskCommentJsonModel, TaskDto};
+use crate::postgres::{TaskCommentJsonModel, TaskDto, TaskSubtaskJsonModel};
 
 impl From<&TaskCommentJsonModel> for CommentModel {
     fn from(src: &TaskCommentJsonModel) -> Self {
@@ -27,6 +29,41 @@ impl From<&CommentModel> for TaskCommentJsonModel {
     }
 }
 
+impl From<&TaskSubtaskJsonModel> for SubtaskModel {
+    fn from(src: &TaskSubtaskJsonModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            title: src.title.clone(),
+            text: src.text.clone(),
+            done: src.done,
+        }
+    }
+}
+
+impl From<&SubtaskModel> for TaskSubtaskJsonModel {
+    fn from(src: &SubtaskModel) -> Self {
+        Self {
+            id: src.id.clone(),
+            title: src.title.clone(),
+            text: src.text.clone(),
+            done: src.done,
+        }
+    }
+}
+
+/// Memory -> wire, for one checklist. Shared by a task and a goal: the item is the same thing on both, and
+/// the module it comes from belongs to neither.
+pub fn subtasks_to_response(src: &[SubtaskModel]) -> Vec<SubtaskResponse> {
+    src.iter()
+        .map(|itm| SubtaskResponse {
+            id: itm.id.clone(),
+            title: itm.title.clone(),
+            text: itm.text.clone(),
+            done: itm.done,
+        })
+        .collect()
+}
+
 impl From<&TaskDto> for TaskModel {
     fn from(src: &TaskDto) -> Self {
         Self {
@@ -39,6 +76,14 @@ impl From<&TaskDto> for TaskModel {
             assignee: src.assignee.clone(),
             labels: src.labels.clone(),
             depends_on: src.depends_on.clone(),
+            // A NULL column is a task written before checklists existed, and it reads as having none.
+            subtasks: src
+                .subtasks
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|itm| itm.into())
+                .collect(),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -59,6 +104,9 @@ impl From<&TaskModel> for TaskDto {
             assignee: src.assignee.clone(),
             labels: src.labels.clone(),
             depends_on: src.depends_on.clone(),
+            // Always a real array on the way out, even when it is empty: the column is nullable only so it
+            // could be added to a populated table, not so a write has two ways to say "no checklist".
+            subtasks: Some(src.subtasks.iter().map(|itm| itm.into()).collect()),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -122,6 +170,7 @@ pub fn task_to_response(
             .collect(),
         link_statuses: link_statuses(task, &blocks, project, board),
         blocked: board.is_blocked(task),
+        subtasks: subtasks_to_response(&task.subtasks),
         comments: task
             .comments
             .iter()

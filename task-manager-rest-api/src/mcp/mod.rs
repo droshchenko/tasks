@@ -122,6 +122,21 @@ changed. A comment deliberately does not move the task's `updated`, so a busy th
 active work. Every task reports `comments_amount`; when it is not zero, tasks_get_comments is worth \
 reading before picking the task up — the reason the work is shaped the way it is usually lives there.\
 \
+A CHECKLIST BREAKS ONE PIECE OF WORK DOWN INSIDE IT — IT IS NOT A SECOND BOARD. A task and a goal each \
+carry `subtasks`: an ordered list of items, each with a one-line `title`, an optional longer `text`, and \
+`done`. Write one with `add_subtasks` once you have read a task and worked out what it involves, and tick \
+items with `check_subtasks` as you go — that is how the next reader sees where you got to without reading \
+the whole thread. Every item is named by the `id` its checklist reports, never by its title, and an id \
+that names no item is refused rather than ignored, because the alternative is reporting a tick that never \
+happened.\
+\
+NOTHING IS DERIVED FROM A CHECKLIST, ON PURPOSE. An unticked item does not make a task `blocked`, does \
+not stop it moving to `done`, and does not hold a goal open — a goal still closes on whether its TASKS \
+are done. So the line is: if a step only matters to whoever is doing this one task, it is a checklist \
+item; if somebody else has to see it, schedule it, be assigned it or depend on it, it is a task of its \
+own under the same goal. Putting real work in a checklist hides it from the board, which is the one \
+thing the board is for.\
+\
 MOVING A TASK TO `done` REQUIRES A COMMENT, AND THE MOVE IS REFUSED WITHOUT ONE. Pass `comment` and \
 `comment_by` to tasks_update in the same call as the status change. Say what was actually done — what \
 changed, and anything the next person should know — not that it is finished, which the column already \
@@ -191,4 +206,39 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(GetCommentsHandler::new(app)));
 
     mcp
+}
+
+#[cfg(test)]
+mod tests {
+    /// The checklist fields are the first **nested objects** on this surface — every other input is a scalar
+    /// or a list of strings. Nothing in the service exercises schema generation, so a shape the derive
+    /// cannot describe would first be noticed by a client asking for the tool list, which is a long way from
+    /// here. Proved in a test instead, on both tools that take one.
+    #[tokio::test]
+    async fn the_write_tools_describe_their_checklist_fields() {
+        let tasks = super::tasks_write_tool_calls::TasksUpdateInput::get_json_schema(false)
+            .await
+            .build();
+
+        let goals = super::goals_tool_calls::GoalsUpdateInput::get_json_schema(false)
+            .await
+            .build();
+
+        for schema in [tasks, goals] {
+            for expected in [
+                "add_subtasks",
+                "check_subtasks",
+                "uncheck_subtasks",
+                "edit_subtasks",
+                "remove_subtasks",
+                // From the nested item itself, which is the half a flat-only schema would lose.
+                "title",
+            ] {
+                assert!(
+                    schema.contains(expected),
+                    "the schema does not mention {expected}: {schema}"
+                );
+            }
+        }
+    }
 }

@@ -25,6 +25,9 @@ pub struct TaskPatch {
     pub add_labels: Vec<String>,
     pub remove_labels: Vec<String>,
     pub depends_on: Option<Vec<String>>,
+    /// What to do to the checklist: add items, reword them, tick them, remove them. Never a whole-list
+    /// replacement — see [`super::SubtasksPatch`].
+    pub subtasks: super::SubtasksPatch,
     /// A note to append to the thread in the same call. Optional in general — and **required** when the
     /// change moves the task into `done`.
     pub comment: Option<String>,
@@ -43,6 +46,7 @@ impl TaskPatch {
             && self.add_labels.is_empty()
             && self.remove_labels.is_empty()
             && self.depends_on.is_none()
+            && self.subtasks.is_empty()
             && self.comment.is_none()
     }
 
@@ -144,6 +148,9 @@ pub struct NewTask {
     pub assignee: Option<String>,
     pub labels: Vec<String>,
     pub depends_on: Vec<String>,
+    /// The checklist to start it with. Usually empty: a task is broken down once somebody has looked at it,
+    /// which is a later call rather than this one.
+    pub subtasks: Vec<super::NewSubtask>,
 }
 
 /// Put a new task on a board. Returns its handle.
@@ -164,6 +171,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
 
     let depends_on = parse_dependencies(&new_task.depends_on, &project)?;
     let labels = normalise_labels(&new_task.labels);
+    let subtasks = super::build_subtasks(&new_task.subtasks)?;
 
     // Validated against the project rather than accepted blindly: a goal from another board would draw the
     // task under something nobody on this one can see, and a closed goal would gain a live task.
@@ -192,6 +200,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
         assignee: normalise_assignee(new_task.assignee.as_deref()),
         labels,
         depends_on,
+        subtasks,
         comments: Vec::new(),
         created: now,
         updated: now,
@@ -340,7 +349,7 @@ pub async fn update_task(
 ) -> Result<String, String> {
     if patch.is_empty() {
         return Err(
-            "nothing to update: pass at least one of text, status, kind, assignee, labels, dependencies or comment"
+            "nothing to update: pass at least one of text, status, kind, assignee, labels, dependencies, a checklist change or comment"
                 .to_string(),
         );
     }
@@ -410,6 +419,10 @@ pub async fn update_task(
     if let Some(depends_on) = &patch.depends_on {
         task.depends_on = parse_dependencies(depends_on, &project)?;
     }
+
+    // Applied to the clone, so an op naming an item that is not there refuses the whole call and leaves both
+    // Postgres and memory untouched — including the other fields this patch had already set on the clone.
+    patch.subtasks.apply(&mut task.subtasks, handle)?;
 
     let comment = build_comment(patch.trimmed_comment(), patch.comment_by.as_deref())?;
     let landing = is_landing(was_done, &task.status);
@@ -612,5 +625,20 @@ mod tests {
 
         assert!(!patch.is_empty());
         assert!(TaskPatch::default().is_empty());
+    }
+
+    /// Ticking one checklist item is the smallest real change there is, and it arrives with no other field
+    /// set — so the emptiness check has to see it, or the one call this feature exists for is refused.
+    #[test]
+    fn a_checklist_change_alone_is_not_an_empty_update() {
+        let patch = TaskPatch {
+            subtasks: crate::scripts::SubtasksPatch {
+                check: vec!["some-id".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!patch.is_empty());
     }
 }

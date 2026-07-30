@@ -25,6 +25,19 @@ pub struct GoalCommentJsonModel {
     pub text: String,
 }
 
+// One checklist item, inside the goal row's `subtasks` jsonb.
+//
+// Its own type rather than a reuse of the task one, exactly as the two comment models are kept apart: the
+// two shapes are identical today and have no reason to move together tomorrow, and one shared jsonb model
+// would make a change to a task's checklist silently rewrite every goal row.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GoalSubtaskJsonModel {
+    pub id: String,
+    pub title: String,
+    pub text: String,
+    pub done: bool,
+}
+
 // A goal — the container work is done around. An epic.
 //
 // The primary key is `(project_id, number)`, and there is deliberately **no** column for the human
@@ -67,6 +80,12 @@ pub struct GoalDto {
     #[sql_type("jsonb")]
     #[json]
     pub comments: Vec<GoalCommentJsonModel>,
+    // NULLABLE for the same reason `color` is: the column arrives on a table that already has rows, and
+    // the generator would otherwise add it NOT NULL, which Postgres refuses. `None` reads as an empty
+    // checklist, and every write puts a real array in.
+    #[sql_type("jsonb")]
+    #[json]
+    pub subtasks: Option<Vec<GoalSubtaskJsonModel>>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
     #[sql_type("timestamp")]

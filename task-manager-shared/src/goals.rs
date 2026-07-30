@@ -31,6 +31,12 @@ pub struct GoalResponse {
     pub status: String,
     pub tasks_amount: i32,
     pub done_amount: i32,
+    // The goal's own checklist, in the order it was written. Separate from `tasks_amount` /
+    // `done_amount` and deliberately not folded into them: those count the goal's TASKS, which is what
+    // decides whether it can close, and mixing a private breakdown into the number a goal is judged by
+    // would make the counter mean two things.
+    #[serde(default)]
+    pub subtasks: Vec<crate::subtasks::SubtaskResponse>,
     #[serde(default)]
     pub comments: Vec<TaskCommentResponse>,
     pub created_unix_seconds: i64,

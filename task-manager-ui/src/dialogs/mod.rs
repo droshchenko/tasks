@@ -7,6 +7,8 @@ use task_manager_shared::goals::GoalResponse;
 use task_manager_shared::projects::ProjectResponse;
 use task_manager_shared::tasks::FindTaskResponse;
 
+mod checklist;
+pub use checklist::*;
 mod dialog_template;
 pub use dialog_template::*;
 mod edit_column_template;

@@ -4,7 +4,7 @@ use mcp_server_middleware::*;
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppContext;
-use crate::mcp::TaskView;
+use crate::mcp::{SubtaskEditInput, SubtaskInput, SubtaskOps, TaskView};
 use crate::scripts::{NewTask, TaskPatch};
 
 /// What every write tool returns: the task as it now stands.
@@ -56,6 +56,10 @@ pub struct TasksCreateInput {
         description = "Ids of the tasks that block this one, e.g. [\"RMS-7\"]. Bare numbers work too. Must be tasks of the same project. The task then reads as `blocked` and must not be started until every one of them is `done`"
     )]
     pub depends_on: Option<Vec<String>>,
+    #[property(
+        description = "A checklist to break this task down with, INSIDE it: each item a `title` and optionally a longer `text`. Not tasks — items have no status, no assignee and no place on the board, and an unticked one never stops the task from landing. Use it for the steps of one piece of work; anything somebody else has to see, schedule or depend on is a task of its own under the same goal. Usually omitted — a breakdown is normally written later, with tasks_update"
+    )]
+    pub subtasks: Option<Vec<SubtaskInput>>,
 }
 
 pub struct TasksCreateHandler {
@@ -95,6 +99,7 @@ impl McpToolCall<TasksCreateInput, TaskWriteResponse> for TasksCreateHandler {
                 assignee: model.assignee,
                 labels: model.labels.unwrap_or_default(),
                 depends_on: model.depends_on.unwrap_or_default(),
+                subtasks: SubtaskInput::into_new(model.subtasks),
             },
         )
         .await?;
@@ -144,6 +149,26 @@ pub struct TasksUpdateInput {
     )]
     pub depends_on: Option<Vec<String>>,
     #[property(
+        description = "Checklist items to add to this task, each a `title` and optionally a longer `text`. Added to whatever the task already carries, so you need not know the current list. This is where a breakdown normally gets written — after reading the task, before starting it"
+    )]
+    pub add_subtasks: Option<Vec<SubtaskInput>>,
+    #[property(
+        description = "TICK checklist items off, by the `id` each one reports. This is the call to make as you work through a breakdown — it is how the next reader sees where you got to. An id that names no item is refused, so read the task if you are unsure"
+    )]
+    pub check_subtasks: Option<Vec<String>>,
+    #[property(
+        description = "Un-tick checklist items, by id — for something that turned out not to be done after all. Applied after check_subtasks, so an id passed to both ends up unticked"
+    )]
+    pub uncheck_subtasks: Option<Vec<String>>,
+    #[property(
+        description = "Reword checklist items in place: each entry an `id` plus the `title` and/or `text` to replace. Keeps the item's id and its place in the list, which removing and re-adding would not"
+    )]
+    pub edit_subtasks: Option<Vec<SubtaskEditInput>>,
+    #[property(
+        description = "Take checklist items off the list, by id — for a step that turned out not to be needed. Applied last. An item that is done is normally left ticked rather than removed: it is the record of what the work involved"
+    )]
+    pub remove_subtasks: Option<Vec<String>>,
+    #[property(
         description = "A note to put on the task's thread as part of this same change, as Markdown. Optional in general — and REQUIRED when this change moves the task to `done`, where it has to say what was actually done. Write a line or two: what changed, and anything the next person should know"
     )]
     pub comment: Option<String>,
@@ -173,7 +198,13 @@ doing nothing — which is almost always a status that was meant to be passed an
 MOVING A TASK TO `done` REQUIRES A COMMENT saying what was actually done — pass `comment` and \
 `comment_by` in the same call. Without one the move is refused. The Done column is what the board is \
 worth reading for later, and \"moved to done\" on its own records nothing. Only the transition into \
-Done needs this: editing a task that is already there does not.";
+Done needs this: editing a task that is already there does not.\
+\
+IT IS ALSO WHERE THE CHECKLIST IS KEPT. add_subtasks writes the breakdown of the work, check_subtasks \
+ticks items off as you go, and every item names itself by the `id` the task reports — an id that is not \
+there is refused rather than ignored. The checklist is INSIDE the task and nothing derives from it: an \
+unticked item does not stop the task from landing, so it is a note to whoever reads the task next, not a \
+second board.";
 }
 
 #[async_trait::async_trait]
@@ -194,6 +225,14 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
                 add_labels: model.add_labels.unwrap_or_default(),
                 remove_labels: model.remove_labels.unwrap_or_default(),
                 depends_on: model.depends_on,
+                subtasks: SubtaskOps {
+                    add: model.add_subtasks,
+                    edit: model.edit_subtasks,
+                    check: model.check_subtasks,
+                    uncheck: model.uncheck_subtasks,
+                    remove: model.remove_subtasks,
+                }
+                .into_patch(),
                 comment: model.comment,
                 comment_by: model.comment_by,
             },

@@ -21,6 +21,7 @@ pub mod goals;
 pub mod kind_color;
 pub mod kind_templates;
 pub mod projects;
+pub mod subtasks;
 pub mod system;
 pub mod task_id;
 pub mod task_title;

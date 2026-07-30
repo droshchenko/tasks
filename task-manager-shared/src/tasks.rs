@@ -74,6 +74,11 @@ pub struct TaskResponse {
     #[serde(default)]
     pub link_statuses: Vec<TaskLinkResponse>,
     pub blocked: bool,
+    // The checklist, in the order it was written. Empty for a task nobody broke down, which is most of
+    // them. Carried in full — titles and texts — because the card that draws it is drawn from this
+    // response and there is no second call from the browser for it.
+    #[serde(default)]
+    pub subtasks: Vec<crate::subtasks::SubtaskResponse>,
     #[serde(default)]
     pub comments: Vec<TaskCommentResponse>,
     pub created_unix_seconds: i64,

@@ -86,6 +86,8 @@ fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> Task
         assignee: None,
         labels: Vec::new(),
         depends_on: depends_on.to_vec(),
+        // Nothing here reads a checklist — that is the point of it — so every fixture leaves it empty.
+        subtasks: Vec::new(),
         comments: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
         updated: DateTimeAsMicroseconds::new(0),
@@ -100,6 +102,7 @@ fn goal(project_id: &str, number: i64) -> GoalModel {
         name: format!("goal {number}"),
         description: String::new(),
         color: KindColor::default(),
+        subtasks: Vec::new(),
         comments: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
         updated: DateTimeAsMicroseconds::new(0),
