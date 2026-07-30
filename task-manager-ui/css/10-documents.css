@@ -17,17 +17,16 @@
 .docs-page {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   height: calc(100vh - var(--topbar-height) - var(--content-padding-y) * 2);
   /* Without it a long tree makes this box grow past the height just set — the default `min-height: auto` on
    * a flex item is its content, not the size you gave its parent. */
   min-height: 0;
 }
 
-/* The header brings its own bottom margin for the screens that stack; here the column `gap` does that job,
- * and both together would be a double space that eats the tree's height. */
+/* No `gap` on the column, so the header carries the whole of the space under it — and a small one: every
+ * pixel here comes off the height of the two panes below. */
 .docs-page .page-header {
-  margin-bottom: 0;
+  margin-bottom: 8px;
   flex: 0 0 auto;
 }
 
