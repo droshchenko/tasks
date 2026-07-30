@@ -606,6 +606,57 @@ pub async fn document_version(
     }
 }
 
+/// Fill in `content_type` and `content_size` on rows written before those columns existed.
+///
+/// **A one-time backfill, run at startup, and the reason it exists is that the fallbacks cannot answer for
+/// everything.** A missing content type can be recovered from the path — see [`content_type_of`] — but a
+/// missing SIZE cannot be recovered from anything except the payload, and the index deliberately never reads
+/// one. So every such document showed as `0 B`, which is not a size, it is a gap dressed as a fact.
+///
+/// It writes NO history row and does not touch `version`: nothing about the document changed. What was always
+/// true about it is merely now written down, which is what makes running this twice a no-op.
+///
+/// Reads the full row — payload included — for the affected documents only. That is the one place in this
+/// feature that pulls payloads in bulk, it happens once per deploy over a handful of rows, and it stops being
+/// work at all as soon as there are none left.
+pub async fn backfill_document_columns(app: &AppContext) {
+    let ctx = MyTelemetryContext::create_empty();
+
+    let stale: Vec<String> = app
+        .documents_repo
+        .get_all_indexed(&ctx)
+        .await
+        .into_iter()
+        .filter(|row| row.content_size.is_none() || row.content_type.is_none())
+        .map(|row| row.id)
+        .collect();
+
+    if stale.is_empty() {
+        return;
+    }
+
+    println!(
+        "documents: filling in content_type and content_size for {} row(s) written before those columns",
+        stale.len()
+    );
+
+    for id in stale {
+        let Some(row) = app.documents_repo.get_by_id(&id, &ctx).await else {
+            continue;
+        };
+
+        let body = DocumentBody::from_columns(row.content.clone(), row.binary_content.clone());
+
+        let filled = DocumentDto {
+            content_type: Some(content_type_of(row.content_type.as_deref(), &row.doc_path)),
+            content_size: Some(body.size_bytes()),
+            ..row
+        };
+
+        app.documents_repo.upsert(&filled, &ctx).await;
+    }
+}
+
 /// The payload of a live document row.
 pub fn body_of(row: &DocumentDto) -> DocumentBody {
     DocumentBody::from_columns(row.content.clone(), row.binary_content.clone())
@@ -616,12 +667,21 @@ pub fn body_of_version(row: &DocumentHistoryDto) -> DocumentBody {
     DocumentBody::from_columns(row.content.clone(), row.binary_content.clone())
 }
 
-/// The content type to report for a row that may predate the column. `text/markdown` is what every document
-/// written before it existed was.
-pub fn content_type_of(stored: Option<&str>) -> String {
-    stored
-        .map(str::trim)
-        .filter(|itm| !itm.is_empty())
+/// The content type to report for a row whose stored one may be missing.
+///
+/// **The path is consulted before the default, and that is not a nicety — it is the fix for a real bug.** Rows
+/// written before this column existed have `NULL` in it, and a flat `text/markdown` fallback made every one of
+/// them Markdown: `prototype_draft.html` came back as `text/markdown`, so the viewer did not frame it and drew
+/// a web page as a wall of markup. The path knew the answer all along.
+///
+/// Order: what was stored, then what the path implies, then Markdown — which is what a document with a
+/// meaningless name and no stored type most likely is, since text was all this feature held at the time.
+pub fn content_type_of(stored: Option<&str>, path: &str) -> String {
+    if let Some(declared) = stored.map(str::trim).filter(|itm| !itm.is_empty()) {
+        return declared.to_lowercase();
+    }
+
+    content_type_for_path(path)
         .unwrap_or(DEFAULT_TEXT_CONTENT_TYPE)
         .to_string()
 }
@@ -958,11 +1018,28 @@ mod tests {
         );
     }
 
-    /// A row written before these columns existed reads as the Markdown document it was.
+    /// A row written before these columns existed has to read as what its PATH says, not as Markdown.
+    ///
+    /// This is the regression test for the bug it fixes: `.html` with no stored type was coming back
+    /// `text/markdown`, so the viewer refused to frame it and showed the markup.
     #[test]
-    fn a_row_predating_the_columns_reads_sensibly() {
-        assert_eq!(content_type_of(None), DEFAULT_TEXT_CONTENT_TYPE);
-        assert_eq!(content_type_of(Some("  ")), DEFAULT_TEXT_CONTENT_TYPE);
-        assert_eq!(content_type_of(Some("application/pdf")), "application/pdf");
+    fn a_row_predating_the_column_falls_back_to_its_path() {
+        assert_eq!(
+            content_type_of(None, "docs/pbi-004_prototype_draft.html"),
+            "text/html",
+            "an html document must not read as Markdown just because nothing was stored"
+        );
+        assert_eq!(content_type_of(None, "docs/spec.pdf"), "application/pdf");
+        assert_eq!(content_type_of(None, "docs/notes.md"), DEFAULT_TEXT_CONTENT_TYPE);
+
+        // Nothing stored and nothing in the name: text was all this feature held when such a row was written.
+        assert_eq!(content_type_of(None, "Makefile"), DEFAULT_TEXT_CONTENT_TYPE);
+        assert_eq!(content_type_of(Some("  "), "a.html"), "text/html");
+
+        // A stored type still wins over the path — it was said on purpose.
+        assert_eq!(
+            content_type_of(Some("application/pdf"), "a.md"),
+            "application/pdf"
+        );
     }
 }

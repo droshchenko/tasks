@@ -20,7 +20,7 @@ pub fn document_to_response(src: &DocumentDto) -> DocumentResponse {
         id: src.id.clone(),
         project_id: src.project_id.clone(),
         path: src.doc_path.clone(),
-        content_type: content_type_of(src.content_type.as_deref()),
+        content_type: content_type_of(src.content_type.as_deref(), &src.doc_path),
         is_binary: body.is_binary(),
         size: body.size_bytes(),
         content: body.as_text().map(|itm| itm.to_string()),

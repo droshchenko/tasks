@@ -63,7 +63,7 @@ async fn handle_request(
         return Err(forbidden("That document belongs to another project"));
     }
 
-    let content_type = content_type_of(row.content_type.as_deref());
+    let content_type = content_type_of(row.content_type.as_deref(), &row.doc_path);
 
     // Text and bytes both come out as bytes here: a text document served raw is what makes "download" work
     // on one, and its Content-Type says what it is.

@@ -378,7 +378,7 @@ impl DocumentView {
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.doc_path.clone(),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             is_binary: body.is_binary(),
             size: body.size_bytes(),
             version: src.version,
@@ -453,7 +453,7 @@ impl DocumentContentView {
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.doc_path.clone(),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             is_binary,
             size,
             version: src.version,
@@ -481,7 +481,7 @@ impl DocumentContentView {
             // The path AT THAT VERSION, not the current one — which is the whole reason a move is recorded
             // as a version.
             path: src.doc_path.clone(),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             is_binary,
             size,
             version: src.version,
@@ -545,7 +545,7 @@ impl DocumentVersionView {
             event: src.event.clone(),
             path: src.doc_path.clone(),
             size: src.content_size.unwrap_or(0),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             who: src.who.clone(),
             moment_unix_seconds: src.moment.unix_microseconds / 1_000_000,
         }
@@ -579,7 +579,7 @@ impl TrashedDocumentView {
             id: src.id.clone(),
             path: src.doc_path.clone(),
             size: src.content_size.unwrap_or(0),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             deleted_unix_seconds: src.deleted.unix_microseconds / 1_000_000,
             deleted_by: src.deleted_by.clone(),
         }

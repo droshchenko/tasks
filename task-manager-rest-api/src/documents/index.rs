@@ -42,7 +42,7 @@ impl DocumentIndexEntry {
     /// in the product where the MIME type decides the kind rather than describing it, and it is why every
     /// write stores a type that agrees with the payload it wrote.
     pub fn from_index_row(src: &DocumentIndexDto) -> Self {
-        let content_type = crate::scripts::content_type_of(src.content_type.as_deref());
+        let content_type = crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path);
 
         Self {
             id: src.id.clone(),
@@ -65,7 +65,7 @@ impl DocumentIndexEntry {
             id: src.id.clone(),
             project_id: src.project_id.clone(),
             path: src.doc_path.clone(),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref()),
+            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             is_binary: src.binary_content.is_some(),
             size: src.content_size.unwrap_or(0),
             version: src.version,

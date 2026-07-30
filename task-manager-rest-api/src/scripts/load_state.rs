@@ -26,10 +26,6 @@ pub async fn load_state(app: &AppContext) {
     let kind_template_rows = app.kind_templates_repo.get_all(&ctx).await;
     let goal_rows = app.goals_repo.get_all(&ctx).await;
 
-    // Documents come in WITHOUT their payloads — that is what the index shape is for. A project's documents
-    // can include PDFs, and loading those into the process would defeat the one decision this feature is
-    // built around.
-    let document_rows = app.documents_repo.get_all_indexed(&ctx).await;
 
     // Membership lives in its own table, so it is folded back onto the projects here — the only place
     // the two halves are joined.
@@ -62,6 +58,12 @@ pub async fn load_state(app: &AppContext) {
 
     let kind_templates: Vec<KindTemplateModel> =
         kind_template_rows.iter().map(|row| row.into()).collect();
+
+    // Before the index is built from them: the backfill writes the two derived columns onto rows that predate
+    // them, and an index built first would carry the gaps until the next restart.
+    crate::scripts::backfill_document_columns(app).await;
+
+    let document_rows = app.documents_repo.get_all_indexed(&ctx).await;
 
     // Its own collection, installed beside the board rather than inside it — the board is pushed whole down a
     // socket and documents must not ride along.
