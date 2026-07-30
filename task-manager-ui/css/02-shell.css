@@ -95,7 +95,7 @@
 }
 
 .main-content {
-  padding: 20px 18px;
+  padding: var(--content-padding-y) var(--content-padding-x);
 }
 
 .page-header {

@@ -1,12 +1,12 @@
 /* Home. Read-only by design — nothing here is dragged, clicked to edit, or double-clicked. */
 
 /* Fills what is left of the window below the top bar, so the board can hand its columns a real height to
-   stretch into. Only the 40px of `.main-content` vertical padding is assumed — everything above the board
-   (title, project picker, description) keeps its natural height and the board takes the rest. */
+   stretch into. Only `.main-content`'s vertical padding is assumed — everything above the board (title,
+   project picker, description) keeps its natural height and the board takes the rest. */
 .board-page {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--topbar-height) - 40px);
+  height: calc(100vh - var(--topbar-height) - var(--content-padding-y) * 2);
   /* Without this a tall column would push the page instead of scrolling inside itself. */
   min-height: 0;
 }

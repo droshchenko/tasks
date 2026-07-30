@@ -19,6 +19,11 @@
   --shadow-card: 0 1px 2px rgba(9, 30, 66, 0.12);
   --shadow-raised: 0 4px 12px rgba(9, 30, 66, 0.15);
   --topbar-height: 46px;
+  /* The gutter `.main-content` puts around every screen — and the number the two full-height screens
+     subtract from the viewport to work out how much is left for them. A token because it was written out
+     twice as a bare `40px`, which is a value that has to change in three places or in none. */
+  --content-padding-y: 12px;
+  --content-padding-x: 14px;
 }
 
 * {
@@ -165,7 +170,7 @@ code {
 }
 
 .main-content {
-  padding: 20px 18px;
+  padding: var(--content-padding-y) var(--content-padding-x);
 }
 
 .page-header {
@@ -415,12 +420,12 @@ input[readonly] {
 /* Home. Read-only by design — nothing here is dragged, clicked to edit, or double-clicked. */
 
 /* Fills what is left of the window below the top bar, so the board can hand its columns a real height to
-   stretch into. Only the 40px of `.main-content` vertical padding is assumed — everything above the board
-   (title, project picker, description) keeps its natural height and the board takes the rest. */
+   stretch into. Only `.main-content`'s vertical padding is assumed — everything above the board (title,
+   project picker, description) keeps its natural height and the board takes the rest. */
 .board-page {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--topbar-height) - 40px);
+  height: calc(100vh - var(--topbar-height) - var(--content-padding-y) * 2);
   /* Without this a tall column would push the page instead of scrolling inside itself. */
   min-height: 0;
 }
@@ -1707,12 +1712,12 @@ button.task-view-check-row:hover {
  * scrolls); this one wants the opposite, so it takes the window height minus what sits above it rather than
  * asking the shell to change for one screen.
  *
- * The subtraction: the sticky top bar, plus `.main-content`'s 20px of padding top and bottom. */
+ * The subtraction: the sticky top bar, plus `.main-content`'s padding top and bottom. */
 .docs-page {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  height: calc(100vh - var(--topbar-height) - 40px);
+  gap: 8px;
+  height: calc(100vh - var(--topbar-height) - var(--content-padding-y) * 2);
   /* Without it a long tree makes this box grow past the height just set — the default `min-height: auto` on
    * a flex item is its content, not the size you gave its parent. */
   min-height: 0;
@@ -1736,11 +1741,11 @@ button.task-view-check-row:hover {
 }
 
 .files-tree {
-  flex: 0 0 300px;
+  flex: 0 0 280px;
   min-height: 0;
   overflow: auto;
   border-right: 1px solid var(--border);
-  padding: 6px 0 12px 0;
+  padding: 4px 0 8px 0;
   /* The whole row is a click target, and a click on a row of text otherwise selects it. */
   user-select: none;
 }
@@ -1810,7 +1815,7 @@ button.task-view-check-row:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 12px;
@@ -1846,16 +1851,19 @@ button.task-view-check-row:hover {
   border-color: var(--accent);
 }
 
+/* A frame, not a scroller: whatever it holds does its own scrolling, and two nested scrollers fight over the
+ * wheel — the outer one moves when the inner one reaches its end, which reads as the pane lurching. */
 .viewer-body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .viewer-note {
-  padding: 24px;
+  flex: 0 0 auto;
+  padding: 16px;
   color: var(--text-muted);
   display: flex;
   flex-direction: column;
@@ -1863,9 +1871,12 @@ button.task-view-check-row:hover {
   align-items: flex-start;
 }
 
-/* The rendered document. Padding only — everything about how the Markdown itself looks comes from `.md`. */
+/* The rendered document, and the pane's scroller. Padding only — everything about how the Markdown itself
+ * looks comes from `.md`. */
 .viewer-markdown {
-  padding: 16px 20px 40px 20px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 14px 32px 14px;
   overflow: auto;
   line-height: 1.6;
 }
@@ -1873,8 +1884,10 @@ button.task-view-check-row:hover {
 /* `pre` keeps the document's own whitespace; the overflow is what stops one long line making the whole pane
  * scroll sideways for ever. */
 .viewer-text {
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
-  padding: 12px;
+  padding: 10px 12px;
   white-space: pre;
   tab-size: 4;
   overflow: auto;
@@ -1883,7 +1896,9 @@ button.task-view-check-row:hover {
 }
 
 .viewer-image {
-  padding: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
   overflow: auto;
 }
 
