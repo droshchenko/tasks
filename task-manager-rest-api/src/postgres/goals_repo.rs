@@ -89,6 +89,12 @@ pub struct GoalDto {
     #[sql_type("jsonb")]
     #[json]
     pub subtasks: Option<Vec<GoalSubtaskJsonModel>>,
+    // Ids of the documents this goal references. Same shape, same rules and same reasons as a task's — see
+    // `TaskDto::documents`. A goal is where a decision gets written down, so it is the more likely of the
+    // two to point at a specification.
+    #[sql_type("jsonb")]
+    #[json]
+    pub documents: Option<Vec<String>>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
     #[sql_type("timestamp")]

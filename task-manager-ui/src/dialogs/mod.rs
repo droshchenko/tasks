@@ -25,6 +25,8 @@ mod md;
 pub use md::*;
 mod message;
 pub use message::*;
+mod view_document;
+pub use view_document::*;
 mod view_goal;
 pub use view_goal::*;
 mod view_task;
@@ -88,6 +90,14 @@ pub enum DialogState {
         title: String,
         text: String,
     },
+    /// One document, by id — the ONE dialog handed an id rather than a model, because a document is the one
+    /// thing the server does not hold in memory: nothing on screen has its text, so the dialog fetches it.
+    /// The project comes along because a document is scoped to one board and the id alone would not say
+    /// which.
+    ViewDocument {
+        project_id: String,
+        id: String,
+    },
 }
 
 /// Mounted once, at the top of the signed-in shell, so a dialog overlays whatever screen opened it.
@@ -132,6 +142,9 @@ pub fn RenderDialog() -> Element {
                     });
                 },
             }
+        },
+        DialogState::ViewDocument { project_id, id } => rsx! {
+            ViewDocumentDialog { project_id, id }
         },
         DialogState::EditKindTemplate { template, on_saved } => rsx! {
             EditKindTemplateDialog {

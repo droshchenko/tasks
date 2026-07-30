@@ -94,6 +94,26 @@ pub struct TaskDto {
     #[sql_type("jsonb")]
     #[json]
     pub subtasks: Option<Vec<TaskSubtaskJsonModel>>,
+    // Ids of the documents this task references — `SortableId`s, exactly as `documents.id` stores them.
+    //
+    // Ids and not paths, which is the whole reason a document's id never changes: a document that moves
+    // keeps every reference to it, and a reference that stored `docs/design/system.md` would have gone
+    // stale the moment somebody tidied the tree.
+    //
+    // Rides on the task row rather than living in a join table for the same reason the thread and the
+    // checklist do — attaching a document is then one atomic upsert of one row. It also means the ids
+    // travel in the board snapshot, so a card can show HOW MANY documents a task has without a single
+    // request; the documents themselves are fetched only when somebody opens one.
+    //
+    // Nothing here is cleaned up when a document is deleted. That is deliberate: deletion moves the
+    // document to the trash, restoring it is one MCP call, and a reference silently removed would not come
+    // back. An id that resolves to nothing reads as "in the trash" rather than as an error.
+    //
+    // NULLABLE for the same reason `subtasks` is: the column arrives on a populated table, where Postgres
+    // refuses a NOT NULL addition. `None` reads as no references, and every write puts a real array in.
+    #[sql_type("jsonb")]
+    #[json]
+    pub documents: Option<Vec<String>>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
     #[sql_type("timestamp")]

@@ -89,6 +89,8 @@ impl From<&TaskDto> for TaskModel {
                 .iter()
                 .map(|itm| itm.into())
                 .collect(),
+            // A NULL column is a task written before documents existed, and it reads as referencing none.
+            documents: src.documents.clone().unwrap_or_default(),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -115,6 +117,8 @@ impl From<&TaskModel> for TaskDto {
             // Always a real array on the way out, even when it is empty: the column is nullable only so it
             // could be added to a populated table, not so a write has two ways to say "no checklist".
             subtasks: Some(src.subtasks.iter().map(|itm| itm.into()).collect()),
+            // Always a real array, for the same reason the checklist is.
+            documents: Some(src.documents.clone()),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -180,6 +184,10 @@ pub fn task_to_response(
         link_statuses: link_statuses(task, &blocks, project, board),
         blocked: board.is_blocked(task),
         subtasks: subtasks_to_response(&task.subtasks),
+        // The ids only. Resolving them means reading Postgres, which this function cannot do and a board
+        // read must not do — the browser asks for a document when somebody opens one, and draws the count
+        // from this list in the meantime.
+        documents: task.documents.clone(),
         comments: task
             .comments
             .iter()

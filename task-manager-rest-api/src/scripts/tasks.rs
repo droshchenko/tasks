@@ -31,6 +31,9 @@ pub struct TaskPatch {
     /// What to do to the checklist: add items, reword them, tick them, remove them. Never a whole-list
     /// replacement — see [`super::SubtasksPatch`].
     pub subtasks: super::SubtasksPatch,
+    /// Which documents this task points at: ids to attach, ids to detach. Add/remove rather than a whole
+    /// list, for the same reason labels are — see [`super::DocumentsPatch`].
+    pub documents: super::DocumentsPatch,
     /// A note to append to the thread in the same call. Optional in general — and **required** when the
     /// change moves the task into `done`.
     pub comment: Option<String>,
@@ -51,6 +54,7 @@ impl TaskPatch {
             && self.remove_labels.is_empty()
             && self.depends_on.is_none()
             && self.subtasks.is_empty()
+            && self.documents.is_empty()
             && self.comment.is_none()
     }
 
@@ -158,6 +162,9 @@ pub struct NewTask {
     /// The checklist to start it with. Usually empty: a task is broken down once somebody has looked at it,
     /// which is a later call rather than this one.
     pub subtasks: Vec<super::NewSubtask>,
+    /// Documents to point at from the start, by id. Every one is checked to be a live document of this same
+    /// project before a task number is reserved.
+    pub documents: Vec<String>,
 }
 
 /// Put a new task on a board. Returns its handle.
@@ -192,6 +199,18 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     // which contradicted the promise made right above.
     let goal_number = resolve_goal(&board, &project, new_task.goal.as_deref())?;
 
+    // Also before the reservation, and the one piece of validation here that reads Postgres: documents are
+    // not in memory, so "does this id name a live document of this project" is a query. Refusing after a
+    // number was handed out would burn it — the promise made at the top of this function.
+    let mut documents = Vec::new();
+
+    super::DocumentsPatch {
+        add: new_task.documents.clone(),
+        ..Default::default()
+    }
+    .apply(app, &project.id, &mut documents, "this task")
+    .await?;
+
     let number = app.board.reserve_task_number(&project.id).ok_or_else(|| {
         format!(
             "project {} vanished while creating the task",
@@ -214,6 +233,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
         labels,
         depends_on,
         subtasks,
+        documents,
         comments: Vec::new(),
         created: now,
         updated: now,
@@ -362,7 +382,7 @@ pub async fn update_task(
 ) -> Result<String, String> {
     if patch.is_empty() {
         return Err(
-            "nothing to update: pass at least one of text, status, priority, kind, assignee, labels, dependencies, a checklist change or comment"
+            "nothing to update: pass at least one of text, status, priority, kind, assignee, labels, dependencies, a checklist change, a document reference or comment"
                 .to_string(),
         );
     }
@@ -440,6 +460,13 @@ pub async fn update_task(
     // Applied to the clone, so an op naming an item that is not there refuses the whole call and leaves both
     // Postgres and memory untouched — including the other fields this patch had already set on the clone.
     patch.subtasks.apply(&mut task.subtasks, handle)?;
+
+    // On the clone as well, and for the same reason — but this one reads Postgres to check the ids, because a
+    // document is the one thing this service does not hold in memory.
+    patch
+        .documents
+        .apply(app, &project.id, &mut task.documents, handle)
+        .await?;
 
     let comment = build_comment(patch.trimmed_comment(), patch.comment_by.as_deref())?;
     let landing = is_landing(was_done, &task.status);
@@ -651,6 +678,22 @@ mod tests {
         let patch = TaskPatch {
             subtasks: crate::scripts::SubtasksPatch {
                 check: vec!["some-id".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!patch.is_empty());
+    }
+
+    /// Attaching a document arrives with nothing else set, exactly as ticking a checklist item does — so the
+    /// emptiness check has to see it, or the only call that makes a reference is refused as "nothing to
+    /// update".
+    #[test]
+    fn a_document_reference_alone_is_not_an_empty_update() {
+        let patch = TaskPatch {
+            documents: crate::scripts::DocumentsPatch {
+                add: vec!["some-id".to_string()],
                 ..Default::default()
             },
             ..Default::default()

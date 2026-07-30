@@ -20,6 +20,9 @@ pub struct NewGoal {
     pub priority: Option<String>,
     /// The goal's own checklist, if it opens with one.
     pub subtasks: Vec<super::NewSubtask>,
+    /// Documents to point at from the start, by id. A goal is where a decision gets written down, so this is
+    /// the likelier of the two to open with one.
+    pub documents: Vec<String>,
 }
 
 /// A change to a goal. Every field is optional; `None` means "leave it alone".
@@ -39,6 +42,8 @@ pub struct GoalPatch {
     /// Changes to the goal's checklist. Says nothing about whether the goal may close — that is decided by
     /// its tasks, and an unticked item is not unfinished work the board knows about.
     pub subtasks: super::SubtasksPatch,
+    /// Which documents this goal points at: ids to attach, ids to detach — see [`super::DocumentsPatch`].
+    pub documents: super::DocumentsPatch,
     pub comment: Option<String>,
     pub comment_by: Option<String>,
 }
@@ -53,6 +58,7 @@ impl GoalPatch {
             && self.priority.is_none()
             && self.close.is_none()
             && self.subtasks.is_empty()
+            && self.documents.is_empty()
             && self.trimmed_comment().is_none()
     }
 
@@ -140,6 +146,17 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
     // burn a goal number.
     let subtasks = super::build_subtasks(&new_goal.subtasks)?;
 
+    // Before the number is reserved, with everything else — and the one check here that reads Postgres,
+    // because documents are not in memory.
+    let mut documents = Vec::new();
+
+    super::DocumentsPatch {
+        add: new_goal.documents.clone(),
+        ..Default::default()
+    }
+    .apply(app, &project.id, &mut documents, "this goal")
+    .await?;
+
     let number = app.board.reserve_task_number(&project.id).ok_or_else(|| {
         format!(
             "project {} vanished while creating the goal",
@@ -157,6 +174,7 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
         color,
         priority,
         subtasks,
+        documents,
         comments: Vec::new(),
         created: now,
         updated: now,
@@ -195,7 +213,7 @@ pub async fn update_goal(
 ) -> Result<String, String> {
     if patch.is_empty() {
         return Err(
-            "nothing to update: pass at least one of name, description, color, priority, close, a checklist change or comment"
+            "nothing to update: pass at least one of name, description, color, priority, close, a checklist change, a document reference or comment"
                 .to_string(),
         );
     }
@@ -230,6 +248,12 @@ pub async fn update_goal(
     // On the clone, like every other field here: an op naming an item that is not there refuses the whole
     // call rather than half of it.
     patch.subtasks.apply(&mut goal.subtasks, &handle)?;
+
+    // On the clone as well; this one queries Postgres, because a document is not in memory.
+    patch
+        .documents
+        .apply(app, &project.id, &mut goal.documents, &handle)
+        .await?;
 
     // Everything below is validation, and all of it runs before a single field is written back.
     let closing = patch.close == Some(true) && !was_closed;

@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod column_templates;
+pub mod documents;
 pub mod goals;
 pub mod kind_templates;
 pub mod projects;

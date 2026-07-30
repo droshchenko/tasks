@@ -165,6 +165,10 @@ pub struct GoalView {
     )]
     pub subtasks: Vec<SubtaskView>,
     #[property(
+        description = "Ids of the documents this goal points at. Ids only — resolve them with documents_get, or documents_list to see what they are called. A goal is where a decision gets written down, so this is where the specification behind an epic is usually attached. An id here may be in the trash: documents are deleted by moving them there, and a reference is never quietly dropped, because restoring is one call away"
+    )]
+    pub documents: Vec<String>,
+    #[property(
         description = "How many notes are on the goal's thread. This is where the reasoning lives — read it with goals_get_comments before acting on a goal somebody else shaped"
     )]
     pub comments_amount: i32,
@@ -193,6 +197,7 @@ impl GoalView {
             tasks_amount: tasks_amount as i32,
             done_amount: done_amount as i32,
             subtasks: SubtaskView::from_models(&goal.subtasks),
+            documents: goal.documents.clone(),
             comments_amount: goal.comments.len() as i32,
             created_unix_seconds: goal.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: goal.updated.unix_microseconds / 1_000_000,
@@ -307,6 +312,194 @@ impl SubtaskOps {
     }
 }
 
+/// The document-reference fields of a write tool, gathered so a task and a goal convert them the same way.
+pub struct DocumentOps {
+    pub add: Option<Vec<String>>,
+    pub remove: Option<Vec<String>>,
+}
+
+impl DocumentOps {
+    pub fn into_patch(self) -> crate::scripts::DocumentsPatch {
+        crate::scripts::DocumentsPatch {
+            add: self.add.unwrap_or_default(),
+            remove: self.remove.unwrap_or_default(),
+        }
+    }
+}
+
+/// One document, as a tool sees it — WITHOUT its text.
+///
+/// The split matters here more than anywhere else on this surface: a document can be a whole specification,
+/// and a list of them is drawn from paths. So listing documents returns these, and reading one returns its
+/// content. An agent that dumped every document into its context to find one would have spent the context it
+/// needed for the work.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DocumentView {
+    #[property(
+        description = "The document's id, and the ONLY stable way to name it. It is minted when the document is created and never changes — not when the text is rewritten, not when the path moves — which is what makes the history complete and what makes a reference from a task survive a tidy-up. This is what goes into add_documents on a task or a goal"
+    )]
+    pub id: String,
+    #[property(description = "The prefix of the project this document belongs to")]
+    pub project: String,
+    #[property(
+        description = "Where it lives, e.g. `docs/design/system.md`. This is its name AND its position: folders are not stored anywhere, they are read off these paths. A path is unique within a project, so uploading to a path that is taken writes a new version of what is there"
+    )]
+    pub path: String,
+    #[property(
+        description = "Which version this is. Starts at 1 and moves on every write of any kind — a rewrite, a move, a delete, a restore — so it is also how many history entries the document has"
+    )]
+    pub version: i64,
+    #[property(
+        description = "How many characters the text is. Read it before reading the document: it is the difference between a note and a specification"
+    )]
+    pub size: i64,
+    #[property(description = "When it was first created, unix seconds (UTC)")]
+    pub created_unix_seconds: i64,
+    #[property(description = "When the current version was written, unix seconds (UTC)")]
+    pub updated_unix_seconds: i64,
+    #[property(description = "Who wrote the current version — an email, or `AI`")]
+    pub updated_by: String,
+}
+
+impl DocumentView {
+    pub fn from_dto(src: &crate::postgres::DocumentDto, project_prefix: &str) -> Self {
+        Self {
+            id: src.id.clone(),
+            project: project_prefix.to_string(),
+            path: src.doc_path.clone(),
+            version: src.version,
+            size: src.content.chars().count() as i64,
+            created_unix_seconds: src.created.unix_microseconds / 1_000_000,
+            updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
+            updated_by: src.updated_by.clone(),
+        }
+    }
+}
+
+/// One document, with its text. What reading a document returns.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DocumentContentView {
+    #[property(description = "The document's id — stable for the life of the document")]
+    pub id: String,
+    #[property(description = "The prefix of the project this document belongs to")]
+    pub project: String,
+    #[property(description = "Where it lives")]
+    pub path: String,
+    #[property(
+        description = "Which version this text is. Not necessarily the current one: documents_history can hand back an older version, and this says which"
+    )]
+    pub version: i64,
+    #[property(description = "The document, as Markdown")]
+    pub content: String,
+    #[property(description = "When this version was written, unix seconds (UTC)")]
+    pub updated_unix_seconds: i64,
+    #[property(description = "Who wrote this version — an email, or `AI`")]
+    pub updated_by: String,
+}
+
+impl DocumentContentView {
+    pub fn from_dto(src: &crate::postgres::DocumentDto, project_prefix: &str) -> Self {
+        Self {
+            id: src.id.clone(),
+            project: project_prefix.to_string(),
+            path: src.doc_path.clone(),
+            version: src.version,
+            content: src.content.clone(),
+            updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
+            updated_by: src.updated_by.clone(),
+        }
+    }
+
+    /// An OLD version, read out of the history.
+    ///
+    /// The same shape as the current one on purpose: a caller reading version 3 wants the text and where it
+    /// lived, and should not have to handle a second type to get it.
+    pub fn from_history(
+        src: &crate::postgres::DocumentHistoryDto,
+        project_prefix: &str,
+    ) -> Self {
+        Self {
+            id: src.document_id.clone(),
+            project: project_prefix.to_string(),
+            // The path AT THAT VERSION, not the current one — which is the whole reason a move is recorded
+            // as a version.
+            path: src.doc_path.clone(),
+            version: src.version,
+            content: src.content.clone(),
+            updated_unix_seconds: src.moment.unix_microseconds / 1_000_000,
+            updated_by: src.who.clone(),
+        }
+    }
+}
+
+/// One entry of a document's history: what was done to it, by whom, and where it was at the time.
+///
+/// The text is left out on purpose — a history of a document rewritten fifty times would otherwise be fifty
+/// copies of it. `documents_history` with a `version` hands back the one text that is wanted.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DocumentVersionView {
+    #[property(description = "Which version this entry is. They run 1..n with no gaps")]
+    pub version: i64,
+    #[property(
+        description = "What happened: `created`, `updated` (the text was rewritten), `moved` (the path changed, the text did not), `deleted` (it went to the trash) or `restored`"
+    )]
+    pub event: String,
+    #[property(
+        description = "The path the document had AT THIS VERSION. This is what answers 'when did it move, and from where' — the reason a move is a version of its own"
+    )]
+    pub path: String,
+    #[property(description = "How many characters the text was at this version")]
+    pub size: i64,
+    #[property(description = "Who did it — an email, or `AI`")]
+    pub who: String,
+    #[property(description = "When, unix seconds (UTC)")]
+    pub moment_unix_seconds: i64,
+}
+
+impl DocumentVersionView {
+    pub fn from_dto(src: &crate::postgres::DocumentHistoryDto) -> Self {
+        Self {
+            version: src.version,
+            event: src.event.clone(),
+            path: src.doc_path.clone(),
+            size: src.content.chars().count() as i64,
+            who: src.who.clone(),
+            moment_unix_seconds: src.moment.unix_microseconds / 1_000_000,
+        }
+    }
+}
+
+/// One document in the trash.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct TrashedDocumentView {
+    #[property(
+        description = "The document's id — unchanged by the deletion, which is what makes restoring it put the same document back and every reference to it work again"
+    )]
+    pub id: String,
+    #[property(
+        description = "The path it had when it was deleted. A restore puts it back here unless you name another path, and is refused if something has taken this one since"
+    )]
+    pub path: String,
+    #[property(description = "How many characters the text is — it is kept in full")]
+    pub size: i64,
+    #[property(description = "When it was deleted, unix seconds (UTC)")]
+    pub deleted_unix_seconds: i64,
+    #[property(description = "Who deleted it — an email, or `AI`")]
+    pub deleted_by: String,
+}
+
+impl TrashedDocumentView {
+    pub fn from_dto(src: &crate::postgres::DocumentTrashDto) -> Self {
+        Self {
+            id: src.id.clone(),
+            path: src.doc_path.clone(),
+            size: src.content.chars().count() as i64,
+            deleted_unix_seconds: src.deleted.unix_microseconds / 1_000_000,
+            deleted_by: src.deleted_by.clone(),
+        }
+    }
+}
+
 /// One comment on a task's thread.
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct CommentView {
@@ -369,6 +562,10 @@ pub struct TaskView {
         description = "The task's checklist, in the order it was written — the breakdown of THIS piece of work, kept inside it. Read it before starting: it says what the task actually involves, and ticking items off with tasks_update as you go is how the next reader sees where you got to. It is not a list of tasks: nothing here has a status, an assignee or a place on the board, and an unticked item does not stop the task from landing. Work somebody else has to see or depend on is a task of its own, under the same goal. Usually empty"
     )]
     pub subtasks: Vec<SubtaskView>,
+    #[property(
+        description = "Ids of the documents this task points at. Ids only — read one with documents_get, or documents_list to see what they are called. Read them BEFORE starting the task: a document attached to a piece of work is usually the specification for it. An id here may be in the trash, since deleting a document moves it there and a reference is never quietly dropped"
+    )]
+    pub documents: Vec<String>,
     #[property(description = "How many comments are on the thread")]
     pub comments_amount: i32,
     #[property(description = "When the task was created, unix seconds (UTC)")]
@@ -418,6 +615,7 @@ impl TaskView {
                 .collect(),
             blocked: board.is_blocked(task),
             subtasks: SubtaskView::from_models(&task.subtasks),
+            documents: task.documents.clone(),
             comments_amount: task.comments.len() as i32,
             created_unix_seconds: task.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: task.updated.unix_microseconds / 1_000_000,

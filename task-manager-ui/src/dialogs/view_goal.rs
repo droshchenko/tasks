@@ -107,6 +107,15 @@ fn render_attributes(goal: &GoalResponse) -> Element {
                 }
             }
 
+            // A goal is where a decision is written down, so a document attached to one is usually the
+            // decision itself — see the note in the task dialog for why these are ids and not paths.
+            if !goal.documents.is_empty() {
+                super::DocumentRefs {
+                    project_id: goal.project_id.clone(),
+                    ids: goal.documents.clone(),
+                }
+            }
+
             if closed {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Closed" }

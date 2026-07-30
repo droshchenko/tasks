@@ -48,6 +48,10 @@ pub enum AppRoute {
     // arguments — nothing here is searched, and which project is showing is remembered rather than linked.
     #[route("/goals")]
     Goals {},
+    // The project's documents, as folders and files. No query arguments and nothing remembered in the URL:
+    // which document is open is a dialog, and a dialog is not a place.
+    #[route("/documents")]
+    Documents {},
     #[route("/projects-setup")]
     ProjectsSetup {},
     #[route("/users")]
@@ -180,6 +184,15 @@ fn Goals() -> Element {
     rsx! {
         Shell { active: "goals",
             crate::views::goals::RenderGoals {}
+        }
+    }
+}
+
+#[component]
+fn Documents() -> Element {
+    rsx! {
+        Shell { active: "documents",
+            crate::views::documents::RenderDocuments {}
         }
     }
 }

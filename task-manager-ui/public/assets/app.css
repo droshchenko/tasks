@@ -1692,3 +1692,159 @@ button.task-view-check-row:hover {
   overflow-x: auto;
 }
 
+/* The Documents screen and the document dialog.
+ *
+ * Its own file rather than lines added to the board's: a tree of files is not a board and shares nothing
+ * with one but the tokens. The dialog reuses the task dialog's shell (`modal-task`, `task-view-*`) on
+ * purpose — a text with a header is the same shape of thing — so only what is genuinely new is here.
+ */
+
+.docs-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* The tree scrolls on its own rather than the page: the header with the project picker has to stay
+ * reachable on a project with two hundred documents. */
+.docs-tree {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.docs-node {
+  display: flex;
+  flex-direction: column;
+}
+
+/* One row, folder or file. Both are buttons and both are the full width of the tree, so the hit area is
+ * the row and not the few characters of its name. */
+.docs-folder,
+.docs-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 5px 12px;
+  cursor: pointer;
+  /* The whole row is the click target, and a click on a row of text otherwise selects it — the same reason
+   * the goal head does this. */
+  user-select: none;
+}
+
+.docs-folder:hover,
+.docs-file:hover {
+  background: var(--surface-2);
+}
+
+/* The caret is the whole of the affordance, and it points at what a click does rather than at the state —
+ * the same rule the checklist follows. A fixed width so names line up down the level. */
+.docs-caret {
+  width: 10px;
+  flex: 0 0 10px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.docs-folder-name {
+  font-weight: 600;
+}
+
+.docs-file-icon {
+  width: 16px;
+  flex: 0 0 16px;
+}
+
+/* The name takes the room and the metadata is pushed to the right edge, so a column of sizes and versions
+ * is scannable instead of ragged. */
+.docs-file-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docs-file-meta,
+.docs-file-by {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+/* One document, in the dialog. */
+.docs-page .docs-tree:empty {
+  display: none;
+}
+
+.doc-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.doc-view-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-view-by {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* The text scrolls, the header does not: a specification is long, and the path in the title is what says
+ * which document you are reading. How the Markdown inside it LOOKS is not here — it carries `.md` and
+ * 09-markdown.css is the whole of that, for every text in the product. */
+.doc-view-body {
+  overflow-y: auto;
+}
+
+/* The reference rows on a task or a goal. One per line, because they are targets to hit with a mouse in a
+ * narrow column — the same reason the dependency list is one per line. */
+.doc-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.doc-ref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
+.doc-ref:hover {
+  background: var(--surface-2);
+}
+
+/* The id, which is all this side knows until the document is opened. Monospace because it is an
+ * identifier and not a word, and truncated rather than wrapped so the rows stay one line each. */
+.doc-ref-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

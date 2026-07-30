@@ -28,6 +28,8 @@ impl From<&GoalDto> for GoalModel {
                 .iter()
                 .map(|itm| itm.into())
                 .collect(),
+            // A NULL column is a goal written before documents existed, and it reads as referencing none.
+            documents: src.documents.clone().unwrap_or_default(),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -50,6 +52,8 @@ impl From<&GoalModel> for GoalDto {
             // Always a real array, even when empty — the column is nullable only so it could be added to a
             // populated table.
             subtasks: Some(src.subtasks.iter().map(|itm| itm.into()).collect()),
+            // Always a real array, for the same reason the checklist is.
+            documents: Some(src.documents.clone()),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -123,6 +127,8 @@ pub fn goal_to_response(
         tasks_amount: tasks_amount as i32,
         done_amount: done_amount as i32,
         subtasks: super::subtasks_to_response(&src.subtasks),
+        // Ids only — see `task_to_response`.
+        documents: src.documents.clone(),
         comments: src
             .comments
             .iter()

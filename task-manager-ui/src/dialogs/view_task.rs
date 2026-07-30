@@ -207,6 +207,17 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                 }
             }
 
+            // Before the labels: a document attached to a task is usually the specification the work is done
+            // against, which is worth more to a reader than any tag on it. Ids rather than names — the board
+            // snapshot carries the references and not the documents, so a path costs a request per card and
+            // this screen deliberately does not make one until a row is clicked.
+            if !task.documents.is_empty() {
+                super::DocumentRefs {
+                    project_id: found.project_id.clone(),
+                    ids: task.documents.clone(),
+                }
+            }
+
             if !task.labels.is_empty() {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Labels" }

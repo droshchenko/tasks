@@ -64,6 +64,10 @@ pub struct TasksCreateInput {
         description = "A checklist to break this task down with, INSIDE it: each item a `title` and optionally a longer `text`. Not tasks — items have no status, no assignee and no place on the board, and an unticked one never stops the task from landing. Use it for the steps of one piece of work; anything somebody else has to see, schedule or depend on is a task of its own under the same goal. Usually omitted — a breakdown is normally written later, with tasks_update"
     )]
     pub subtasks: Option<Vec<SubtaskInput>>,
+    #[property(
+        description = "Ids of documents to point this task at, from documents_list. A document is the specification the work is done against; attaching it here is what puts it in front of whoever picks the task up. Every id must be a live document of THIS project — a reference does not cross boards, and an id that names nothing is refused rather than stored as a dead link"
+    )]
+    pub documents: Option<Vec<String>>,
 }
 
 pub struct TasksCreateHandler {
@@ -105,6 +109,7 @@ impl McpToolCall<TasksCreateInput, TaskWriteResponse> for TasksCreateHandler {
                 labels: model.labels.unwrap_or_default(),
                 depends_on: model.depends_on.unwrap_or_default(),
                 subtasks: SubtaskInput::into_new(model.subtasks),
+                documents: model.documents.unwrap_or_default(),
             },
         )
         .await?;
@@ -178,6 +183,14 @@ pub struct TasksUpdateInput {
     )]
     pub remove_subtasks: Option<Vec<String>>,
     #[property(
+        description = "Ids of documents to attach to this task, from documents_list. Added to whatever it already references, so you need not know the current set. Every id must be a live document of this project; one in the trash is refused with the path it had, because restoring it is the fix"
+    )]
+    pub add_documents: Option<Vec<String>>,
+    #[property(
+        description = "Ids of documents to detach. Applied after add_documents, so an id passed to both ends up detached. Detaching is not deleting — the document is untouched, this only takes the reference off this task. An id that is not there is not an error"
+    )]
+    pub remove_documents: Option<Vec<String>>,
+    #[property(
         description = "A note to put on the task's thread as part of this same change, as Markdown. Optional in general — and REQUIRED when this change moves the task to `done`, where it has to say what was actually done. Write a line or two: what changed, and anything the next person should know"
     )]
     pub comment: Option<String>,
@@ -241,6 +254,11 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
                     check: model.check_subtasks,
                     uncheck: model.uncheck_subtasks,
                     remove: model.remove_subtasks,
+                }
+                .into_patch(),
+                documents: crate::mcp::DocumentOps {
+                    add: model.add_documents,
+                    remove: model.remove_documents,
                 }
                 .into_patch(),
                 comment: model.comment,

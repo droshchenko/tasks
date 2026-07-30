@@ -5,6 +5,7 @@ use mcp_server_middleware::McpMiddleware;
 use crate::app::AppContext;
 
 mod comment_tool_calls;
+mod documents_tool_calls;
 mod goals_tool_calls;
 mod labels_list_tool_call;
 mod projects_list_tool_call;
@@ -17,6 +18,11 @@ mod views;
 pub use views::*;
 
 use comment_tool_calls::{AddCommentHandler, GetCommentsHandler};
+use documents_tool_calls::{
+    DocumentsDeleteHandler, DocumentsGetHandler, DocumentsHistoryHandler, DocumentsListHandler,
+    DocumentsRestoreHandler, DocumentsTrashHandler, DocumentsUpdatePathHandler,
+    DocumentsUploadHandler,
+};
 use goals_tool_calls::{
     GoalsAddCommentHandler, GoalsCreateHandler, GoalsGetCommentsHandler, GoalsListHandler,
     GoalsUpdateHandler,
@@ -155,6 +161,31 @@ item; if somebody else has to see it, schedule it, be assigned it or depend on i
 own under the same goal. Putting real work in a checklist hides it from the board, which is the one \
 thing the board is for.\
 \
+A DOCUMENT IS A TEXT THE BOARD POINTS AT, NOT A LONGER TASK. Anything that outlives the work — a \
+specification, a decision written up, a piece of reference — is a document: it lives at a path like \
+`docs/design/system.md`, it belongs to one project, and tasks and goals REFERENCE it instead of copying \
+it into their own text. That is the point: one place that is edited, rather than three copies that drift \
+apart in silence. Write one with documents_upload, find one with documents_list, read one with \
+documents_get, and attach it with add_documents on a task or a goal.\
+\
+THE PATH IS THE KEY; THE ID IS THE IDENTITY. Uploading to a path that is taken does not create a second \
+document — it writes a new version of the one that lives there, keeping its id, its history and every \
+reference to it. So documents_list BEFORE uploading: an upload to a path you did not mean to touch \
+replaces what somebody put there. The id, on the other hand, never changes for as long as the document \
+exists, which is why moving a document with documents_update_path breaks nothing, and why references are \
+stored as ids and never as paths. Moving is a separate call from uploading on purpose — a history that \
+could not tell a rewrite from a move would not answer the question it exists for.\
+\
+FOLDERS ARE NOT REAL. They are read off the paths of the documents in them, so an empty folder cannot \
+exist and renaming one means moving every document under it, one call each.\
+\
+NOTHING ABOUT A DOCUMENT IS LOST. Every version is kept whole — documents_history says what happened, \
+when, and who did it, for a live document and a deleted one alike. documents_delete puts a document in \
+the trash rather than destroying it; documents_restore brings it back, by default exactly where it was. \
+References to a deleted document are deliberately NOT cleaned up, because restoring is one call away and \
+a reference quietly dropped would not come back with it. The trash is invisible in the browser: \
+documents_trash is the only way to see what is in it.\
+\
 MOVING A TASK TO `done` REQUIRES A COMMENT, AND THE MOVE IS REFUSED WITHOUT ONE. Pass `comment` and \
 `comment_by` to tasks_update in the same call as the status change. Say what was actually done — what \
 changed, and anything the next person should know — not that it is finished, which the column already \
@@ -216,6 +247,19 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(TasksCreateHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(TasksUpdateHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(TasksDeleteHandler::new(app.clone())));
+
+    // Documents. After the board tools, because a document is read in the course of doing work rather than
+    // to find out what the work is: the index first, then one text, then the writes.
+    mcp.register_tool_call(Arc::new(DocumentsListHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsGetHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsHistoryHandler::new(app.clone())));
+
+    mcp.register_tool_call(Arc::new(DocumentsUploadHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsUpdatePathHandler::new(app.clone())));
+
+    mcp.register_tool_call(Arc::new(DocumentsDeleteHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsTrashHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsRestoreHandler::new(app.clone())));
 
     mcp.register_tool_call(Arc::new(GoalsAddCommentHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(GoalsGetCommentsHandler::new(app.clone())));

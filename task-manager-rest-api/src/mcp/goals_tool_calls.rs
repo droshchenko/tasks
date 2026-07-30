@@ -117,6 +117,10 @@ pub struct GoalsCreateInput {
         description = "A checklist for the goal itself, each item a `title` and optionally a longer `text`. For the small things an epic drags along that are not worth a card — NOT for the work, which is tasks under the goal. An unticked item does not hold the goal open. Usually omitted"
     )]
     pub subtasks: Option<Vec<SubtaskInput>>,
+    #[property(
+        description = "Ids of documents to point this goal at, from documents_list. A goal is where a decision is written down, so this is where the specification behind an epic belongs. Every id must be a live document of THIS project — a reference does not cross boards"
+    )]
+    pub documents: Option<Vec<String>>,
 }
 
 pub struct GoalsCreateHandler {
@@ -152,6 +156,7 @@ impl McpToolCall<GoalsCreateInput, GoalWriteResponse> for GoalsCreateHandler {
                 color: model.color,
                 priority: model.priority,
                 subtasks: SubtaskInput::into_new(model.subtasks),
+                documents: model.documents.unwrap_or_default(),
             },
         )
         .await?;
@@ -202,6 +207,14 @@ pub struct GoalsUpdateInput {
         description = "Take items off the list, by id. Applied last. A done item is normally left ticked rather than removed — it is the record of what the goal involved"
     )]
     pub remove_subtasks: Option<Vec<String>>,
+    #[property(
+        description = "Ids of documents to attach to this goal, from documents_list. Added to whatever it already references. Every id must be a live document of this project; one in the trash is refused with the path it had"
+    )]
+    pub add_documents: Option<Vec<String>>,
+    #[property(
+        description = "Ids of documents to detach. Applied after add_documents. Detaching is not deleting — the document is untouched, only this goal stops pointing at it"
+    )]
+    pub remove_documents: Option<Vec<String>>,
     #[property(
         description = "A note for the goal's thread as part of this same change, as Markdown. REQUIRED when closing, where it is the resolution: what came of the goal and anything the next person should know. Optional otherwise"
     )]
@@ -255,6 +268,11 @@ impl McpToolCall<GoalsUpdateInput, GoalWriteResponse> for GoalsUpdateHandler {
                     check: model.check_subtasks,
                     uncheck: model.uncheck_subtasks,
                     remove: model.remove_subtasks,
+                }
+                .into_patch(),
+                documents: crate::mcp::DocumentOps {
+                    add: model.add_documents,
+                    remove: model.remove_documents,
                 }
                 .into_patch(),
                 comment: model.comment,

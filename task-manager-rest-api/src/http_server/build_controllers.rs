@@ -11,7 +11,7 @@ use crate::app::AppContext;
 /// README.md first.
 pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpServerBuilder) {
     use super::controllers::{
-        auth, column_templates, goals, kind_templates, projects, system, tasks, users,
+        auth, column_templates, documents, goals, kind_templates, projects, system, tasks, users,
     };
 
     http_server_builder.register_get_action(system::PingAction::new(app.clone()));
@@ -42,6 +42,11 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
         .register_post_action(kind_templates::SaveKindTemplateAction::new(app.clone()));
     http_server_builder
         .register_post_action(kind_templates::DeleteKindTemplateAction::new(app.clone()));
+
+    // Reads only, like everything else the browser calls. Documents are written through /mcp, and the trash
+    // is not exposed here at all — it is not a place a person browses.
+    http_server_builder.register_post_action(documents::ListDocumentsAction::new(app.clone()));
+    http_server_builder.register_post_action(documents::GetDocumentAction::new(app.clone()));
 
     http_server_builder.register_post_action(goals::ListGoalsAction::new(app.clone()));
     http_server_builder.register_post_action(goals::SetGoalColorAction::new(app.clone()));

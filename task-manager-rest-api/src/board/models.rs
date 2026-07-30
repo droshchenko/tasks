@@ -188,6 +188,9 @@ pub struct GoalModel {
     // whether the goal can close — that is decided by its TASKS, and folding the two together would make
     // one counter mean two things.
     pub subtasks: Vec<SubtaskModel>,
+    // Ids of the documents this goal references, oldest first. See `TaskModel::documents` — the same list
+    // for the same reasons, and a goal is the likelier of the two to point at a written-down decision.
+    pub documents: Vec<String>,
     // The discussion the work came out of. Same shape as a task's thread and the same reason it rides on
     // the row: one atomic write per comment.
     pub comments: Vec<CommentModel>,
@@ -277,6 +280,17 @@ pub struct TaskModel {
     // `depends_on` and nothing else, and moving a task to Done reads its status and nothing else. A
     // checklist somebody abandoned half-way is therefore not a state the board has to have an opinion on.
     pub subtasks: Vec<SubtaskModel>,
+    // Ids of the documents this task references — `SortableId`s, sorted, which for a sortable id is also
+    // oldest first.
+    //
+    // **The only part of a document that is in memory.** The documents themselves live in Postgres and are
+    // read on request; these ids ride along in the board snapshot so a card can say how many documents a
+    // task has without a request, and the texts are fetched only when somebody opens one.
+    //
+    // An id here may name a document that has since been deleted — nothing prunes the list, because a
+    // deletion is undoable and a reference silently dropped would not come back. A reader that cannot
+    // resolve one says so.
+    pub documents: Vec<String>,
     pub comments: Vec<CommentModel>,
     pub created: DateTimeAsMicroseconds,
     // Moved by a change to the task itself. A comment does NOT move it: the thread is a separate

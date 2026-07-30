@@ -83,6 +83,15 @@ pub struct TaskResponse {
     // The checklist, in the order it was written. Empty for a task nobody broke down, which is most of
     // them. Carried in full — titles and texts — because the card that draws it is drawn from this
     // response and there is no second call from the browser for it.
+    // Ids of the documents this task references — and ONLY the ids. Unlike everything else here, a document
+    // is not held in memory on the server, so resolving these would mean a database read on every board
+    // read: the count is drawn from this list without a request, and a name or a text is fetched when
+    // somebody opens one.
+    //
+    // An id may name a document that has since been deleted. Nothing prunes the list, because deletion is
+    // undoable — a reference silently dropped would not come back when the document was restored.
+    #[serde(default)]
+    pub documents: Vec<String>,
     #[serde(default)]
     pub subtasks: Vec<crate::subtasks::SubtaskResponse>,
     #[serde(default)]
@@ -230,6 +239,7 @@ mod tests {
             blocks: Vec::new(),
             link_statuses: Vec::new(),
             blocked: false,
+            documents: Vec::new(),
             subtasks: Vec::new(),
             comments: Vec::new(),
             created_unix_seconds: 0,

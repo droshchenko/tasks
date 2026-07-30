@@ -51,6 +51,12 @@ What this buys, beyond speed: the id counter has no race (it is a field under a 
 `MAX(number)+1`), prefix uniqueness and the `RMS-42` → project resolution are in-process lookups,
 and `blocked` / `blocks` / the label set are derived on every read for free.
 
+**There is exactly one exception, and it is deliberate: documents.** A document is a text somebody opens
+occasionally, and the board is pushed *whole* down a WebSocket on every change — holding documents in memory
+would mean shipping every text to every open screen every time anybody moved a sticker. So they live in
+Postgres and are read on request. What travels in the snapshot is the *ids* of the documents a task or a goal
+references: a handful of short strings, enough to draw a count without a query. See **Documents** below.
+
 What it costs: **`task-manager-rest-api` is single-instance.** State is authoritative in the
 process and the WebSocket fan-out is in-process, so a second replica would both diverge and fail
 to notify. This is the playbook default for state-bearing services; here it is a constraint, not
@@ -263,6 +269,80 @@ derives a column's nullability from the Rust type: a non-`Option` field would em
 `alter table … add subtasks jsonb not null`, which Postgres refuses on a populated table. `NULL` reads as an
 empty checklist and every write puts a real array in. Same arrangement, and same reason, as `goals.color`.
 
+## Documents
+
+A **document** is a text that outlives the work: a specification, a decision written up, a piece of
+reference. It belongs to one project, it lives at a path — `docs/design/system.md` — and tasks and goals
+**reference** it instead of copying it into their own text. That is the whole point: one place that gets
+edited, rather than three copies that drift apart in silence.
+
+**The path is the key; the id is the identity.** `documents_upload` takes a project, a path and the text, and
+looks the path up: found, and it writes a *new version* of the document that lives there, keeping its id and
+its whole history; not found, and it creates one. So "upload the file again" is the entire editing story, and
+a caller holding a file and a path needs to know nothing else. The id, by contrast, is a `SortableId` minted
+once and never changed — not by a rewrite, not by a move — which is what makes the history complete and what
+makes a reference survive somebody tidying the tree.
+
+Which is why **moving is a separate call**, `documents_update_path`. If an upload could carry a new path
+*and* new text, the history could not tell "somebody rewrote it" from "somebody moved it", and those are the
+two questions a history exists to answer.
+
+**Folders are not real.** They are read off the paths of the documents in them, on both sides — the server
+sorts the index by path, the browser walks the segments into a tree. So an empty folder cannot exist, and
+renaming one means moving every document under it, one call each. A folder record would have been a second
+source of truth about the structure, and it would have drifted from the paths.
+
+**Nothing is lost.** Every version is kept whole in `documents_history` — path, text, who, when, and *what
+happened* (`created`, `updated`, `moved`, `deleted`, `restored`). Whole texts rather than diffs: documents are
+read one at a time, so nothing has to walk a chain, and a chain of diffs is a structure whose failure mode is
+"the oldest version is unreadable" — the one thing this table exists to prevent. It answers for a deleted
+document too, because the id outliving the deletion is the point.
+
+**History is a second table, and the only place in this service where one change writes two rows.**
+Everywhere else state rides on its own row precisely to avoid that. There is therefore no transaction to hide
+behind, so the order is fixed: **history first, then the working table.** The failure that leaves behind is a
+version nothing is serving — one row too many, which the next attempt overwrites, since history is *upserted*
+rather than inserted. The other order loses a version outright, and a history with a hole in it is not a
+history.
+
+**Deleting is a move to a second table, not a flag.** `documents_delete` takes the row out of `documents` and
+puts it in `documents_trash`; `documents_restore` brings it back, by default exactly where it was, and is
+*refused* when something has taken that path since — where a restored document lands is a decision, and a
+guessed path is how a document ends up somewhere nobody looks. A second table rather than a `deleted` column
+because with a flag every read of the working set — the index, the path lookup, the uniqueness check — would
+have to remember to exclude the deleted, and the one that forgot would be a bug nobody notices until a path
+that looks free refuses a document.
+
+The trash is **flat** (it keeps only the last path each document had) and **invisible in the browser**:
+`documents_trash` is the only way to see it. It is not a place to browse — it is a list you ask for when
+something needs restoring.
+
+**A reference is a list of ids in a `jsonb` column** on the task or goal row — `add_documents` /
+`remove_documents`, the same shape as labels and for the same reason: a caller attaching one document must
+not have to resend the four already there. Ids and never paths, which is the whole reason the id is stable.
+Two departures from how labels behave:
+
+- an id naming **no** document is refused, and one naming a *trashed* document is refused with the path it
+  had. A label is a word; a document id is minted by the system, so one that resolves nowhere means the
+  caller is working from a stale read, and a reference a reader cannot open is worse than a refusal;
+- a reference is **never cleaned up** when a document is deleted. Restoring is one call away, and a reference
+  quietly dropped would not come back with the document. A reader that cannot resolve one is told it is in
+  the trash.
+
+Validating an added id is the one piece of validation in `scripts/` that reads Postgres — documents are not
+in memory. It happens before a task number is reserved, like everything else, so a refused reference does not
+burn an id.
+
+In the browser: a **Documents** screen with the tree, and a document opens in a dialog that fetches its own
+text — the only dialog on that side that fetches anything, because it is the only one whose model is not
+already in hand. The task and goal dialogs draw their references as rows labelled by *id*, which looks
+unfriendly and is the honest shape of what the client knows: the path appears the moment the document is
+opened, as the dialog's title. And nothing on that screen is live, deliberately: the socket carries the
+board, so a Refresh button is the answer to "an agent just uploaded something".
+
+**The `(project_id, doc_path)` index is unique**, as the backstop under the path-is-the-key rule: the
+application checks before it writes, and the index is what stops two writes racing past that check.
+
 ## Who is who
 
 **Authentication is Google OAuth.** `client_id`, `client_secret` and `redirect_uri` come from the
@@ -318,6 +398,14 @@ Tools:
 - `tasks_list` / `tasks_create` / `tasks_update` / `tasks_delete`
 - `tasks_add_comment` / `tasks_get_comments`
 - `labels_list`
+- `documents_list` / `documents_get` / `documents_history` — the index without the texts, one document
+  with its text (by id, or by project and path, and optionally at an old `version`), and every version a
+  document has had. Split that way on purpose: a document can be a whole specification, and an agent that
+  pulled all of them in to find one would have spent the context it needed for the work.
+- `documents_upload` / `documents_update_path` — write a version at a path, and move a document without
+  touching its text. Two calls rather than one, so the history can tell the two apart.
+- `documents_delete` / `documents_trash` / `documents_restore` — the trash, which exists nowhere else: the
+  browser does not show it.
 - `tasks_resolve_id` — the counterpart to composing ids on read. Given a human-written `RMS-42` it
   answers in two parts: the **direct** hit (the project holding `RMS` right now, and the task's
   current id), and the **archived** ones — every project that used to hold `RMS`, whether task 42

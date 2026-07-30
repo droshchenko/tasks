@@ -1,3 +1,5 @@
+mod documents;
+pub use documents::*;
 mod goals;
 pub use goals::*;
 mod projects;

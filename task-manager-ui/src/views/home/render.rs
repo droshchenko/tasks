@@ -1106,6 +1106,7 @@ mod tests {
             blocks: Vec::new(),
             link_statuses: Vec::new(),
             blocked: false,
+            documents: Vec::new(),
             subtasks: Vec::new(),
             comments: Vec::new(),
             created_unix_seconds: 0,

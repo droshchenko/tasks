@@ -7,8 +7,8 @@ use task_manager_shared::ws::{BoardSnapshot, ServerWsPayload};
 
 use crate::board::Board;
 use crate::postgres::{
-    ColumnTemplatesRepo, GoalsRepo, KindTemplatesRepo, ProjectMembersRepo, ProjectsRepo, TasksRepo,
-    UsersRepo,
+    ColumnTemplatesRepo, DocumentsRepo, GoalsRepo, KindTemplatesRepo, ProjectMembersRepo,
+    ProjectsRepo, TasksRepo, UsersRepo,
 };
 use crate::settings::SettingsReader;
 use crate::subscribers::ProjectSubscribers;
@@ -30,6 +30,16 @@ pub struct AppContext {
     pub project_members_repo: ProjectMembersRepo,
     pub tasks_repo: TasksRepo,
     pub users_repo: UsersRepo,
+
+    // THE EXCEPTION to the line above: documents are never loaded into memory, so every read of one comes
+    // through here rather than from `board`.
+    //
+    // Deliberate, and the reason is the push protocol. The board is sent whole down a WebSocket on every
+    // change; a document is a text somebody opens occasionally. Holding them in `Board` would mean shipping
+    // every text to every open screen every time anybody moved a sticker. What DOES travel in the snapshot
+    // is the list of document ids on a task or a goal — a handful of short strings, enough to draw a count —
+    // and the text is fetched when it is opened.
+    pub documents_repo: DocumentsRepo,
 
     // The state every read actually serves from.
     pub board: Board,
@@ -75,6 +85,7 @@ impl AppContext {
             project_members_repo: ProjectMembersRepo::new(settings_reader.clone()).await,
             tasks_repo: TasksRepo::new(settings_reader.clone()).await,
             users_repo: UsersRepo::new(settings_reader.clone()).await,
+            documents_repo: DocumentsRepo::new(settings_reader.clone()).await,
             board: Board::new(),
             subscribers: ProjectSubscribers::new(),
             session_key,

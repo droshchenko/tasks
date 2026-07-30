@@ -1,4 +1,5 @@
 mod column_templates;
+mod documents;
 mod goals;
 mod kind_templates;
 mod load_state;
@@ -10,6 +11,7 @@ mod tasks;
 mod users;
 
 pub use column_templates::*;
+pub use documents::*;
 pub use goals::*;
 pub use kind_templates::*;
 pub use load_state::*;

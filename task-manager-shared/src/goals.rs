@@ -39,6 +39,9 @@ pub struct GoalResponse {
     // `done_amount` and deliberately not folded into them: those count the goal's TASKS, which is what
     // decides whether it can close, and mixing a private breakdown into the number a goal is judged by
     // would make the counter mean two things.
+    // Ids of the documents this goal references, and only the ids — see `TaskResponse::documents`.
+    #[serde(default)]
+    pub documents: Vec<String>,
     #[serde(default)]
     pub subtasks: Vec<crate::subtasks::SubtaskResponse>,
     #[serde(default)]
