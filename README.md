@@ -353,8 +353,28 @@ modelled on the file browser in `remote-development-mcp` down to the class names
 a second design for it would be a second thing to maintain. The selection lives in the URL
 (`/documents?selected=<id>`), so a document is linkable, survives a reload and works with the back button;
 which folders are open is remembered per project in local storage, and every folder down to a linked document
-is opened so a link lands ON it. Markdown is rendered with a source toggle, an image is drawn in place, a PDF
-is framed with a way out to a full tab, and anything else is offered as a download.
+is opened so a link lands ON it. How a document is drawn is decided by its **content type**, not by which column it came out of — html is text,
+and a viewer that framed only binary payloads showed a web page as a wall of markup. Markdown is rendered with
+a source toggle, an image is drawn in place, html and a PDF are framed with a way out to a full tab, any other
+text is shown as it was written, and anything else is offered as a download.
+
+**HTML is sandboxed and a PDF is not**, and the difference is deliberate. HTML served from our own origin
+executes in it, and the session token lives in that origin's local storage — so a document an agent uploaded
+could read every viewer's token. The frame carries `sandbox="allow-scripts"` and the raw response carries
+`Content-Security-Policy: sandbox allow-scripts`: scripts and stylesheets still run, so the page renders as the
+page it is, but it sits in an opaque origin. `allow-scripts` WITHOUT `allow-same-origin` is the combination
+that matters — granting both lets the framed document drop the sandbox itself. The header as well as the
+attribute, because "open full screen" loads that url directly in a tab, where the attribute does not exist. A
+PDF gets none of it: its scripts run inside the browser's PDF viewer rather than in our page, and a sandbox
+there breaks the viewer for no gain.
+
+The file browser this viewer copies deliberately does NOT sandbox, and its comment names the condition for
+changing that — a different exposure. This is one: a board on the public internet, behind a sign-in, showing
+documents somebody else uploaded.
+
+One limitation worth knowing: the raw url is a query (`?projectId=…&id=…`), so a framed page's RELATIVE asset
+references do not resolve — an html document has to be self-contained. The browser this copies uses a path-form
+url precisely to fix that, and adopting it here would mean a middleware rather than an action.
 
 A reference on a task or a goal is a row labelled by *id* — the honest shape of what the client knows, since
 the snapshot carries ids and not documents — and clicking it LEAVES the dialog for that screen rather than

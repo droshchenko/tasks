@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 use dioxus_utils::RenderState;
 use task_manager_shared::documents::{
-    DocumentResponse, FindDocumentResponse, is_previewable_content_type, raw_document_url,
-    render_size,
+    DocumentResponse, FindDocumentResponse, is_framed_content_type, is_html_content_type,
+    is_image_content_type, raw_document_url, render_size,
 };
 use task_manager_shared::projects::ProjectResponse;
 
@@ -84,7 +84,8 @@ pub fn RenderDocuments(selected: String) -> Element {
         _ => None,
     };
 
-    // Only a text document has two ways of being read, so only it gets the switch.
+    // Any text document has two ways of being read, so it gets the switch — INCLUDING html, which is drawn as
+    // the page it is and whose markup is then one click away.
     let is_text = document.as_ref().map(|itm| !itm.is_binary).unwrap_or(false);
 
     // The url the frame is pointed at, and the one "open in a new tab" uses — the same address, so the tab
@@ -94,9 +95,12 @@ pub fn RenderDocuments(selected: String) -> Element {
         .map(|itm| raw_document_url(&itm.project_id, &itm.id, &token()))
         .unwrap_or_default();
 
+    // By content type, not by `is_binary`. That was the bug: html is stored as TEXT — it is diffable and
+    // searchable, so it belongs in the text column — and framing only binary payloads showed a web page as a
+    // wall of markup.
     let is_framed = document
         .as_ref()
-        .map(|itm| itm.is_binary && is_previewable_content_type(&itm.content_type))
+        .map(|itm| is_framed_content_type(&itm.content_type) && !show_source)
         .unwrap_or(false);
 
     let viewer = match found {
@@ -186,6 +190,14 @@ pub fn RenderDocuments(selected: String) -> Element {
     }
 }
 
+/// Whether a text document should be RENDERED as Markdown rather than shown as it was written.
+///
+/// Only Markdown is: a csv, a config or a page's markup put through a Markdown renderer comes out mangled, and
+/// what a reader wants from those is the file.
+fn is_markdown_content_type(content_type: &str) -> bool {
+    content_type == "text/markdown" || content_type.starts_with("text/markdown;")
+}
+
 /// The session token, for the two tags that fetch a document's bytes themselves.
 ///
 /// They cannot send an `Authorization` header, so it goes in the url — the same trade the WebSocket makes here.
@@ -207,26 +219,55 @@ fn render_found(found: &FindDocumentResponse, show_source: bool) -> Element {
     render_document(document, show_source)
 }
 
+/// How one document is drawn.
+///
+/// **Decided by the content type, and only then by whether there is text to fall back to.** The order matters
+/// and getting it wrong is what this function was rewritten for: html is text, so a viewer that asked
+/// `is_binary` first drew a web page as markup.
 fn render_document(document: &DocumentResponse, show_source: bool) -> Element {
     let raw_url = raw_document_url(&document.project_id, &document.id, &token());
 
-    if document.is_binary {
-        if document.content_type.starts_with("image/") {
-            return rsx! {
-                div { class: "viewer-image",
-                    img { src: "{raw_url}", alt: "{document.path}" }
+    if is_image_content_type(&document.content_type) {
+        return rsx! {
+            div { class: "viewer-image",
+                img { src: "{raw_url}", alt: "{document.path}" }
+            }
+        };
+    }
+
+    // A frame, unless the reader asked for the source — which only a text document has, so `show_source` on a
+    // PDF is not a state that exists.
+    if is_framed_content_type(&document.content_type) && !show_source {
+        // HTML is sandboxed and a PDF is not, and the difference is not an oversight.
+        //
+        // HTML served from our own origin executes in it, and the session token is in this origin's local
+        // storage — so a document an agent uploaded could read every viewer's token. `allow-scripts` WITHOUT
+        // `allow-same-origin` is the combination that fixes it: the page still runs its own scripts and
+        // stylesheets, so it renders as the page it is, but it sits in an opaque origin with no way back to
+        // our storage or our API. Granting both would let the document drop the sandbox itself.
+        //
+        // A PDF gets none of that. Its scripts run inside the browser's PDF viewer rather than in our page,
+        // where they cannot reach anything of ours — and a sandbox on the response breaks that viewer. The
+        // matching `Content-Security-Policy` on the raw endpoint keys off the same distinction, which is what
+        // covers this url being opened directly in a tab, where the attribute below does not exist.
+        let sandbox = is_html_content_type(&document.content_type);
+
+        return rsx! {
+            if sandbox {
+                iframe {
+                    class: "viewer-frame",
+                    src: "{raw_url}",
+                    // Quoted because `dioxus_elements::iframe` does not declare this attribute — the string
+                    // form is how a custom one is written, and it lands on the tag verbatim.
+                    "sandbox": "allow-scripts",
                 }
-            };
-        }
-
-        if is_previewable_content_type(&document.content_type) {
-            return rsx! {
-                // The browser's own viewer, which is the whole reason the raw endpoint exists: a PDF drawn by
-                // Chrome beats anything this client could do with the bytes, and the bytes never enter the wasm.
+            } else {
                 iframe { class: "viewer-frame", src: "{raw_url}" }
-            };
-        }
+            }
+        };
+    }
 
+    if document.is_binary {
         return rsx! {
             div { class: "viewer-note",
                 div { "{document.content_type} — {render_size(document.size)}" }
@@ -246,7 +287,9 @@ fn render_document(document: &DocumentResponse, show_source: bool) -> Element {
         };
     }
 
-    if show_source {
+    // The source, either because the reader asked for it or because this is a text document that is not
+    // Markdown — html markup, a csv, a config. Running those through a Markdown renderer would mangle them.
+    if show_source || !is_markdown_content_type(&document.content_type) {
         return rsx! {
             pre { class: "viewer-text", "{text}" }
         };

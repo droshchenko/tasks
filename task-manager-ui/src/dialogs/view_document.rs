@@ -1,5 +1,4 @@
 use dioxus::prelude::*;
-use task_manager_shared::documents::render_size;
 
 /// The block a task or a goal draws for the documents it references.
 ///
@@ -40,9 +39,4 @@ pub fn DocumentRefs(ids: Vec<String>) -> Element {
             }
         }
     }
-}
-
-/// `1.2 KB` — re-exported so a dialog need not reach into the shared crate for one function.
-pub fn document_size(bytes: i64) -> String {
-    render_size(bytes)
 }

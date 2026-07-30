@@ -158,15 +158,38 @@ pub fn content_type_for_path(path: &str) -> Option<&'static str> {
     })
 }
 
-/// Whether a MIME type is one the browser can render in place rather than only download.
+/// Whether the browser should draw this in a FRAME rather than as text.
 ///
-/// Used by the viewer to choose between an `<iframe>`, an `<img>` and a download link. Deliberately a small
-/// allow-list: a type nobody listed is offered as a file, which is always safe, where guessing wrong leaves
-/// an empty pane.
-pub fn is_previewable_content_type(content_type: &str) -> bool {
-    content_type == "application/pdf"
-        || content_type == "text/html"
-        || content_type.starts_with("image/")
+/// **Decided by the content type and nothing else**, which is the fix for the bug this replaced: HTML is
+/// stored as text — it is diffable and searchable, so it belongs in the text column — and a viewer that
+/// framed only what was *binary* therefore showed a web page as a wall of markup. What decides how a document
+/// is DRAWN is what it is, not which column it came out of.
+///
+/// PDF and HTML, because those are the two the browser has a viewer for and this side does not.
+pub fn is_framed_content_type(content_type: &str) -> bool {
+    is_html_content_type(content_type) || content_type == "application/pdf"
+}
+
+/// Whether this is an image, which is drawn with an `<img>` rather than framed.
+pub fn is_image_content_type(content_type: &str) -> bool {
+    content_type.starts_with("image/")
+}
+
+/// Whether this is HTML — the one type that must be SANDBOXED wherever it is shown.
+///
+/// It gets its own function because it is the only content type on this surface with a security consequence:
+/// HTML served from our own origin can read `localStorage`, and that is where the session token lives. A
+/// document is uploaded by an agent through `/mcp`, so an unsandboxed preview would let whatever wrote it read
+/// every viewer's token. Both halves of the defence key off this: the `sandbox` attribute on the frame, and
+/// `Content-Security-Policy: sandbox` on the raw response — which is what also covers the frame being opened
+/// directly in a tab.
+///
+/// The file browser this viewer was modelled on deliberately does NOT sandbox, and says why: it serves a
+/// developer's own working copy over a local network, where a preview has to behave like the real page. Its
+/// comment names the condition for changing that — a different exposure — and this is one: a board on the
+/// public internet, behind a sign-in, showing documents somebody else uploaded.
+pub fn is_html_content_type(content_type: &str) -> bool {
+    content_type == "text/html" || content_type.starts_with("text/html;")
 }
 
 /// The url that serves a document's raw bytes.
@@ -426,14 +449,35 @@ mod tests {
         assert_eq!(content_type_for_path("build.sh"), None);
     }
 
+    /// The bug this pins: HTML is TEXT, so a viewer that framed only binary payloads showed a web page as
+    /// markup. Framing is decided by the type, and `text/html` is framed while `text/markdown` is not.
     #[test]
-    fn only_what_a_browser_can_draw_is_previewable() {
-        assert!(is_previewable_content_type("application/pdf"));
-        assert!(is_previewable_content_type("image/png"));
-        assert!(is_previewable_content_type("text/html"));
+    fn html_is_framed_even_though_it_is_text() {
+        assert!(is_framed_content_type("text/html"));
+        assert!(is_framed_content_type("application/pdf"));
 
-        assert!(!is_previewable_content_type("application/zip"));
-        assert!(!is_previewable_content_type("application/octet-stream"));
+        assert!(!is_framed_content_type("text/markdown"));
+        assert!(!is_framed_content_type("text/plain"));
+        assert!(!is_framed_content_type("image/png"), "an image is drawn, not framed");
+        assert!(!is_framed_content_type("application/zip"));
+    }
+
+    #[test]
+    fn an_image_is_drawn_rather_than_framed() {
+        assert!(is_image_content_type("image/png"));
+        assert!(is_image_content_type("image/svg+xml"));
+        assert!(!is_image_content_type("application/pdf"));
+    }
+
+    /// A charset parameter must not smuggle HTML past the sandbox check — `text/html; charset=utf-8` is HTML.
+    #[test]
+    fn html_is_recognised_with_a_charset_on_it() {
+        assert!(is_html_content_type("text/html"));
+        assert!(is_html_content_type("text/html; charset=utf-8"));
+
+        assert!(!is_html_content_type("text/plain"));
+        // Not a prefix match on `text/htm`: a type has to BE html to be treated as html.
+        assert!(!is_html_content_type("text/htmlish"));
     }
 
     #[test]
