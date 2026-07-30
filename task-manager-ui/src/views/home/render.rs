@@ -114,7 +114,7 @@ pub fn RenderHome(search: Option<String>) -> Element {
             let cs_ra = cs.read();
             let project_id = cs_ra.selected.clone();
 
-            // The cookie holds the prefix, so the id is translated back here — read out of the list this
+            // Storage holds the prefix, so the id is translated back here — read out of the list this
             // screen already has rather than stored a second time.
             let prefix = match cs_ra.projects.as_ref() {
                 RenderState::Loaded(projects) => projects
@@ -431,9 +431,13 @@ fn project_by_prefix<'a>(
 /// Which board to open on: the one a handle in the box names, then the one this browser was last on, then
 /// the first there is.
 ///
-/// A link carrying a handle beats the remembered board, because the handle is what the link is for. The
-/// remembered id is matched against what actually came back, so a board somebody lost access to falls
-/// through rather than leaving the screen on nothing.
+/// A link carrying a handle beats the remembered board, because the handle is what the link is for.
+///
+/// **`remembered` is a PREFIX, and it is resolved as one.** This is where the reload bug lived: storage keeps
+/// what a person calls a board, and this compared it against a project's internal ID — which never matches, so
+/// every reload fell through to whichever board sorted first, and the picker was reset in front of somebody who
+/// had chosen. Going through [`project_by_prefix`] also means a board renamed since it was remembered is still
+/// found, and one somebody lost access to falls through rather than leaving the screen on nothing.
 fn initial_project(
     projects: &[ProjectResponse],
     search: &str,
@@ -446,7 +450,8 @@ fn initial_project(
     }
 
     remembered
-        .filter(|id| projects.iter().any(|itm| &itm.id == id))
+        .and_then(|prefix| project_by_prefix(projects, &prefix))
+        .map(|project| project.id.clone())
         .or_else(|| projects.first().map(|itm| itm.id.clone()))
         .unwrap_or_default()
 }
@@ -1335,42 +1340,75 @@ mod tests {
         let projects = vec![project("a", "AAA", &[]), project("b", "BBB", &["OLD"])];
 
         assert_eq!(
-            initial_project(&projects, "BBB-42", Some("a".to_string())),
+            initial_project(&projects, "BBB-42", Some("AAA".to_string())),
             "b"
         );
 
         assert_eq!(
-            initial_project(&projects, "OLD-42", Some("a".to_string())),
+            initial_project(&projects, "OLD-42", Some("AAA".to_string())),
             "b",
             "a renamed prefix still names its board"
         );
 
         assert_eq!(
-            initial_project(&projects, "", Some("b".to_string())),
+            initial_project(&projects, "", Some("BBB".to_string())),
             "b",
             "nothing typed: the remembered board"
         );
 
         assert_eq!(
-            initial_project(&projects, "login bug", Some("b".to_string())),
+            initial_project(&projects, "login bug", Some("BBB".to_string())),
             "b",
             "a plain search says nothing about which board"
         );
 
         assert_eq!(
-            initial_project(&projects, "ZZZ-1", Some("b".to_string())),
+            initial_project(&projects, "ZZZ-1", Some("BBB".to_string())),
             "b",
             "a prefix nobody holds falls through rather than emptying the screen"
         );
 
         assert_eq!(
-            initial_project(&projects, "", Some("gone".to_string())),
+            initial_project(&projects, "", Some("GONE".to_string())),
             "a",
             "a board somebody lost access to falls through to the first they can see"
         );
 
         assert_eq!(initial_project(&projects, "", None), "a");
         assert_eq!(initial_project(&[], "AAA-1", None), "");
+    }
+
+    /// **The regression test for the reload bug.** What is remembered is the PREFIX — the same thing that names
+    /// a board everywhere else in this product — and it used to be compared against a project's internal id.
+    /// That comparison can only fail, so every reload landed on whichever board sorted first and the picker
+    /// silently forgot what somebody had chosen.
+    #[test]
+    fn the_remembered_board_is_a_prefix_and_is_resolved_as_one() {
+        let projects = vec![project("id-1", "AAA", &[]), project("id-2", "BBB", &["OLD"])];
+
+        assert_eq!(
+            initial_project(&projects, "", Some("BBB".to_string())),
+            "id-2",
+            "the prefix names the board, whatever its id happens to be"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "", Some("bbb".to_string())),
+            "id-2",
+            "and case is not what decides it"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "", Some("OLD".to_string())),
+            "id-2",
+            "a board renamed since it was remembered is still the board it was"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "", Some("id-2".to_string())),
+            "id-1",
+            "an id is not the vocabulary here: it names no board and falls through to the first one"
+        );
     }
 
     /// Typing a handle narrows the board digit by digit — and a padded handle pasted out of an old link has

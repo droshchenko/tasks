@@ -36,12 +36,12 @@ pub struct GoogleAuthUrlResponse {
 /// html somebody else uploaded.
 pub const SESSION_COOKIE: &str = "task_manager_session";
 
-/// The cookie remembering which board is open, by PREFIX.
-///
-/// Not `HttpOnly`: the client writes it when the picker changes, so it has to be able to. It is a preference
-/// and never an authority — every request that acts on a project checks membership of the project it names,
-/// so a hand-edited cookie opens nothing its owner could not already open.
-pub const PROJECT_COOKIE: &str = "task_manager_project";
+// There is no cookie for which board is open, and there was one for exactly one release. The session belongs in
+// a cookie because the browser has to attach it to requests our code does not make; which board somebody is
+// looking at is the opposite kind of fact — this side never reads it, because every request that acts on a
+// project NAMES the project it acts on: in the body, or in the `/raw/{prefix}/{path}` url. So it is a
+// preference of one browser's, it lives in that browser's local storage, and nothing about it is shared
+// vocabulary — which is why this file no longer has a constant for it.
 
 // What a completed sign-in hands back.
 //

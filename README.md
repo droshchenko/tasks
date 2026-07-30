@@ -376,9 +376,14 @@ The file browser this viewer copies deliberately does NOT sandbox, and its comme
 changing that — a different exposure. This is one: a board on the public internet, behind a sign-in, showing
 documents somebody else uploaded.
 
-One limitation worth knowing: the raw url is a query (`?projectId=…&id=…`), so a framed page's RELATIVE asset
-references do not resolve — an html document has to be self-contained. The browser this copies uses a path-form
-url precisely to fix that, and adopting it here would mean a middleware rather than an action.
+The raw bytes are served at **`/raw/{prefix}/{path}`** — the project in a path segment and the document's path
+mirroring the tree, which is what makes a framed html page work: a page asks for its own `style.css` with a
+relative url, and the browser resolves it against the address the page came from, so from
+`/raw/TM/docs/page.html` it resolves to `/raw/TM/docs/style.css` and arrives. From a query url
+(`?project=TM&id=…`) it would resolve back onto the api route and arrive as nothing. A path of arbitrary depth
+is not something the routing macro can express, which is why this one route is a middleware rather than an
+action — and it is the same reason the project is a segment here while every other endpoint takes it as a
+parameter.
 
 A reference on a task or a goal is a row labelled by *id* — the honest shape of what the client knows, since
 the snapshot carries ids and not documents — and clicking it LEAVES the dialog for that screen rather than
@@ -421,13 +426,24 @@ local storage carried in an `Authorization` header, and the move bought three th
 The `Authorization` header is still accepted, and the WebSocket still reads a `token=` query. Both are there so
 the deploy did not sign everybody out mid-session, and both can go once no live token predates the change.
 
-Which board is open is a cookie too — **by prefix, not by id.** It is a preference and never an authority:
-every request that acts on a project checks membership of the project it names, so a hand-edited cookie opens
-nothing its owner could not already open. It is not `HttpOnly`, because the client is what writes it.
+**Which board is open is NOT a cookie**, and it was one for exactly one release. It is a preference of one
+browser's, so it lives in that browser's local storage — **by prefix, not by id** — and the picker is
+initialised from it on every load. Two things were wrong with the cookie. The server never read it, because it
+had no reason to: every request that acts on a project names the project it acts on, in the body or in the
+`/raw/{prefix}/{path}` url, and checks membership of that one. And it rode on every single request regardless,
+including the ones fetching a document's bytes.
+
+The bug it left behind is worth recording, because it is the shape of bug this whole boundary invites: what was
+stored was the PREFIX, and the Home screen compared it against a project's internal ID. That comparison can only
+fail, so every reload fell through to whichever board sorted first and the picker silently forgot what somebody
+had chosen. The remembered prefix now goes through the same resolution a task handle does, which also means a
+board renamed since it was remembered is still found, and one somebody lost access to falls through instead of
+leaving the screen on nothing.
 
 **The prefix is what crosses the boundary generally.** `RMS` is what a person calls a board and what every MCP
-tool names one by; the internal id stays inside the process. Which folders of a document tree are open is the
-one preference still in local storage — it can be dozens of paths, and a cookie is sent on every request.
+tool names one by; the internal id stays inside the process. The other preference in local storage is which
+folders of a document tree are open — it can be dozens of paths, and neither of the two is anything the server
+has a use for.
 
 ## Deleting is a flag
 

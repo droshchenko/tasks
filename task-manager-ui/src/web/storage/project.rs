@@ -1,53 +1,58 @@
-use task_manager_shared::auth::PROJECT_COOKIE;
 use wasm_bindgen::JsCast;
+
+const LAST_PROJECT_KEY: &str = "task_manager_project";
 
 /// Which board was open last, by PREFIX.
 ///
-/// **A cookie rather than local storage, and the prefix rather than the id.** The cookie is readable by the
-/// server, which is what lets it know which board a browser is on without the client saying so on every
-/// request; the prefix is what a person calls a board everywhere else in this product, and the internal id has
-/// no business crossing into a url or a cookie.
+/// **Local storage rather than a cookie, and the prefix rather than the id.** A cookie was the wrong shape
+/// twice over: the server never read it — every request that acts on a project NAMES the project it acts on, in
+/// the body or in the `/raw/{prefix}/{path}` url, so there was nothing for a cookie to tell it — and it rode on
+/// every single request regardless, including the ones fetching a document's bytes. This is a preference of this
+/// browser's, and it belongs where the other one already lives, beside the open folders of the document tree.
+///
+/// The prefix because that is what a person calls a board and what every MCP tool names one by; the internal id
+/// stays inside the process. The screens hold ids, so they translate against the project list they have just
+/// loaded — which is also what makes a board somebody lost access to fall through rather than leave the screen
+/// on nothing.
 ///
 /// It is a PREFERENCE and never an authority: every request that acts on a project checks membership of the
-/// project it names, so hand-editing this cookie opens nothing its owner could not already open. That is what
+/// project it names, so hand-editing this value opens nothing its owner could not already open. That is what
 /// makes it safe for the client to write.
-///
-/// Not `HttpOnly`, for the same reason — the client is what sets it.
 pub fn save_last_project(prefix: &str) {
-    // A year: it is a preference, and one that should survive a laptop being shut. `SameSite=Lax` so it is
-    // not sent from another site, `path=/` so every screen sees the same value.
-    set_cookie(&format!(
-        "{PROJECT_COOKIE}={prefix}; path=/; max-age={}; SameSite=Lax",
-        365 * 24 * 60 * 60
-    ));
+    if let Some(storage) = super::get_local_storage() {
+        let _ = storage.set_item(LAST_PROJECT_KEY, prefix);
+    }
 }
 
+/// The remembered prefix, or `None` when this browser has not settled on a board yet.
+///
+/// An empty string reads as `None`: a value written before a prefix was known would otherwise be a board no
+/// project can match, which is a slower way of saying nothing.
 pub fn get_last_project() -> Option<String> {
-    let cookies = read_cookies()?;
-
-    cookies
-        .split(';')
-        .filter_map(|pair| pair.split_once('='))
-        .find(|(name, _)| name.trim() == PROJECT_COOKIE)
-        .map(|(_, value)| value.trim().to_string())
+    super::get_local_storage()?
+        .get_item(LAST_PROJECT_KEY)
+        .ok()
+        .flatten()
+        .map(|itm| itm.trim().to_string())
         .filter(|itm| !itm.is_empty())
 }
 
-fn read_cookies() -> Option<String> {
-    web_sys::window()?
-        .document()?
-        .dyn_into::<web_sys::HtmlDocument>()
-        .ok()?
-        .cookie()
-        .ok()
-}
-
-fn set_cookie(value: &str) {
+/// Expire the cookie an older build kept this preference in.
+///
+/// The same job [`super::clear_session_token`] does for the token that used to live in local storage, in the
+/// other direction. Without it a browser that ran the previous build sends `task_manager_project=…` on every
+/// request for a year — on the api calls, on the WebSocket handshake and on every document's bytes — saying
+/// something nothing reads any more.
+///
+/// `path=/` because that is the scope it was written at: a browser treats a cookie of the same name at another
+/// path as a different cookie, and clearing the wrong one leaves the stale value in place while looking like it
+/// worked.
+pub fn clear_project_cookie() {
     let Some(document) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
 
     if let Ok(document) = document.dyn_into::<web_sys::HtmlDocument>() {
-        let _ = document.set_cookie(value);
+        let _ = document.set_cookie("task_manager_project=; path=/; max-age=0; SameSite=Lax");
     }
 }

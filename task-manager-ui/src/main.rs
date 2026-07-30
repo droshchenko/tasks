@@ -68,6 +68,11 @@ pub enum AppRoute {
 }
 
 fn main() {
+    // Before anything renders, and it is the whole of what the old scheme leaves behind: the board a browser
+    // was on used to be a cookie, and a cookie nothing reads still rides on every request — including every
+    // document's bytes — until it expires a year later. See `storage::save_last_project`.
+    crate::web::storage::clear_project_cookie();
+
     dioxus::LaunchBuilder::new().launch(|| {
         rsx! {
             document::Link { rel: "icon", href: asset!("/public/favicon.ico") }

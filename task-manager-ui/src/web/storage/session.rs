@@ -1,6 +1,8 @@
 const SESSION_TOKEN_KEY: &str = "task_manager_session_token";
 
-fn get_local_storage() -> Option<web_sys::Storage> {
+/// `pub(super)` so the remembered board beside this reads the same handle rather than opening its own — see
+/// [`super::save_last_project`]. Not `pub`: `storage` is the module that owns knowing where things are kept.
+pub(super) fn get_local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok()?
 }
 
@@ -22,9 +24,9 @@ pub fn clear_session_token() {
 
 /// Which folders of a project's document tree were left open.
 ///
-/// Local storage rather than a cookie, unlike the project preference beside it: this can be dozens of paths,
-/// and a cookie is sent on every single request — including the ones fetching a document's bytes. The server
-/// has no use for it, so there is nothing to be gained by paying that on every round trip.
+/// Local storage, like the remembered board beside it in [`super::save_last_project`] and for the same reason:
+/// the server has no use for either, so neither has any business riding on every request the way a cookie
+/// does — and this one can be dozens of paths.
 ///
 /// Keyed per project, because a path in one project names nothing in another. Newline-separated, which is safe
 /// because a document path cannot contain a newline: it is normalised server-side into slash-separated

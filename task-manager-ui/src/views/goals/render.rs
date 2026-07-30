@@ -54,7 +54,7 @@ pub fn RenderGoals() -> Element {
             let cs_ra = cs.read();
             let project_id = cs_ra.selected.clone();
 
-            // The cookie holds the prefix, so the id is translated back here — read out of the list this
+            // Storage holds the prefix, so the id is translated back here — read out of the list this
             // screen already has rather than stored a second time.
             let prefix = match cs_ra.projects.as_ref() {
                 RenderState::Loaded(projects) => projects
@@ -251,8 +251,8 @@ fn get_projects(
 
                 match crate::api::get_projects().await {
                     Ok(response) => {
-                        // The cookie holds the PREFIX — what a person calls a board — and this screen works
-                        // in ids, so it is resolved here rather than stored twice.
+                        // Storage holds the PREFIX — what a person calls a board — and this screen works in
+                        // ids, so it is resolved here rather than stored twice.
                         let remembered = crate::web::storage::get_last_project();
 
                         let initial = remembered
