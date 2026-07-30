@@ -14,7 +14,7 @@ use_my_http_server!();
     route: "/api/tasks/v1/list",
     controller: "Tasks",
     summary: "Read a board",
-    description: "The only task endpoint there is, and it only reads. Every task mutation arrives through /mcp — Home is a viewer, and nothing on it is edited with a mouse. Tasks come back oldest first with `blocked` and `blocks` derived, their handles composed from the project's current prefix, and an unknown status already folded into Todo. Work closed more than seven days ago is left out — it counts as archived, and is still reachable by id through MCP.",
+    description: "The only task endpoint there is, and it only reads. Every task mutation arrives through /mcp — Home is a viewer, and nothing on it is edited with a mouse. Tasks come back oldest first with `blocked` and `blocks` derived, their handles composed from the project's current prefix, and an unknown status already folded into Todo. Work closed longer ago than the project's archive window is left out unless `includeArchived` asks for it: a board wants the live window, and the Goals screen wants the lot, because a goal outlives that window and its list has to agree with its own counters.",
     input_data: "GetTasksInputModel",
     result: [
         {status_code: 200, description: "The board", model: "TasksResponse"},
@@ -48,11 +48,13 @@ async fn handle_request(
 
     // Archived work is left out rather than paged: Done is the only column that grows for ever, and a
     // board nobody can read is a board nobody looks at. Nothing is deleted — the tasks are still there and
-    // still reachable by id through MCP.
+    // still reachable by id through MCP, and a caller that wants the history says so.
+    let include_archived = input_data.include_archived.unwrap_or(false);
+
     let tasks = board
         .tasks_of_project(&project.id)
         .iter()
-        .filter(|task| !board.is_archived(task))
+        .filter(|task| include_archived || !board.is_archived(task))
         .map(|task| task_to_response(task, &project, &board))
         .collect();
 

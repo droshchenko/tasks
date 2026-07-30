@@ -21,10 +21,11 @@ pub fn RenderGoals() -> Element {
 
     let mut cs = use_signal(ComponentState::default);
 
-    // A push carries the goals and the live board together, so both are replaced without a request and
-    // without emptying anything first. The per-goal lists are dropped instead of replaced: they include
-    // archived work, which is deliberately not in a snapshot, so the only honest thing to do with them is
-    // to fetch again — and only for the goals that are actually open.
+    // A push carries the goals and the project's WHOLE task list — archived work included — so this screen
+    // is served entirely from it: nothing is requested, nothing is emptied first, and an expanded goal keeps
+    // showing its work across the repaint. It used to fetch each expanded goal separately and throw those
+    // lists away on every push, which was a round trip and a flicker in a protocol whose whole point is that
+    // nothing gets re-read.
     use_effect(move || {
         let app_ra = app_state.read();
         let _revision = app_ra.board_revision;
@@ -36,14 +37,12 @@ pub fn RenderGoals() -> Element {
                 let mut write = cs.write();
                 write.goals.set_loaded(snapshot.goals);
                 write.tasks.set_loaded(snapshot.tasks);
-                write.goal_tasks.clear();
             }
             Some(_) => {}
             None if cs.peek().goals.has_value() => {
                 let mut write = cs.write();
                 write.goals.reset();
                 write.tasks.reset();
-                write.goal_tasks.clear();
             }
             None => {}
         }
@@ -107,8 +106,8 @@ pub fn RenderGoals() -> Element {
         }
     };
 
-    // The board read as well, and only for the tasks that belong to no goal — the Backlog group. Live work
-    // only there, on purpose: loose tasks have no epic to be history of.
+    // The project's whole task list, archived work included — the same thing a push carries. A goal outlives
+    // the archive window, so a list that stopped at it would disagree with the counters beside it.
     let tasks: Vec<TaskResponse> = match get_tasks(cs, &cs_ra) {
         Ok(tasks) => tasks.to_vec(),
         Err(element) => {
@@ -121,22 +120,22 @@ pub fn RenderGoals() -> Element {
         }
     };
 
-    let loose: Vec<TaskResponse> = tasks
-        .iter()
-        .filter(|task| task.goal.is_none())
-        .cloned()
-        .collect();
+    // One pass, into the group each task belongs to. `goal` is the handle the server resolved, so a task
+    // under a goal that is not on screen — a closed one, past its window — lands in neither group, which is
+    // the same as not being drawn.
+    let mut of_goal: HashMap<String, Vec<TaskResponse>> = HashMap::new();
+    let mut loose: Vec<TaskResponse> = Vec::new();
+
+    for task in &tasks {
+        match task.goal.as_ref() {
+            Some(goal) => of_goal.entry(goal.clone()).or_default().push(task.clone()),
+            None => loose.push(task.clone()),
+        }
+    }
 
     let current = current.clone();
     let expanded = cs_ra.expanded.clone();
     let picking_color = cs_ra.picking_color.clone();
-    // Copied out rather than cloned: the map holds `DataState`s, which do not clone, and what a child
-    // needs is the three-way answer rather than the loader's own state.
-    let goal_tasks: HashMap<String, GoalTasks> = cs_ra
-        .goal_tasks
-        .iter()
-        .map(|(id, state)| (id.clone(), GoalTasks::of(state)))
-        .collect();
     drop(cs_ra);
 
     rsx! {
@@ -156,7 +155,7 @@ pub fn RenderGoals() -> Element {
                         goal: goal.clone(),
                         project: current.clone(),
                         open: expanded.contains(&goal.id),
-                        tasks: goal_tasks.get(&goal.id).cloned(),
+                        tasks: of_goal.get(&goal.id).cloned().unwrap_or_default(),
                         picking_color: picking_color.as_deref() == Some(goal.id.as_str()),
                         cs,
                     }
@@ -177,30 +176,6 @@ pub fn RenderGoals() -> Element {
     }
 }
 
-/// The work under one expanded goal, in the three states it can be in — the PROP form of the `DataState`
-/// the component state holds.
-///
-/// It exists only because `DataState` is neither `Clone` nor `PartialEq` and a component prop has to be
-/// both. The request itself goes through the `DataState` like every other one; this is what gets copied
-/// out of it on the way into the child.
-#[derive(Clone, PartialEq)]
-enum GoalTasks {
-    Loading,
-    Loaded(Vec<TaskResponse>),
-    Failed(String),
-}
-
-impl GoalTasks {
-    /// `None` and `Loading` are the same thing to a reader — an entry exists, so a request is on its way.
-    fn of(state: &DataState<Vec<TaskResponse>>) -> Self {
-        match state.as_ref() {
-            RenderState::None | RenderState::Loading => Self::Loading,
-            RenderState::Loaded(tasks) => Self::Loaded(tasks.clone()),
-            RenderState::Error(err) => Self::Failed(err.clone()),
-        }
-    }
-}
-
 /// The key the Backlog group is remembered under. Not a goal id — no goal can be called this, because a
 /// handle always contains a `-`.
 const BACKLOG: &str = "backlog";
@@ -213,10 +188,6 @@ struct ComponentState {
     tasks: DataState<Vec<TaskResponse>>,
     /// Which groups are open. Kept across a repaint, so a push does not fold up what somebody was reading.
     expanded: Vec<String>,
-    /// Goal id -> its whole task list, archived work included. Filled when a goal is first expanded and
-    /// dropped on every push, since a snapshot cannot carry archived work. A `DataState` per goal, like
-    /// every other request on this screen — [`GoalTasks`] is only the shape it takes as a prop.
-    goal_tasks: HashMap<String, DataState<Vec<TaskResponse>>>,
     /// Which goal's palette is open, if any. One at a time: two open palettes ask a question nobody asked.
     picking_color: Option<String>,
 }
@@ -232,7 +203,6 @@ impl ComponentState {
         // visit takes. See `get_goals`.
         self.goals.reset();
         self.tasks.reset();
-        self.goal_tasks.clear();
         self.expanded.clear();
         self.picking_color = None;
     }
@@ -331,7 +301,8 @@ fn get_tasks(
             spawn(async move {
                 cs.write().tasks.set_loading();
 
-                match crate::api::get_tasks(&project_id).await {
+                // `true`: everything, archived included. See the note where the list is grouped.
+                match crate::api::get_tasks(&project_id, true).await {
                     Ok(response) => cs.write().tasks.set_loaded(response.tasks),
                     Err(err) => cs.write().tasks.set_error(err.message),
                 }
@@ -389,7 +360,7 @@ fn RenderGoal(
     goal: GoalResponse,
     project: ProjectResponse,
     open: bool,
-    tasks: Option<GoalTasks>,
+    tasks: Vec<TaskResponse>,
     picking_color: bool,
     cs: Signal<ComponentState>,
 ) -> Element {
@@ -406,8 +377,6 @@ fn RenderGoal(
     let percent = if total > 0 { done * 100 / total } else { 0 };
 
     let goal_id = goal.id.clone();
-    let project_id = project.id.clone();
-    let already_loaded = tasks.is_some();
 
     let for_dialog = goal.clone();
     let swatch_goal = goal.id.clone();
@@ -427,38 +396,7 @@ fn RenderGoal(
                 // work is wanted, and a write to a signal during render is the one thing the design
                 // patterns forbid. A list already in hand is not fetched again — a push clears it, which is
                 // what makes the next expansion ask.
-                onclick: move |_| {
-                    let opening = {
-                        let mut write = cs.write();
-                        write.toggle(&goal_id);
-                        write.expanded.iter().any(|itm| itm == &goal_id)
-                    };
-
-                    if !opening || already_loaded {
-                        return;
-                    }
-
-                    let goal_id = goal_id.clone();
-                    let project_id = project_id.clone();
-
-                    spawn(async move {
-                        cs.write()
-                            .goal_tasks
-                            .entry(goal_id.clone())
-                            .or_default()
-                            .set_loading();
-
-                        let loaded = crate::api::get_goal_tasks(&project_id, &goal_id).await;
-
-                        let mut write = cs.write();
-                        let state = write.goal_tasks.entry(goal_id).or_default();
-
-                        match loaded {
-                            Ok(response) => state.set_loaded(response.tasks),
-                            Err(err) => state.set_error(err.message),
-                        }
-                    });
-                },
+                onclick: move |_| cs.write().toggle(&goal_id),
 
                 span { class: "goal-caret", if open { "▾" } else { "▸" } }
                 img { class: "goal-icon", src: asset!("/public/assets/images/goal.svg"), alt: "" }
@@ -547,23 +485,16 @@ fn RenderGoal(
 
             if open {
                 div { class: "goal-body",
-                    match &tasks {
-                        Some(GoalTasks::Loaded(tasks)) if tasks.is_empty() => rsx! {
-                            div { class: "empty-note",
-                                "No tasks under this goal yet — it is still being talked about."
-                            }
-                        },
-                        Some(GoalTasks::Loaded(tasks)) => rsx! {
-                            for task in tasks.iter() {
-                                RenderGoalTask { key: "{task.id}", task: task.clone(), project: project.clone() }
-                            }
-                        },
-                        Some(GoalTasks::Failed(err)) => rsx! {
-                            div { class: "error-note", "{err}" }
-                        },
-                        Some(GoalTasks::Loading) | None => rsx! {
-                            div { class: "loading-note", "Loading…" }
-                        },
+                    // In hand, not fetched: the list came with the goal in the same snapshot, so there is no
+                    // loading state to draw and no failure to report.
+                    if tasks.is_empty() {
+                        div { class: "empty-note",
+                            "No tasks under this goal yet — it is still being talked about."
+                        }
+                    } else {
+                        for task in tasks.iter() {
+                            RenderGoalTask { key: "{task.id}", task: task.clone(), project: project.clone() }
+                        }
                     }
                 }
             }

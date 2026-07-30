@@ -109,8 +109,17 @@ impl AppContext {
     ///
     /// Called from `scripts/` after the change is in Postgres **and** in memory.
     ///
-    /// The snapshot matches `/api/tasks/v1/list` exactly — same mapper, same archive filter — because the
-    /// client has one way of reading a board and it must not matter which door the board came through.
+    /// **The WHOLE project, archived work included.** Not the live board: a goal outlives the archive window
+    /// — it can only be closed once every one of its tasks is done, so by then the oldest of them have aged
+    /// off — and the Goals screen has to show a goal's list agreeing with the counters beside it, which count
+    /// archived work. Sending the live board meant that screen fetching each expanded goal separately and
+    /// throwing those lists away on every push, which is both a round trip and a flicker for a protocol whose
+    /// whole point is that nothing is re-read.
+    ///
+    /// So the filtering moves to the client, where the question differs per screen: the board draws the live
+    /// window (`task_manager_shared::tasks::is_task_archived`, the same rule as `BoardInner::is_archived`),
+    /// and the Goals screen draws the lot. `/api/tasks/v1/list` takes `includeArchived` for the same reason,
+    /// so a screen gets the same thing whichever door it came through.
     pub async fn notify_project_changed(&self, project_id: &str) {
         // Built while the board lock is held and sent after it is dropped: `parking_lot`'s guard is `!Send`,
         // so holding one across an `.await` does not compile — which is the compiler enforcing the thing we
@@ -122,13 +131,13 @@ impl AppContext {
                 let tasks: Vec<TaskResponse> = board
                     .tasks_of_project(&project.id)
                     .iter()
-                    .filter(|task| !board.is_archived(task))
                     .map(|task| crate::mappers::task_to_response(task, &project, &board))
                     .collect();
 
-                // Live goals only, and their counters computed here — the same read `/api/goals/v1/list`
-                // does. Archived tasks are deliberately absent from `tasks` above while being counted in
-                // these numbers, which is why the client is told to take the counters as given.
+                // Live goals only — a closed goal leaves the screen once its window has passed, and is
+                // reached by searching for its id after that. Their counters are computed here, over the
+                // whole history, which the task list above now also carries: one source, and the list and
+                // the number beside it can no longer disagree.
                 let goals: Vec<GoalResponse> = board
                     .goals_of_project(&project.id)
                     .iter()

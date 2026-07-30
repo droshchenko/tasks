@@ -62,19 +62,6 @@ pub struct GetGoalsInputModel {
     pub include_archived: Option<bool>,
 }
 
-// Which goal's work to read, for the Goals screen expanding one.
-//
-// Separate from the board read on purpose. The board stops at the archive window; a goal's list must not,
-// because a goal closes only once every task is done and by then the oldest of them have aged off the
-// board — the list under it would then disagree with the counter beside it.
-#[derive(MyHttpInput)]
-pub struct GetGoalTasksInputModel {
-    #[http_body(name: "projectId", description: "Which project the goal is on")]
-    pub project_id: String,
-    #[http_body(name: "goal", description: "Which goal, by id — RMS-G7 — or by its bare number")]
-    pub goal: String,
-}
-
 // Recolour one goal.
 //
 // The one write the browser makes about a goal, and it is deliberate rather than a crack in the rule that

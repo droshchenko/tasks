@@ -132,4 +132,105 @@ pub struct FindTaskInputModel {
 pub struct GetTasksInputModel {
     #[http_body(name: "projectId", description: "Which project's board to read")]
     pub project_id: String,
+    #[http_body(
+        name: "includeArchived",
+        description: "Include work closed longer ago than the project's archive window. Omitted gives the live board, which is what a board screen wants; the Goals screen asks for everything, because a goal outlives the window and its list has to agree with its own counters"
+    )]
+    pub include_archived: Option<bool>,
+}
+
+/// The default archive window in days, when a project has not chosen one.
+///
+/// Duplicated from the server's `ARCHIVE_AFTER` on purpose: this is the wire side of the same rule, and the
+/// two are pinned together by the tests either side rather than by a shared constant nobody would notice
+/// changing.
+pub const DEFAULT_ARCHIVE_DAYS: i64 = 7;
+
+/// Whether a task has aged off the board, decided from what a client actually holds.
+///
+/// The client needs this now because a pushed snapshot carries a project's WHOLE history — a goal's list has
+/// to agree with the counters beside it, and those count archived work. So the board screen does the
+/// filtering the server used to do for it, and does it from the same rule: closed, and closed longer ago than
+/// the project's window.
+///
+/// A task in `done` with no close moment counts as NOT archived, exactly as on the server: the moment is
+/// written on the way in, and being lenient about a gap in the data means work cannot silently vanish.
+pub fn is_task_archived(
+    task: &TaskResponse,
+    archive_days: Option<i32>,
+    now_unix_seconds: i64,
+) -> bool {
+    let Some(closed) = task.closed_unix_seconds else {
+        return false;
+    };
+
+    // A window that makes no sense reads as the default, the same leniency the server applies: writes
+    // validate, and one bad row must not empty a board.
+    let days = match archive_days {
+        Some(days) if days > 0 => days as i64,
+        _ => DEFAULT_ARCHIVE_DAYS,
+    };
+
+    now_unix_seconds - closed > days * 24 * 60 * 60
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn done_task(closed_unix_seconds: Option<i64>) -> TaskResponse {
+        TaskResponse {
+            id: "RMS-000001".to_string(),
+            project_id: "p".to_string(),
+            text: "text".to_string(),
+            status: crate::projects::COLUMN_ID_DONE.to_string(),
+            kind: None,
+            goal: None,
+            goal_name: None,
+            goal_color: None,
+            assignee: None,
+            assignee_name: None,
+            labels: Vec::new(),
+            depends_on: Vec::new(),
+            blocks: Vec::new(),
+            link_statuses: Vec::new(),
+            blocked: false,
+            subtasks: Vec::new(),
+            comments: Vec::new(),
+            created_unix_seconds: 0,
+            updated_unix_seconds: 0,
+            closed_unix_seconds,
+        }
+    }
+
+    const NOW: i64 = 1_000 * 24 * 60 * 60;
+
+    #[test]
+    fn the_window_is_the_projects_and_the_default_is_a_week() {
+        let six_days = done_task(Some(NOW - 6 * 24 * 60 * 60));
+        let eight_days = done_task(Some(NOW - 8 * 24 * 60 * 60));
+
+        assert!(!is_task_archived(&six_days, None, NOW));
+        assert!(is_task_archived(&eight_days, None, NOW));
+
+        // A project that says two days archives what the default would still be showing.
+        assert!(is_task_archived(&six_days, Some(2), NOW));
+        // And one that says thirty keeps what the default would have hidden.
+        assert!(!is_task_archived(&eight_days, Some(30), NOW));
+    }
+
+    /// A nonsense window reads as the default rather than archiving everything the instant it closes.
+    #[test]
+    fn a_nonsense_window_falls_back() {
+        let two_days = done_task(Some(NOW - 2 * 24 * 60 * 60));
+
+        assert!(!is_task_archived(&two_days, Some(0), NOW));
+        assert!(!is_task_archived(&two_days, Some(-5), NOW));
+    }
+
+    /// Done with no close moment must not vanish — the same leniency the server applies.
+    #[test]
+    fn done_without_a_close_moment_is_not_archived() {
+        assert!(!is_task_archived(&done_task(None), Some(1), NOW));
+    }
 }

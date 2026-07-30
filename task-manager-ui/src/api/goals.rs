@@ -1,8 +1,5 @@
 use flurl::HttpVerb;
-use task_manager_shared::goals::{
-    GetGoalTasksInputModel, GetGoalsInputModel, GoalsResponse, SetGoalColorInputModel,
-};
-use task_manager_shared::tasks::TasksResponse;
+use task_manager_shared::goals::{GetGoalsInputModel, GoalsResponse, SetGoalColorInputModel};
 
 use crate::models::RequestError;
 
@@ -20,20 +17,6 @@ pub async fn get_goals(project_id: &str) -> Result<GoalsResponse, RequestError> 
     };
 
     handle_http_response(authed("/api/goals/v1/list", HttpVerb::Post, request).await).await
-}
-
-/// The work under one goal, archived tasks included.
-///
-/// A second call rather than a filter over the board: the board stops at the archive window and a goal's
-/// list must not, or the list would disagree with the counter above it. Made when a goal is expanded,
-/// which is also the only moment anybody wants it.
-pub async fn get_goal_tasks(project_id: &str, goal: &str) -> Result<TasksResponse, RequestError> {
-    let request = GetGoalTasksInputModel {
-        project_id: project_id.to_string(),
-        goal: goal.to_string(),
-    };
-
-    handle_http_response(authed("/api/goals/v1/tasks", HttpVerb::Post, request).await).await
 }
 
 /// Recolour a goal.

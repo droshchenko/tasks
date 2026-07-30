@@ -175,8 +175,22 @@ pub fn RenderHome(search: Option<String>) -> Element {
     let assignee_wanted = cs_ra.assignee_filter.clone();
 
     // Every filter narrows the same list, so they compose: a type AND an assignee AND whatever is in the box.
+    //
+    // The archive filter is one of them now, and it is not a preference: a pushed snapshot carries the
+    // project's WHOLE history — the Goals screen needs it — so this screen has to draw the live window
+    // itself. The rule is `is_task_archived` in the shared crate, the same one the server applies to the
+    // REST read, which is what keeps the two doors showing the same board.
+    let now_unix_seconds = js_sys::Date::now() as i64 / 1_000;
+
     let visible: Vec<TaskResponse> = tasks_ra
         .iter()
+        .filter(|task| {
+            !task_manager_shared::tasks::is_task_archived(
+                task,
+                current.archive_days,
+                now_unix_seconds,
+            )
+        })
         .filter(|task| matches_search(task, &search_text))
         .filter(|task| matches_kind(task, &kind_wanted))
         .filter(|task| matches_assignee(task, &assignee_wanted))
@@ -184,8 +198,22 @@ pub fn RenderHome(search: Option<String>) -> Element {
         .collect();
 
     // Offered from what is actually ON the board rather than from the roster: an option that matches
-    // nothing is a dead end, and the whole point of the list is to narrow to something.
-    let assignees = assignees_on_board(&tasks_ra);
+    // nothing is a dead end, and the whole point of the list is to narrow to something. Which is why it is
+    // built from the live list and not from `tasks_ra` — somebody whose only work here is archived is not
+    // on this board.
+    let live: Vec<TaskResponse> = tasks_ra
+        .iter()
+        .filter(|task| {
+            !task_manager_shared::tasks::is_task_archived(
+                task,
+                current.archive_days,
+                now_unix_seconds,
+            )
+        })
+        .cloned()
+        .collect();
+
+    let assignees = assignees_on_board(&live);
 
     // A flex column filling what is left of the window, so the board below it can be full height and each
     // of its columns can scroll on its own.
@@ -513,7 +541,9 @@ fn get_tasks(
             spawn(async move {
                 cs.write().tasks.set_loading();
 
-                match crate::api::get_tasks(&project_id).await {
+                // `false`: the live board. A push carries the project's whole history, and this screen
+                // filters it the same way — see `visible_on_the_board`.
+                match crate::api::get_tasks(&project_id, false).await {
                     Ok(response) => cs.write().tasks.set_loaded(response.tasks),
                     Err(err) => cs.write().tasks.set_error(err.message),
                 }
@@ -941,11 +971,42 @@ mod tests {
             blocks: Vec::new(),
             link_statuses: Vec::new(),
             blocked: false,
+            subtasks: Vec::new(),
             comments: Vec::new(),
             created_unix_seconds: 0,
             updated_unix_seconds: 0,
             closed_unix_seconds: None,
         }
+    }
+
+    /// The board draws the live window out of a list that now carries the whole history — the push does not
+    /// filter any more, so this screen must. Getting it wrong in either direction is quiet: too strict and
+    /// work vanishes off the board, too lax and Done grows without bound.
+    #[test]
+    fn the_board_hides_work_past_the_projects_archive_window() {
+        let now = 1_000 * 24 * 60 * 60;
+
+        let mut fresh = task("RMS-000001", "just closed", &[], None);
+        fresh.status = COLUMN_ID_DONE.to_string();
+        fresh.closed_unix_seconds = Some(now - 60);
+
+        let mut old_news = task("RMS-000002", "closed ages ago", &[], None);
+        old_news.status = COLUMN_ID_DONE.to_string();
+        old_news.closed_unix_seconds = Some(now - 30 * 24 * 60 * 60);
+
+        let open = task("RMS-000003", "still open", &[], None);
+
+        let archived = |task: &TaskResponse, days| {
+            task_manager_shared::tasks::is_task_archived(task, days, now)
+        };
+
+        assert!(!archived(&fresh, None));
+        assert!(archived(&old_news, None));
+        assert!(!archived(&open, None), "open work never archives, however old");
+
+        // And the window is the project's: two days hides what the default would still be drawing.
+        assert!(archived(&fresh, Some(2)) == false, "a minute is inside two days");
+        assert!(archived(&old_news, Some(60)) == false, "thirty days is inside sixty");
     }
 
     /// Which of the two things the box does is decided here, so the shapes are worth pinning.
