@@ -56,12 +56,12 @@ pub fn get_index<'s>(
 
     match cs_ra.index.as_ref() {
         RenderState::None => {
-            let project_id = cs_ra.selected_project.clone();
+            let project = cs_ra.selected_project.clone();
 
             spawn(async move {
                 cs.write().index.set_loading();
 
-                match crate::api::get_documents(&project_id).await {
+                match crate::api::get_documents(&project).await {
                     Ok(response) => cs.write().index.set_loaded(response.documents),
                     Err(err) => cs.write().index.set_error(err.message),
                 }
@@ -86,17 +86,17 @@ pub fn get_index<'s>(
 pub fn get_content<'s>(
     mut cs: Signal<DocumentsState>,
     cs_ra: &'s DocumentsState,
-    project_id: &str,
+    project: &str,
     id: &str,
 ) -> Result<&'s FindDocumentResponse, Element> {
     if !cs_ra.content_is_for(id) {
-        let project_id = project_id.to_string();
+        let project = project.to_string();
         let id = id.to_string();
 
         spawn(async move {
             cs.write().begin_content_load(&id);
 
-            match crate::api::get_document(&project_id, &id).await {
+            match crate::api::get_document(&project, &id).await {
                 Ok(found) => cs.write().content.set_loaded(found),
                 Err(err) => cs.write().content.set_error(err.message),
             }

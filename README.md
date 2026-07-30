@@ -440,10 +440,38 @@ had chosen. The remembered prefix now goes through the same resolution a task ha
 board renamed since it was remembered is still found, and one somebody lost access to falls through instead of
 leaving the screen on nothing.
 
-**The prefix is what crosses the boundary generally.** `RMS` is what a person calls a board and what every MCP
-tool names one by; the internal id stays inside the process. The other preference in local storage is which
-folders of a document tree are open — it can be dozens of paths, and neither of the two is anything the server
-has a use for.
+The other preference in local storage is which folders of a document tree are open — it can be dozens of paths,
+and neither of the two is anything the server has a use for.
+
+## A project is named by its prefix, and there is no id to get wrong
+
+That bug had a root, and it was two vocabularies for one thing. The fix is that **the internal project id does
+not cross the boundary at all** — not in a response, not in a request, not on the socket:
+
+* `ProjectResponse` has **no `id` field**. `prefix` is the identity, and the picker, the api layer and the
+  remembered board all hold that one string.
+* Every input model names a project as `project` — `RMS` — and the action resolves it through
+  `require_project_by_prefix`, which does the lookup and the membership check as one step so neither can be
+  done without the other. Below that line everything still speaks in ids: the board, the scripts, Postgres.
+* Every response names the board it came from the same way: `TaskResponse.project`, `GoalResponse.project`,
+  `DocumentResponse.project`, `BoardSnapshot.project`. A task's own id already carried the prefix in front of
+  its number, so the two now agree by construction.
+* The socket's `{"watch":"RMS"}` is a prefix too. It is resolved once, at subscribe, and the subscription then
+  holds the id — the one place the id is the better half of the trade, because the push comes from the write
+  side, which knows the project by id, and a subscription pinned to it survives a prefix rename instead of
+  going quiet until the tab is reloaded.
+* `/raw/{prefix}/{path}` was already this shape, for a different reason — relative asset references inside a
+  framed html document — and it is now the same shape as everything else rather than the exception.
+
+**The cost, said out loud: a prefix is renameable, so this is identity that can change under a client.** A
+rename invalidates whatever a browser is holding, and the screen recovers on its next read of the project list;
+`prefix_history` is what keeps an old TASK id resolving regardless. That is the same deal every MCP tool has
+always had, and it buys something worth more than immutability at this boundary: there is only one name for a
+board, so there is nothing left to translate, and nothing left to translate backwards.
+
+One consequence for deploys: the field names on the wire changed, so **the UI and the API go out together.** An
+old UI against the new API sends `projectId` where `project` is expected and reads an `id` that is no longer
+there.
 
 ## Deleting is a flag
 
@@ -633,8 +661,8 @@ project at once, so both are made deliberately rather than discovered.
 ### Everything is a POST with a body — no path parameters, no query values
 
 `#[http_path]` fields are **appended** to the url in declaration order — `append_path_segment`, no `{name}`
-substitution. So `/api/projects/v1/{projectId}/columns` is unreachable from the generated client: it can
-only build `/api/projects/v1/{projectId}`, and the server answers 404. Seven of the ten project endpoints
+substitution. So `/api/projects/v1/{project}/columns` is unreachable from the generated client: it can
+only build `/api/projects/v1/{project}`, and the server answers 404. Seven of the ten project endpoints
 were written that way and every one of them was dead on arrival.
 
 So there is no `#[http_path]` anywhere in this repo. And no `#[http_query]` either, because a query value

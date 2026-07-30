@@ -144,6 +144,40 @@ pub async fn require_project_access(
     check_project_access(app, user, project_id)
 }
 
+/// The project a request names by PREFIX, once the caller has been shown to be allowed it.
+///
+/// **Every project-scoped endpoint on this boundary starts here.** The prefix is the only name a project has
+/// on the wire — see `ProjectResponse` in the shared crate — so an action's first two steps are always the
+/// same: resolve what the caller sent, then check membership of what it resolved to. Doing them together is
+/// what stops an action doing the second against a project it never resolved, or skipping it altogether.
+///
+/// The whole project comes back rather than its id, because every caller needs more of it: the columns to
+/// validate a status against, the prefix to compose a handle from, the id to speak to the board with.
+///
+/// **The resolver's own error message is deliberately dropped.** It names every prefix that exists, which is
+/// right for MCP — an agent that mistyped a prefix is entitled to the list — and wrong here: a browser already
+/// holds the boards it may see, and somebody who is not on a board must not be handed a map of the ones they
+/// are not on.
+pub async fn require_project_by_prefix(
+    app: &Arc<AppContext>,
+    ctx: &HttpContext,
+    prefix: &str,
+) -> Result<Arc<crate::board::ProjectModel>, HttpFailResult> {
+    // In a block of its own: the board lock is not held across the await below.
+    let project = {
+        let board = app.board.read();
+        crate::scripts::resolve_project_by_prefix(&board, prefix).ok()
+    };
+
+    let Some(project) = project else {
+        return Err(crate::http_server::errors::not_found("No such project"));
+    };
+
+    require_project_access(app, ctx, &project.id).await?;
+
+    Ok(project)
+}
+
 fn check_project_access(
     app: &Arc<AppContext>,
     user: AuthUser,

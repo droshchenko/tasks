@@ -46,7 +46,9 @@ pub struct TaskLinkResponse {
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
 pub struct TaskResponse {
     pub id: String,
-    pub project_id: String,
+    // Which board this is on, by PREFIX — the same string the id above carries in front of its number, and
+    // the only name a project has on this wire. See `crate::projects::ProjectResponse`.
+    pub project: String,
     pub text: String,
     pub status: String,
     // How urgent it is — `task_manager_shared::priority::Priority` on the wire, read back with
@@ -137,8 +139,9 @@ pub struct FindTaskResponse {
     // other and never both. Search is the only way to reach an archived goal, which is why it answers for
     // goals at all.
     pub goal: Option<crate::goals::GoalResponse>,
-    pub project_id: String,
-    pub project_prefix: String,
+    // The PREFIX, like every other `project` on this wire. There is no internal id here, and there was
+    // one beside this field until it was noticed that nothing had ever read it.
+    pub project: String,
     pub project_name: String,
     // True when the hit is older than the project's archive window, so it is NOT on the board. Said out
     // loud, or somebody goes hunting through the columns for a card that is not drawn.
@@ -180,8 +183,8 @@ pub struct FindTaskInputModel {
 
 #[derive(MyHttpInput)]
 pub struct GetTasksInputModel {
-    #[http_body(name: "projectId", description: "Which project's board to read")]
-    pub project_id: String,
+    #[http_body(name: "project", description: "Which project's board to read, by prefix — RMS")]
+    pub project: String,
     #[http_body(
         name: "includeArchived",
         description: "Include work closed longer ago than the project's archive window. Omitted gives the live board, which is what a board screen wants; the Goals screen asks for everything, because a goal outlives the window and its list has to agree with its own counters"
@@ -231,7 +234,7 @@ mod tests {
     fn done_task(closed_unix_seconds: Option<i64>) -> TaskResponse {
         TaskResponse {
             id: "RMS-1".to_string(),
-            project_id: "p".to_string(),
+            project: "P".to_string(),
             text: "text".to_string(),
             status: crate::projects::COLUMN_ID_DONE.to_string(),
             priority: String::new(),

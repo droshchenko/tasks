@@ -53,8 +53,9 @@ pub fn RenderDocuments(selected: String) -> Element {
         };
     }
 
-    // A PREFIX, despite the name of the state field it comes from — see `DocumentsState::selected_project`.
-    let project_id = cs_ra.selected_project.clone();
+    // The board being browsed, by PREFIX — which is what the api takes, what every raw url carries, and
+    // what the picker below is valued by. There is no id on this side to translate from.
+    let selected_prefix = cs_ra.selected_project.clone();
     let show_source = cs_ra.show_source;
 
     // A bare `/documents` parses to an empty string, which is "nothing selected" rather than a document whose
@@ -69,7 +70,7 @@ pub fn RenderDocuments(selected: String) -> Element {
 
     let found = selected
         .as_ref()
-        .map(|id| get_content(cs, &cs_ra, &project_id, id));
+        .map(|id| get_content(cs, &cs_ra, &selected_prefix, id));
 
     // Built here rather than kept in state: the tree IS the index, folded a certain way, and a second copy
     // would be a thing to keep in step with the first for no gain.
@@ -97,7 +98,7 @@ pub fn RenderDocuments(selected: String) -> Element {
     // shows exactly what the pane is showing rather than a second rendering of it.
     let raw_url = document
         .as_ref()
-        .map(|itm| raw_document_url(&project_id, &itm.path))
+        .map(|itm| raw_document_url(&selected_prefix, &itm.path))
         .unwrap_or_default();
 
     // By content type, not by `is_binary`. That was the bug: html is stored as TEXT — it is diffable and
@@ -109,7 +110,7 @@ pub fn RenderDocuments(selected: String) -> Element {
         .unwrap_or(false);
 
     let viewer = match found {
-        Some(Ok(found)) => render_found(&project_id, found, show_source),
+        Some(Ok(found)) => render_found(&selected_prefix, found, show_source),
         Some(Err(note)) => note,
         None => rsx! {
             div { class: "viewer-note", "Select a document." }
@@ -140,7 +141,7 @@ pub fn RenderDocuments(selected: String) -> Element {
                             // forgotten.
                             option {
                                 value: "{project.prefix}",
-                                selected: project.prefix == project_id,
+                                selected: project.prefix == selected_prefix,
                                 "{project.prefix} · {project.name}"
                             }
                         }
@@ -156,7 +157,7 @@ pub fn RenderDocuments(selected: String) -> Element {
                     class: "btn btn-primary",
                     title: "Put a file into this project's documents",
                     onclick: {
-                        let project = project_id.clone();
+                        let project = selected_prefix.clone();
                         let folders = folders.clone();
 
                         move |_| {
@@ -185,7 +186,7 @@ pub fn RenderDocuments(selected: String) -> Element {
                     } else {
                         // Keyed by project: switching mounts a fresh tree rather than re-using the rows of the
                         // previous one.
-                        DocumentNodes { key: "{project_id}", nodes, depth: 0, cs }
+                        DocumentNodes { key: "{selected_prefix}", nodes, depth: 0, cs }
                     }
                 }
 
@@ -226,7 +227,7 @@ fn is_markdown_content_type(content_type: &str) -> bool {
     content_type == "text/markdown" || content_type.starts_with("text/markdown;")
 }
 
-fn render_found(project_prefix: &str, found: &FindDocumentResponse, show_source: bool) -> Element {
+fn render_found(project: &str, found: &FindDocumentResponse, show_source: bool) -> Element {
     let Some(document) = found.document.as_ref() else {
         let reason = if found.not_found.is_empty() {
             "Nothing found.".to_string()
@@ -237,7 +238,7 @@ fn render_found(project_prefix: &str, found: &FindDocumentResponse, show_source:
         return render_viewer_note(&reason, !found.in_trash);
     };
 
-    render_document(project_prefix, document, show_source)
+    render_document(project, document, show_source)
 }
 
 /// How one document is drawn.
@@ -246,11 +247,11 @@ fn render_found(project_prefix: &str, found: &FindDocumentResponse, show_source:
 /// and getting it wrong is what this function was rewritten for: html is text, so a viewer that asked
 /// `is_binary` first drew a web page as markup.
 fn render_document(
-    project_prefix: &str,
+    project: &str,
     document: &DocumentResponse,
     show_source: bool,
 ) -> Element {
-    let raw_url = raw_document_url(project_prefix, &document.path);
+    let raw_url = raw_document_url(project, &document.path);
 
     if is_image_content_type(&document.content_type) {
         return rsx! {

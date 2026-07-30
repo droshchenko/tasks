@@ -120,7 +120,7 @@ pub fn goal_to_response(
 ) -> GoalResponse {
     GoalResponse {
         id: compose_goal_handle(prefix, src.number),
-        project_id: src.project_id.clone(),
+        project: prefix.to_string(),
         name: src.name.clone(),
         description: src.description.clone(),
         color: rust_extensions::AsStr::as_str(&src.color).to_string(),

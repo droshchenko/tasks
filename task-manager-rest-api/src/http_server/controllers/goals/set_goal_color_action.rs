@@ -4,7 +4,7 @@ use service_sdk::macros::use_my_http_server;
 use task_manager_shared::goals::SetGoalColorInputModel;
 
 use crate::app::AppContext;
-use crate::http_server::errors::{bad_request, not_found};
+use crate::http_server::errors::bad_request;
 
 use_my_http_server!();
 
@@ -38,16 +38,13 @@ async fn handle_request(
     input_data: SetGoalColorInputModel,
     ctx: &HttpContext,
 ) -> Result<HttpOkResult, HttpFailResult> {
-    crate::auth::require_project_access(&action.app, ctx, &input_data.project_id).await?;
+    let project =
+        crate::auth::require_project_by_prefix(&action.app, ctx, &input_data.project).await?;
 
-    // The goal is named the way every other door names it — handle or bare number — but the browser holds
-    // a project id rather than a prefix, so the handle is composed here before the script resolves it.
+    // The goal is named the way every other door names it — handle or bare number — so the handle is
+    // composed here from the prefix the caller sent, before the script resolves it.
     let handle = {
         let board = action.app.board.read();
-
-        let project = board
-            .get_project(&input_data.project_id)
-            .ok_or_else(|| not_found("No such project"))?;
 
         let number = crate::scripts::resolve_goal_reference(&board, &project, &input_data.goal)
             .map_err(|err| bad_request(&err))?;

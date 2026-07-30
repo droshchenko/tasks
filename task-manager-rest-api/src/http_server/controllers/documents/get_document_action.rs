@@ -37,16 +37,10 @@ async fn handle_request(
     input_data: GetDocumentInputModel,
     ctx: &HttpContext,
 ) -> Result<HttpOkResult, HttpFailResult> {
-    let project_id = {
-        let board = action.app.board.read();
+    let project =
+        crate::auth::require_project_by_prefix(&action.app, ctx, &input_data.project).await?;
 
-        match crate::scripts::resolve_project_by_prefix(&board, &input_data.project) {
-            Ok(project) => project.id.clone(),
-            Err(err) => return Err(crate::http_server::errors::not_found(err)),
-        }
-    };
-
-    crate::auth::require_project_access(&action.app, ctx, &project_id).await?;
+    let project_id = project.id.as_str();
 
     let telemetry = service_sdk::my_telemetry::MyTelemetryContext::create_empty();
     let id = input_data.id.trim();
@@ -60,7 +54,7 @@ async fn handle_request(
         }
 
         return HttpOutput::as_json(FindDocumentResponse {
-            document: Some(document_to_response(&row)),
+            document: Some(document_to_response(&row, &project.prefix)),
             in_trash: false,
             not_found: String::new(),
         })

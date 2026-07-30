@@ -13,12 +13,15 @@ use crate::scripts::{body_of, content_type_of};
 ///
 /// There is no memory model in between, unlike every other type in this module: a document's PAYLOAD is never
 /// cached, so the row is the model. Its index entry is cached — see [`document_entry_to_index_entry`].
-pub fn document_to_response(src: &DocumentDto) -> DocumentResponse {
+///
+/// `prefix` comes from outside because neither the row nor the index entry carries one — they hold the internal
+/// project id, which does not cross this boundary. See `ProjectResponse` in the shared crate.
+pub fn document_to_response(src: &DocumentDto, prefix: &str) -> DocumentResponse {
     let body = body_of(src);
 
     DocumentResponse {
         id: src.id.clone(),
-        project_id: src.project_id.clone(),
+        project: prefix.to_string(),
         path: src.doc_path.clone(),
         content_type: content_type_of(src.content_type.as_deref(), &src.doc_path),
         is_binary: body.is_binary(),
@@ -35,10 +38,13 @@ pub fn document_to_response(src: &DocumentDto) -> DocumentResponse {
 ///
 /// From the in-memory index rather than from a row, which is the whole point: drawing a project's tree touches
 /// no database at all, and a PDF's bytes stay where they are until somebody opens it.
-pub fn document_entry_to_index_entry(src: &DocumentIndexEntry) -> DocumentIndexEntryResponse {
+pub fn document_entry_to_index_entry(
+    src: &DocumentIndexEntry,
+    prefix: &str,
+) -> DocumentIndexEntryResponse {
     DocumentIndexEntryResponse {
         id: src.id.clone(),
-        project_id: src.project_id.clone(),
+        project: prefix.to_string(),
         path: src.path.clone(),
         content_type: src.content_type.clone(),
         is_binary: src.is_binary,

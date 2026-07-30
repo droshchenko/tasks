@@ -4,7 +4,6 @@ use service_sdk::macros::use_my_http_server;
 use task_manager_shared::goals::{GetGoalsInputModel, GoalsResponse};
 
 use crate::app::AppContext;
-use crate::http_server::errors::not_found;
 use crate::mappers::goal_to_response;
 
 use_my_http_server!();
@@ -38,13 +37,10 @@ async fn handle_request(
     input_data: GetGoalsInputModel,
     ctx: &HttpContext,
 ) -> Result<HttpOkResult, HttpFailResult> {
-    crate::auth::require_project_access(&action.app, ctx, &input_data.project_id).await?;
+    // Prefix in, project out, access already established — see `require_project_by_prefix`.
+    let project = crate::auth::require_project_by_prefix(&action.app, ctx, &input_data.project).await?;
 
     let board = action.app.board.read();
-
-    let project = board
-        .get_project(&input_data.project_id)
-        .ok_or_else(|| not_found("No such project"))?;
 
     let include_archived = input_data.include_archived.unwrap_or(false);
 

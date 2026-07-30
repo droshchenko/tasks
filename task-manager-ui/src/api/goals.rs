@@ -10,9 +10,9 @@ use super::{authed, handle_http_empty, handle_http_response};
 /// Reads only, like the board: goals are opened, renamed and closed through `/mcp`. Archived ones are left
 /// out — a goal closed longer ago than the project's window is history, and history is reached by searching
 /// for its id.
-pub async fn get_goals(project_id: &str) -> Result<GoalsResponse, RequestError> {
+pub async fn get_goals(project: &str) -> Result<GoalsResponse, RequestError> {
     let request = GetGoalsInputModel {
-        project_id: project_id.to_string(),
+        project: project.to_string(),
         include_archived: None,
     };
 
@@ -25,12 +25,12 @@ pub async fn get_goals(project_id: &str) -> Result<GoalsResponse, RequestError> 
 /// state — the same argument that puts a task type's colour behind a mouse. Everything else about a goal
 /// still arrives through `/mcp`.
 pub async fn set_goal_color(
-    project_id: &str,
+    project: &str,
     goal: &str,
     color: &str,
 ) -> Result<(), RequestError> {
     let request = SetGoalColorInputModel {
-        project_id: project_id.to_string(),
+        project: project.to_string(),
         goal: goal.to_string(),
         color: color.to_string(),
     };

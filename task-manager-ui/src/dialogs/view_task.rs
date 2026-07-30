@@ -192,7 +192,7 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
             // and following one is then the only way to notice you have left the board you came from.
             div { class: "task-view-attr",
                 div { class: "task-view-attr-label", "Project" }
-                div { "{found.project_prefix} · {found.project_name}" }
+                div { "{found.project} · {found.project_name}" }
             }
 
 
@@ -323,8 +323,7 @@ fn show(id: String) {
             Err(err) => FindTaskResponse {
                 task: None,
                 goal: None,
-                project_id: String::new(),
-                project_prefix: String::new(),
+                project: String::new(),
                 project_name: String::new(),
                 archived: false,
                 not_found: err.message,

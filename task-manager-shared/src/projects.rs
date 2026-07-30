@@ -49,6 +49,17 @@ pub struct ProjectKindResponse {
 
 // A project as the UI and the MCP tools see it.
 //
+// **There is no `id` here, and that is the contract of this whole file.** A project is named by its PREFIX
+// wherever it is named — in these responses, in every input model, in a `/raw/{prefix}/{path}` url and in every
+// MCP tool — and the internal id never leaves the process. Two vocabularies for one board was the bug: a client
+// holding both had to translate between them at every call site, and one place got it backwards, which is how a
+// reload started landing on the wrong board.
+//
+// The cost is worth naming: a prefix is RENAMEABLE, so this is identity that can change under a client. A rename
+// invalidates whatever the browser is holding, and the screen recovers on its next read of this list. That is
+// the same deal every MCP tool has always had, and `prefix_history` is why an old TASK id still resolves
+// regardless.
+//
 // `columns` excludes the two anchors and is ordered. `labels` is not stored anywhere — it is the
 // distinct set of labels currently in use on this project's tasks, so it changes as tasks are
 // tagged and stops listing a label when the last task drops it.
@@ -58,7 +69,6 @@ pub struct ProjectKindResponse {
 // back to history.
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
 pub struct ProjectResponse {
-    pub id: String,
     pub name: String,
     pub description: String,
     pub prefix: String,
@@ -106,8 +116,8 @@ pub struct CreateProjectInputModel {
 
 #[derive(MyHttpInput)]
 pub struct UpdateProjectInputModel {
-    #[http_body(name: "projectId", description: "Project id")]
-    pub project_id: String,
+    #[http_body(name: "project", description: "Which project, by prefix — RMS")]
+    pub project: String,
     #[http_body(name: "name", description: "Project name", trim)]
     pub name: String,
     #[http_body(name: "description", description: "What the project is about", trim)]
@@ -131,8 +141,8 @@ pub struct UpdateProjectInputModel {
 // Columns are configured once per template, in Settings, and a project only points at one.
 #[derive(MyHttpInput)]
 pub struct SetProjectColumnTemplateInputModel {
-    #[http_body(name: "projectId", description: "Project id")]
-    pub project_id: String,
+    #[http_body(name: "project", description: "Which project, by prefix — RMS")]
+    pub project: String,
     #[http_body(name: "columnTemplateId", description: "Column template id, or empty for none", trim, to_lowercase)]
     pub column_template_id: String,
 }
@@ -141,8 +151,8 @@ pub struct SetProjectColumnTemplateInputModel {
 // which is legitimate: a type is optional on a task.
 #[derive(MyHttpInput)]
 pub struct SetProjectKindTemplateInputModel {
-    #[http_body(name: "projectId", description: "Project id")]
-    pub project_id: String,
+    #[http_body(name: "project", description: "Which project, by prefix — RMS")]
+    pub project: String,
     #[http_body(name: "kindTemplateId", description: "Task-type template id, or empty for none", trim, to_lowercase)]
     pub kind_template_id: String,
 }
@@ -151,8 +161,8 @@ pub struct SetProjectKindTemplateInputModel {
 // caller never has to diff it.
 #[derive(MyHttpInput)]
 pub struct SetProjectMembersInputModel {
-    #[http_body(name: "projectId", description: "Project id")]
-    pub project_id: String,
+    #[http_body(name: "project", description: "Which project, by prefix — RMS")]
+    pub project: String,
     #[http_body(name: "members", description: "Emails of every user who may see this project")]
     pub members: Vec<String>,
 }

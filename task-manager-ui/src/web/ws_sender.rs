@@ -30,8 +30,8 @@ pub fn install_ws_sender() -> futures::channel::mpsc::Receiver<String> {
 ///
 /// Silently does nothing when the socket was never opened — the board still renders, it just will not
 /// repaint by itself, and the grey dot in the header is what says so.
-pub fn watch_project(project_id: &str) {
-    let payload = format!("{{\"watch\":\"{project_id}\"}}");
+pub fn watch_project(prefix: &str) {
+    let payload = format!("{{\"watch\":\"{prefix}\"}}");
 
     WS_SENDER.with(|cell| {
         if let Some(sender) = cell.borrow_mut().as_mut() {

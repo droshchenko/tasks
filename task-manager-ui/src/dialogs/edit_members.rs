@@ -52,16 +52,17 @@ pub fn EditMembersDialog(project: Rc<ProjectResponse>, on_saved: EventHandler<()
     let mut cs = use_signal(|| ComponentState::new(project.members.clone()));
     let cs_ra = cs.read();
 
-    let project_id = project.id.clone();
+    // By PREFIX, which is the only name a project has on this side — see `ProjectResponse`.
+    let prefix = project.prefix.clone();
 
     let submit = move |_| {
-        let project_id = project_id.clone();
+        let prefix = prefix.clone();
         let members = cs.read().chosen.clone();
 
         cs.write().begin_save();
 
         spawn(async move {
-            match crate::api::set_members(&project_id, members).await {
+            match crate::api::set_members(&prefix, members).await {
                 Ok(()) => {
                     on_saved.call(());
                     super::close();

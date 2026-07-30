@@ -72,7 +72,9 @@ fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
                     }
                     tbody {
                         for project in projects.iter() {
-                            RenderRow { key: "{project.id}", project: project.clone(), data }
+                            // Keyed by prefix: it is unique, it is what this side knows a project by, and it
+                            // is stable for as long as the row is — a rename re-reads the whole list anyway.
+                            RenderRow { key: "{project.prefix}", project: project.clone(), data }
                         }
                     }
                 }

@@ -32,7 +32,7 @@ pub fn RenderGoals() -> Element {
         drop(app_ra);
 
         match push {
-            Some(snapshot) if snapshot.project_id == cs.peek().selected => {
+            Some(snapshot) if snapshot.project == cs.peek().selected => {
                 let mut write = cs.write();
                 write.goals.set_loaded(snapshot.goals);
                 write.tasks.set_loaded(snapshot.tasks);
@@ -48,31 +48,14 @@ pub fn RenderGoals() -> Element {
     });
 
     // The selection is remembered in the same place Home remembers it, so switching tabs keeps you on the
-    // board you were looking at rather than on whichever project sorts first.
+    // board you were looking at rather than on whichever project sorts first. The PREFIX both times, which
+    // is what the selection is — see `ComponentState::selected` on Home.
     use_effect(move || {
-        let (project_id, prefix) = {
-            let cs_ra = cs.read();
-            let project_id = cs_ra.selected.clone();
+        let prefix = cs.read().selected.clone();
 
-            // Storage holds the prefix, so the id is translated back here — read out of the list this
-            // screen already has rather than stored a second time.
-            let prefix = match cs_ra.projects.as_ref() {
-                RenderState::Loaded(projects) => projects
-                    .iter()
-                    .find(|itm| itm.id == project_id)
-                    .map(|itm| itm.prefix.clone()),
-                _ => None,
-            };
-
-            (project_id, prefix)
-        };
-
-        if !project_id.is_empty() {
-            if let Some(prefix) = prefix {
-                crate::web::storage::save_last_project(&prefix);
-            }
-
-            crate::web::watch_project(&project_id);
+        if !prefix.is_empty() {
+            crate::web::storage::save_last_project(&prefix);
+            crate::web::watch_project(&prefix);
         }
     });
 
@@ -94,11 +77,11 @@ pub fn RenderGoals() -> Element {
         };
     }
 
-    let selected_id = cs_ra.selected.clone();
+    let selected_prefix = cs_ra.selected.clone();
 
     let current = projects
         .iter()
-        .find(|itm| itm.id == selected_id)
+        .find(|itm| itm.prefix == selected_prefix)
         .or_else(|| projects.first());
 
     let Some(current) = current else {
@@ -207,6 +190,7 @@ const BACKLOG: &str = "backlog";
 #[derive(Default)]
 struct ComponentState {
     projects: DataState<Vec<ProjectResponse>>,
+    /// Which board is on screen, by PREFIX — the same vocabulary Home holds and the api speaks.
     selected: String,
     goals: DataState<Vec<GoalResponse>>,
     tasks: DataState<Vec<TaskResponse>>,
@@ -217,12 +201,12 @@ struct ComponentState {
 }
 
 impl ComponentState {
-    fn select(&mut self, project_id: String) {
-        if self.selected == project_id {
+    fn select(&mut self, prefix: String) {
+        if self.selected == prefix {
             return;
         }
 
-        self.selected = project_id;
+        self.selected = prefix;
         // Reset rather than clear: the next render sees `None` and loads, which is the same path a first
         // visit takes. See `get_goals`.
         self.goals.reset();
@@ -251,19 +235,18 @@ fn get_projects(
 
                 match crate::api::get_projects().await {
                     Ok(response) => {
-                        // Storage holds the PREFIX — what a person calls a board — and this screen works in
-                        // ids, so it is resolved here rather than stored twice.
+                        // Matched against what actually came back, so a board somebody lost access to falls
+                        // through to the first they can see rather than leaving the screen on nothing.
                         let remembered = crate::web::storage::get_last_project();
 
                         let initial = remembered
-                            .and_then(|prefix| {
+                            .filter(|prefix| {
                                 response
                                     .projects
                                     .iter()
-                                    .find(|itm| itm.prefix == prefix)
-                                    .map(|itm| itm.id.clone())
+                                    .any(|itm| itm.prefix.eq_ignore_ascii_case(prefix))
                             })
-                            .or_else(|| response.projects.first().map(|itm| itm.id.clone()))
+                            .or_else(|| response.projects.first().map(|itm| itm.prefix.clone()))
                             .unwrap_or_default();
 
                         let mut write = cs.write();
@@ -299,12 +282,12 @@ fn get_goals(
 
     match cs_ra.goals.as_ref() {
         RenderState::None => {
-            let project_id = cs_ra.selected.clone();
+            let project = cs_ra.selected.clone();
 
             spawn(async move {
                 cs.write().goals.set_loading();
 
-                match crate::api::get_goals(&project_id).await {
+                match crate::api::get_goals(&project).await {
                     Ok(response) => cs.write().goals.set_loaded(response.goals),
                     Err(err) => cs.write().goals.set_error(err.message),
                 }
@@ -328,13 +311,13 @@ fn get_tasks(
 
     match cs_ra.tasks.as_ref() {
         RenderState::None => {
-            let project_id = cs_ra.selected.clone();
+            let project = cs_ra.selected.clone();
 
             spawn(async move {
                 cs.write().tasks.set_loading();
 
                 // `true`: everything, archived included. See the note where the list is grouped.
-                match crate::api::get_tasks(&project_id, true).await {
+                match crate::api::get_tasks(&project, true).await {
                     Ok(response) => cs.write().tasks.set_loaded(response.tasks),
                     Err(err) => cs.write().tasks.set_error(err.message),
                 }
@@ -362,7 +345,7 @@ fn render_error(message: &str) -> Element {
 
 #[component]
 fn RenderHeader(projects: Vec<ProjectResponse>, cs: Signal<ComponentState>) -> Element {
-    let selected_id = cs.read().selected.clone();
+    let selected_prefix = cs.read().selected.clone();
     let mut cs = cs;
 
     rsx! {
@@ -375,8 +358,8 @@ fn RenderHeader(projects: Vec<ProjectResponse>, cs: Signal<ComponentState>) -> E
                     onchange: move |event| cs.write().select(event.value()),
                     for project in projects.iter() {
                         option {
-                            value: "{project.id}",
-                            selected: project.id == selected_id,
+                            value: "{project.prefix}",
+                            selected: project.prefix == selected_prefix,
                             "{project.prefix} · {project.name}"
                         }
                     }
@@ -413,7 +396,7 @@ fn RenderGoal(
 
     let for_dialog = goal.clone();
     let swatch_goal = goal.id.clone();
-    let picker_project = project.id.clone();
+    let picker_project = project.prefix.clone();
     let picker_goal = goal.id.clone();
 
     rsx! {
@@ -506,7 +489,7 @@ fn RenderGoal(
                     crate::dialogs::RenderColorPicker {
                         value: goal.color.clone(),
                         on_pick: move |color: String| {
-                            let project_id = picker_project.clone();
+                            let project = picker_project.clone();
                             let goal_id = picker_goal.clone();
 
                             // Closed first, then the request: the answer comes back as a WebSocket push
@@ -515,7 +498,7 @@ fn RenderGoal(
                             cs.write().picking_color = None;
 
                             spawn(async move {
-                                if let Err(err) = crate::api::set_goal_color(&project_id, &goal_id, &color).await {
+                                if let Err(err) = crate::api::set_goal_color(&project, &goal_id, &color).await {
                                     crate::web::console_log(
                                         format!("recolouring {goal_id} failed: {}", err.message).as_str(),
                                     );

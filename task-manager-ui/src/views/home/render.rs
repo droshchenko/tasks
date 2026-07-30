@@ -93,7 +93,7 @@ pub fn RenderHome(search: Option<String>) -> Element {
         match push {
             // Only the board on screen. A push for the project somebody just switched away from can still be
             // in flight, and applying it would put the previous board back under the new project's name.
-            Some(snapshot) if snapshot.project_id == cs.peek().selected => {
+            Some(snapshot) if snapshot.project == cs.peek().selected => {
                 cs.write().tasks.set_loaded(snapshot.tasks);
             }
             Some(_) => {}
@@ -109,30 +109,16 @@ pub fn RenderHome(search: Option<String>) -> Element {
     // Side effects of a selection, in an effect because that is what `use_effect` is for and because it IS
     // reactive: remember the choice for the next visit, and tell the socket which board to push about.
     // Sending the subscription on every change is also what makes switching projects not need a reconnect.
+    //
+    // Both take the PREFIX, which is what the selection now is — there is nothing left to translate here.
+    // This effect used to look the project up in its own list to turn an id back into a prefix for storage,
+    // and that translation is the thing that went wrong.
     use_effect(move || {
-        let (project_id, prefix) = {
-            let cs_ra = cs.read();
-            let project_id = cs_ra.selected.clone();
+        let prefix = cs.read().selected.clone();
 
-            // Storage holds the prefix, so the id is translated back here — read out of the list this
-            // screen already has rather than stored a second time.
-            let prefix = match cs_ra.projects.as_ref() {
-                RenderState::Loaded(projects) => projects
-                    .iter()
-                    .find(|itm| itm.id == project_id)
-                    .map(|itm| itm.prefix.clone()),
-                _ => None,
-            };
-
-            (project_id, prefix)
-        };
-
-        if !project_id.is_empty() {
-            if let Some(prefix) = prefix {
-                crate::web::storage::save_last_project(&prefix);
-            }
-
-            crate::web::watch_project(&project_id);
+        if !prefix.is_empty() {
+            crate::web::storage::save_last_project(&prefix);
+            crate::web::watch_project(&prefix);
         }
     });
 
@@ -154,11 +140,11 @@ pub fn RenderHome(search: Option<String>) -> Element {
         };
     }
 
-    let selected_id = cs_ra.selected.clone();
+    let selected_prefix = cs_ra.selected.clone();
 
     let current = projects
         .iter()
-        .find(|itm| itm.id == selected_id)
+        .find(|itm| itm.prefix == selected_prefix)
         .or_else(|| projects.first());
 
     let Some(current) = current else {
@@ -445,14 +431,14 @@ fn initial_project(
 ) -> String {
     if let Some((prefix, _)) = task_id_parts(search.trim()) {
         if let Some(project) = project_by_prefix(projects, prefix) {
-            return project.id.clone();
+            return project.prefix.clone();
         }
     }
 
     remembered
         .and_then(|prefix| project_by_prefix(projects, &prefix))
-        .map(|project| project.id.clone())
-        .or_else(|| projects.first().map(|itm| itm.id.clone()))
+        .map(|project| project.prefix.clone())
+        .or_else(|| projects.first().map(|itm| itm.prefix.clone()))
         .unwrap_or_default()
 }
 
@@ -520,6 +506,8 @@ struct ComponentState {
     projects: DataState<Vec<ProjectResponse>>,
     /// Keyed on `selected`: choosing another board resets this, and the next render loads it.
     tasks: DataState<Vec<TaskResponse>>,
+    /// Which board is on screen, by PREFIX — the only name a project has on this side. See
+    /// `ProjectResponse` in the shared crate for why there is no id to hold instead.
     selected: String,
     search: String,
     /// Empty means "any". Ids rather than indexes, so a board changing under a filter cannot silently move
@@ -549,12 +537,12 @@ impl ComponentState {
 
     /// Switch boards. One method because the two halves are coupled: leaving `tasks` alone would show the
     /// previous project's cards under the new project's name.
-    fn select(&mut self, project_id: String) {
-        if self.selected == project_id {
+    fn select(&mut self, prefix: String) {
+        if self.selected == prefix {
             return;
         }
 
-        self.selected = project_id;
+        self.selected = prefix;
         self.tasks.reset();
         // A drag cannot survive the board changing under it — the card it holds is not on this one.
         self.dragging = None;
@@ -577,9 +565,11 @@ fn set_search(cs: &mut ComponentState, search: String, projects: &[ProjectRespon
     cs.search = search;
 
     if let Some((prefix, _)) = task_id_parts(cs.search.trim()) {
+        // Through `project_by_prefix` rather than straight off the handle: what was typed may be a prefix the
+        // project has since renamed away from, and the board is named by the one it holds NOW.
         if let Some(project) = project_by_prefix(projects, prefix) {
-            let project_id = project.id.clone();
-            cs.select(project_id);
+            let prefix = project.prefix.clone();
+            cs.select(prefix);
         }
     }
 }
@@ -641,14 +631,14 @@ fn get_tasks(
 
     match cs_ra.tasks.as_ref() {
         RenderState::None => {
-            let project_id = cs_ra.selected.clone();
+            let project = cs_ra.selected.clone();
 
             spawn(async move {
                 cs.write().tasks.set_loading();
 
                 // `false`: the live board. A push carries the project's whole history, and this screen
                 // filters it the same way — see `visible_on_the_board`.
-                match crate::api::get_tasks(&project_id, false).await {
+                match crate::api::get_tasks(&project, false).await {
                     Ok(response) => cs.write().tasks.set_loaded(response.tasks),
                     Err(err) => cs.write().tasks.set_error(err.message),
                 }
@@ -685,7 +675,7 @@ fn RenderHeader(
     goals: Vec<(String, String)>,
 ) -> Element {
     let cs_ra = cs.read();
-    let selected_id = cs_ra.selected.clone();
+    let selected_prefix = cs_ra.selected.clone();
     let search_text = cs_ra.search.clone();
     let kind_wanted = cs_ra.kind_filter.clone();
     let assignee_wanted = cs_ra.assignee_filter.clone();
@@ -707,10 +697,12 @@ fn RenderHeader(
                 // state but the control still displayed the first entry.
                 select {
                     onchange: move |event| cs.write().select(event.value()),
+                    // Valued by PREFIX, like every other project-shaped control in this client and like the
+                    // api underneath it — there is no id on this side to carry instead.
                     for project in projects.iter() {
                         option {
-                            value: "{project.id}",
-                            selected: project.id == selected_id,
+                            value: "{project.prefix}",
+                            selected: project.prefix == selected_prefix,
                             "{project.prefix} · {project.name}"
                         }
                     }
@@ -1197,7 +1189,7 @@ mod tests {
     pub(super) fn task(id: &str, text: &str, labels: &[&str], assignee: Option<&str>) -> TaskResponse {
         TaskResponse {
             id: id.to_string(),
-            project_id: "p".to_string(),
+            project: "P".to_string(),
             text: text.to_string(),
             status: COLUMN_ID_TODO.to_string(),
             // Blank rather than `normal`, so every ordering test also proves that a task written before
@@ -1284,10 +1276,9 @@ mod tests {
         assert!(!looks_like_a_task_id("in-progress-2"));
     }
 
-    fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectResponse {
+    fn project(prefix: &str, history: &[&str]) -> ProjectResponse {
         ProjectResponse {
-            id: id.to_string(),
-            name: id.to_string(),
+            name: prefix.to_string(),
             description: String::new(),
             prefix: prefix.to_string(),
             prefix_history: history.iter().map(|itm| itm.to_string()).collect(),
@@ -1307,26 +1298,25 @@ mod tests {
     /// prefix can be taken by somebody else and history would then send the reader to the wrong board.
     #[test]
     fn the_present_prefix_outranks_a_historical_one() {
-        let projects = vec![
-            project("old", "TM", &["RMS"]),
-            project("now", "RMS", &["PROTO"]),
-        ];
+        // TM used to be RMS; RMS is somebody else now. Which is exactly the trap: one project's history
+        // names another project's present.
+        let projects = vec![project("TM", &["RMS"]), project("RMS", &["PROTO"])];
 
         assert_eq!(
-            project_by_prefix(&projects, "RMS").map(|itm| itm.id.as_str()),
-            Some("now"),
-            "the project holding RMS today"
+            project_by_prefix(&projects, "RMS").map(|itm| itm.prefix.as_str()),
+            Some("RMS"),
+            "the project holding RMS today, not the one that used to"
         );
 
         assert_eq!(
-            project_by_prefix(&projects, "PROTO").map(|itm| itm.id.as_str()),
-            Some("now"),
+            project_by_prefix(&projects, "PROTO").map(|itm| itm.prefix.as_str()),
+            Some("RMS"),
             "history answers when nobody holds it now"
         );
 
         assert_eq!(
-            project_by_prefix(&projects, "rms").map(|itm| itm.id.as_str()),
-            Some("now"),
+            project_by_prefix(&projects, "rms").map(|itm| itm.prefix.as_str()),
+            Some("RMS"),
             "a prefix is typed in whatever case comes to hand"
         );
 
@@ -1335,80 +1325,65 @@ mod tests {
 
     /// Which board a page load lands on. A handle in the URL beats the remembered board — the handle is what
     /// the link was sent for.
+    /// Which board a page load lands on, and in what order the three answers are consulted. Everything here
+    /// is a PREFIX — what the picker holds, what storage keeps, what the api is called with — which is the
+    /// whole point: the reload bug this test was written for was a remembered prefix compared against a
+    /// project's internal id, a comparison that can only fail, so every reload fell through to whichever
+    /// board sorted first.
     #[test]
     fn a_handle_in_the_url_decides_the_board() {
-        let projects = vec![project("a", "AAA", &[]), project("b", "BBB", &["OLD"])];
+        let projects = vec![project("AAA", &[]), project("BBB", &["OLD"])];
 
         assert_eq!(
             initial_project(&projects, "BBB-42", Some("AAA".to_string())),
-            "b"
+            "BBB",
+            "a handle in the url beats the remembered board — the handle is what the link was sent for"
         );
 
         assert_eq!(
             initial_project(&projects, "OLD-42", Some("AAA".to_string())),
-            "b",
+            "BBB",
             "a renamed prefix still names its board"
         );
 
         assert_eq!(
             initial_project(&projects, "", Some("BBB".to_string())),
-            "b",
+            "BBB",
             "nothing typed: the remembered board"
         );
 
         assert_eq!(
+            initial_project(&projects, "", Some("bbb".to_string())),
+            "BBB",
+            "and the case it was typed in is not what decides it"
+        );
+
+        assert_eq!(
+            initial_project(&projects, "", Some("OLD".to_string())),
+            "BBB",
+            "a board renamed since it was remembered is still the board it was"
+        );
+
+        assert_eq!(
             initial_project(&projects, "login bug", Some("BBB".to_string())),
-            "b",
+            "BBB",
             "a plain search says nothing about which board"
         );
 
         assert_eq!(
             initial_project(&projects, "ZZZ-1", Some("BBB".to_string())),
-            "b",
+            "BBB",
             "a prefix nobody holds falls through rather than emptying the screen"
         );
 
         assert_eq!(
             initial_project(&projects, "", Some("GONE".to_string())),
-            "a",
+            "AAA",
             "a board somebody lost access to falls through to the first they can see"
         );
 
-        assert_eq!(initial_project(&projects, "", None), "a");
+        assert_eq!(initial_project(&projects, "", None), "AAA");
         assert_eq!(initial_project(&[], "AAA-1", None), "");
-    }
-
-    /// **The regression test for the reload bug.** What is remembered is the PREFIX — the same thing that names
-    /// a board everywhere else in this product — and it used to be compared against a project's internal id.
-    /// That comparison can only fail, so every reload landed on whichever board sorted first and the picker
-    /// silently forgot what somebody had chosen.
-    #[test]
-    fn the_remembered_board_is_a_prefix_and_is_resolved_as_one() {
-        let projects = vec![project("id-1", "AAA", &[]), project("id-2", "BBB", &["OLD"])];
-
-        assert_eq!(
-            initial_project(&projects, "", Some("BBB".to_string())),
-            "id-2",
-            "the prefix names the board, whatever its id happens to be"
-        );
-
-        assert_eq!(
-            initial_project(&projects, "", Some("bbb".to_string())),
-            "id-2",
-            "and case is not what decides it"
-        );
-
-        assert_eq!(
-            initial_project(&projects, "", Some("OLD".to_string())),
-            "id-2",
-            "a board renamed since it was remembered is still the board it was"
-        );
-
-        assert_eq!(
-            initial_project(&projects, "", Some("id-2".to_string())),
-            "id-1",
-            "an id is not the vocabulary here: it names no board and falls through to the first one"
-        );
     }
 
     /// Typing a handle narrows the board digit by digit — and a padded handle pasted out of an old link has

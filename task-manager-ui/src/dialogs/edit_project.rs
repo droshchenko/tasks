@@ -131,35 +131,31 @@ pub fn EditProjectDialog(
             // Two calls, because the template is its own endpoint: the basics, then the assignment, and
             // only when it actually moved. A new project always needs the second one if a template was
             // picked, since create has nowhere to carry it.
-            let saved_id = match existing.as_deref() {
+            //
+            // An existing project is ADDRESSED by the prefix it currently has, and may be renamed by the same
+            // call — which is why what the template calls below use is the prefix out of the DRAFT and not
+            // the one this dialog opened on.
+            let outcome = match existing.as_deref() {
                 Some(project) => {
-                    match crate::api::update_project(
-                        &project.id,
+                    crate::api::update_project(
+                        &project.prefix,
                         &name,
                         &description,
                         &prefix,
                         archive_days,
                     )
                     .await
-                    {
-                        Ok(()) => Some(project.id.clone()),
-                        Err(err) => {
-                            cs.write().fail(err.message);
-                            return;
-                        }
-                    }
                 }
-                None => match crate::api::create_project(&name, &description, &prefix).await {
-                    // Create does not return the new id, so a template picked for a brand-new project is
-                    // assigned by finding it back by prefix. Prefixes are unique, which is what makes
-                    // that safe.
-                    Ok(()) => find_by_prefix(&prefix).await,
-                    Err(err) => {
-                        cs.write().fail(err.message);
-                        return;
-                    }
-                },
+                // Nothing to look up afterwards: this side chose the prefix, and the prefix is the name. It
+                // used to re-read the whole project list to find the new project's internal id, purely
+                // because create answers with an empty body.
+                None => crate::api::create_project(&name, &description, &prefix).await,
             };
+
+            if let Err(err) = outcome {
+                cs.write().fail(err.message);
+                return;
+            }
 
             // A brand-new project needs the assignment whenever a template was picked, since create has
             // nowhere to carry it; an existing one only when the choice moved.
@@ -167,23 +163,9 @@ pub fn EditProjectDialog(
             let assign_column = is_new && !column_template_id.is_empty() || column_changed;
             let assign_kind = is_new && !kind_template_id.is_empty() || kind_changed;
 
-            let Some(project_id) = saved_id else {
-                // Saved, but we could not find it again to assign anything. Reported rather than
-                // swallowed: the templates are not what the person asked for.
-                if assign_column || assign_kind {
-                    cs.write().fail(
-                        "The project was saved, but its templates could not be assigned — reopen it and set them."
-                            .to_string(),
-                    );
-                }
-
-                on_saved.call(());
-                return;
-            };
-
             if assign_column
                 && let Err(err) =
-                    crate::api::set_column_template(&project_id, &column_template_id).await
+                    crate::api::set_column_template(&prefix, &column_template_id).await
             {
                 // The basics DID save. Saying so matters: the person would otherwise re-enter a name that
                 // is already stored and hit "prefix already used" by themselves.
@@ -197,7 +179,7 @@ pub fn EditProjectDialog(
 
             if assign_kind
                 && let Err(err) =
-                    crate::api::set_kind_template(&project_id, &kind_template_id).await
+                    crate::api::set_kind_template(&prefix, &kind_template_id).await
             {
                 cs.write().fail(format!(
                     "The project was saved, but its task-type template was not: {}",
@@ -396,27 +378,12 @@ fn read_kind_templates(
     Vec::new()
 }
 
-/// Find a just-created project by its prefix, which is unique.
-///
-/// Only needed because create answers with an empty body. Returning the new id from the server would be
-/// better and is the obvious follow-up; this keeps the whole thing to one dialog in the meantime.
-async fn find_by_prefix(prefix: &str) -> Option<String> {
-    crate::api::get_projects()
-        .await
-        .ok()?
-        .projects
-        .into_iter()
-        .find(|itm| itm.prefix == prefix)
-        .map(|itm| itm.id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn project() -> ProjectResponse {
         ProjectResponse {
-            id: "p".to_string(),
             name: "Project".to_string(),
             description: String::new(),
             prefix: "RMS".to_string(),

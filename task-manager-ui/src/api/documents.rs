@@ -12,9 +12,9 @@ use super::{authed, handle_http_response};
 ///
 /// The tree is built from the paths this returns; folders exist nowhere else. Reads only, like the board:
 /// documents are written, moved, deleted and restored through `/mcp`.
-pub async fn get_documents(project_prefix: &str) -> Result<DocumentsResponse, RequestError> {
+pub async fn get_documents(project: &str) -> Result<DocumentsResponse, RequestError> {
     let request = GetDocumentsInputModel {
-        project: project_prefix.to_string(),
+        project: project.to_string(),
     };
 
     handle_http_response(authed("/api/documents/v1/list", HttpVerb::Post, request).await).await
@@ -26,11 +26,11 @@ pub async fn get_documents(project_prefix: &str) -> Result<DocumentsResponse, Re
 /// somebody opens it. A deleted document comes back as a miss carrying `in_trash`, which is a different thing
 /// to show than "no such document".
 pub async fn get_document(
-    project_prefix: &str,
+    project: &str,
     id: &str,
 ) -> Result<FindDocumentResponse, RequestError> {
     let request = GetDocumentInputModel {
-        project: project_prefix.to_string(),
+        project: project.to_string(),
         id: id.to_string(),
     };
 
@@ -47,7 +47,7 @@ pub async fn get_document(
 /// The bytes go up base64-encoded in a JSON body. It costs a third of the size on the way up, once per upload,
 /// and it buys the same request path every other call here already uses.
 pub async fn upload_document(
-    project_prefix: &str,
+    project: &str,
     path: &str,
     bytes: &[u8],
     content_type: Option<String>,
@@ -55,7 +55,7 @@ pub async fn upload_document(
     use rust_extensions::base64::IntoBase64;
 
     let request = UploadDocumentInputModel {
-        project: project_prefix.to_string(),
+        project: project.to_string(),
         path: path.to_string(),
         content_base64: bytes.into_base64(),
         content_type,

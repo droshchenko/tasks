@@ -59,13 +59,13 @@ impl DocumentsState {
     /// Switch projects, dropping everything that belonged to the old one — a path from one project names
     /// nothing in another. The open folders are not cleared but swapped for the ones this project was left
     /// with.
-    pub fn select_project(&mut self, project_id: String) {
-        if self.selected_project == project_id {
+    pub fn select_project(&mut self, prefix: String) {
+        if self.selected_project == prefix {
             return;
         }
 
-        self.expanded = crate::web::storage::get_expanded_folders(&project_id);
-        self.selected_project = project_id;
+        self.expanded = crate::web::storage::get_expanded_folders(&prefix);
+        self.selected_project = prefix;
         self.index.reset();
         self.content.reset();
         self.content_id = None;
@@ -74,10 +74,10 @@ impl DocumentsState {
     /// Adopt a project and the folders it was left open at, plus every folder on the way down to whatever the
     /// url points at — so a link to a document lands ON the document rather than on a collapsed tree with it
     /// somewhere inside.
-    pub fn adopt_project(&mut self, project_id: String, selected_path: &str) {
-        self.expanded = crate::web::storage::get_expanded_folders(&project_id);
+    pub fn adopt_project(&mut self, prefix: String, selected_path: &str) {
+        self.expanded = crate::web::storage::get_expanded_folders(&prefix);
         self.expanded.extend(ancestors_of(selected_path));
-        self.selected_project = project_id;
+        self.selected_project = prefix;
     }
 
     /// Open every folder on the way down to a path, for a selection that arrived after the first render —

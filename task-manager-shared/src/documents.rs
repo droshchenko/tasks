@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
 pub struct DocumentIndexEntryResponse {
     pub id: String,
-    pub project_id: String,
+    pub project: String,
     pub path: String,
     // Which version is current. Starts at 1 and moves on every write — a rewrite, a move, a delete, a
     // restore. Shown because it is the cheapest possible answer to "has anybody touched this".
@@ -46,7 +46,7 @@ pub struct DocumentIndexEntryResponse {
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
 pub struct DocumentResponse {
     pub id: String,
-    pub project_id: String,
+    pub project: String,
     pub path: String,
     pub content_type: String,
     pub is_binary: bool,

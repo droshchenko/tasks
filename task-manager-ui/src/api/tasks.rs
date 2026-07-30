@@ -11,11 +11,11 @@ use super::{authed, handle_http_empty, handle_http_response};
 
 /// Read a board.
 pub async fn get_tasks(
-    project_id: &str,
+    project: &str,
     include_archived: bool,
 ) -> Result<TasksResponse, RequestError> {
     let request = GetTasksInputModel {
-        project_id: project_id.to_string(),
+        project: project.to_string(),
         include_archived: Some(include_archived),
     };
 
@@ -45,8 +45,7 @@ pub fn find_task_locally(task: &TaskResponse, project: &ProjectResponse) -> Find
     FindTaskResponse {
         task: Some(task.clone()),
         goal: None,
-        project_id: project.id.clone(),
-        project_prefix: project.prefix.clone(),
+        project: project.prefix.clone(),
         project_name: project.name.clone(),
         archived: false,
         not_found: String::new(),

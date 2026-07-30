@@ -4,7 +4,6 @@ use service_sdk::macros::use_my_http_server;
 use task_manager_shared::documents::{DocumentsResponse, GetDocumentsInputModel};
 
 use crate::app::AppContext;
-use crate::http_server::errors::not_found;
 use crate::mappers::document_entry_to_index_entry;
 
 use_my_http_server!();
@@ -38,27 +37,17 @@ async fn handle_request(
     input_data: GetDocumentsInputModel,
     ctx: &HttpContext,
 ) -> Result<HttpOkResult, HttpFailResult> {
-    // The prefix is what a person calls a board, and it is what every other surface of this product names one
-    // by — so it is what crosses this boundary too. Resolved once, here; everything below speaks in ids.
-    let project_id = {
-        let board = action.app.board.read();
-
-        match crate::scripts::resolve_project_by_prefix(&board, &input_data.project) {
-            Ok(project) => project.id.clone(),
-            // The resolver's own message, which lists the prefixes that DO exist — "no such project" alone
-            // leaves the caller unable to tell a typo from an empty instance.
-            Err(err) => return Err(not_found(err)),
-        }
-    };
-
-    crate::auth::require_project_access(&action.app, ctx, &project_id).await?;
+    // The prefix is what a person calls a board, and it is the only name a project has on this boundary.
+    // Resolved once, here, together with the access check; everything below speaks in ids.
+    let project =
+        crate::auth::require_project_by_prefix(&action.app, ctx, &input_data.project).await?;
 
     let documents = action
         .app
         .documents_index
-        .of_project(&project_id)
+        .of_project(&project.id)
         .iter()
-        .map(document_entry_to_index_entry)
+        .map(|entry| document_entry_to_index_entry(entry, &project.prefix))
         .collect();
 
     HttpOutput::as_json(DocumentsResponse { documents }).into_ok_result(true)

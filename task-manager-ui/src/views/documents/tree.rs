@@ -278,7 +278,7 @@ mod tests {
     fn entry(path: &str) -> DocumentIndexEntryResponse {
         DocumentIndexEntryResponse {
             id: format!("id-{path}"),
-            project_id: "p".to_string(),
+            project: "P".to_string(),
             path: path.to_string(),
             content_type: "text/markdown".to_string(),
             is_binary: false,

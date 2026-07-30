@@ -178,22 +178,27 @@ impl AppContext {
 
                 let members: Vec<String> = project.members.iter().cloned().collect();
 
-                (tasks, goals, members)
+                // The PREFIX travels, not the id: it is the only name a project has on the wire, and it is
+                // what the watching client sent in its `{"watch":…}` — see `ProjectResponse`.
+                (project.prefix.clone(), tasks, goals, members)
             })
         };
 
         let (payload, members) = match prepared {
-            Some((tasks, goals, members)) => (
+            Some((prefix, tasks, goals, members)) => (
                 ServerWsPayload::board(BoardSnapshot {
-                    project_id: project_id.to_string(),
+                    project: prefix,
                     tasks,
                     goals,
                 }),
                 members,
             ),
-            // No project in memory to build a board from. The signal still goes out, and a client that gets
-            // one without a snapshot re-reads — which is also what the whole protocol did before snapshots.
-            None => (ServerWsPayload::project_changed(project_id), Vec::new()),
+            // No project in memory to build a board from — nor, therefore, a prefix to name it by. The signal
+            // still goes out, and it is delivered by what the connection is WATCHING rather than by anything
+            // in the payload: the client reads only the presence of this key and re-reads when it sees it,
+            // which is also what the whole protocol did before snapshots. The internal id is deliberately not
+            // put here instead — it does not cross this boundary.
+            None => (ServerWsPayload::project_changed(""), Vec::new()),
         };
 
         let Ok(payload) = serde_json::to_string(&payload) else {

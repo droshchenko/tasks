@@ -33,14 +33,14 @@ pub async fn create_project(
 }
 
 pub async fn update_project(
-    project_id: &str,
+    project: &str,
     name: &str,
     description: &str,
     prefix: &str,
     archive_days: Option<i32>,
 ) -> Result<(), RequestError> {
     let request = UpdateProjectInputModel {
-        project_id: project_id.to_string(),
+        project: project.to_string(),
         name: name.to_string(),
         description: description.to_string(),
         prefix: prefix.to_string(),
@@ -52,11 +52,11 @@ pub async fn update_project(
 
 /// Point a project at a column template, or at none with an empty id.
 pub async fn set_column_template(
-    project_id: &str,
+    project: &str,
     column_template_id: &str,
 ) -> Result<(), RequestError> {
     let request = SetProjectColumnTemplateInputModel {
-        project_id: project_id.to_string(),
+        project: project.to_string(),
         column_template_id: column_template_id.to_string(),
     };
 
@@ -73,11 +73,11 @@ pub async fn set_column_template(
 
 /// Point a project at a task-type template, or at none with an empty id.
 pub async fn set_kind_template(
-    project_id: &str,
+    project: &str,
     kind_template_id: &str,
 ) -> Result<(), RequestError> {
     let request = SetProjectKindTemplateInputModel {
-        project_id: project_id.to_string(),
+        project: project.to_string(),
         kind_template_id: kind_template_id.to_string(),
     };
 
@@ -93,9 +93,9 @@ pub async fn set_kind_template(
 }
 
 /// Replaces the whole set — which is how the screen works, and means this side never has to diff.
-pub async fn set_members(project_id: &str, members: Vec<String>) -> Result<(), RequestError> {
+pub async fn set_members(project: &str, members: Vec<String>) -> Result<(), RequestError> {
     let request = SetProjectMembersInputModel {
-        project_id: project_id.to_string(),
+        project: project.to_string(),
         members,
     };
 

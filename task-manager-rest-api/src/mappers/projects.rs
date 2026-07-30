@@ -127,7 +127,6 @@ pub fn project_to_response(
     kind_template: Option<&KindTemplateModel>,
 ) -> ProjectResponse {
     ProjectResponse {
-        id: src.id.clone(),
         name: src.name.clone(),
         description: src.description.clone(),
         prefix: src.prefix.clone(),

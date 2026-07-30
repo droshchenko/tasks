@@ -27,7 +27,9 @@ use crate::tasks::TaskResponse;
 // the older the goal. Take the numbers as given.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BoardSnapshot {
-    pub project_id: String,
+    // The board's PREFIX — what the client sent in its `{"watch":…}` and what it compares this against to
+    // tell a push about the board on screen from one about the board it just left.
+    pub project: String,
     pub tasks: Vec<TaskResponse>,
     #[serde(default)]
     pub goals: Vec<GoalResponse>,
@@ -51,7 +53,7 @@ impl ServerWsPayload {
     /// A board that changed, carrying the board.
     pub fn board(snapshot: BoardSnapshot) -> Self {
         Self {
-            project_changed: Some(snapshot.project_id.clone()),
+            project_changed: Some(snapshot.project.clone()),
             board_snapshot: Some(snapshot),
             error: None,
         }
@@ -59,9 +61,9 @@ impl ServerWsPayload {
 
     /// A board that changed with no snapshot to send — the project is not in memory to build one from.
     /// The client re-reads, which is what it did before snapshots existed.
-    pub fn project_changed(project_id: &str) -> Self {
+    pub fn project_changed(prefix: &str) -> Self {
         Self {
-            project_changed: Some(project_id.to_string()),
+            project_changed: Some(prefix.to_string()),
             ..Default::default()
         }
     }

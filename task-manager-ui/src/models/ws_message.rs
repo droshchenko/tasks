@@ -52,11 +52,11 @@ mod tests {
     /// One message carries both keys during the changeover. Reading the wrong one would put the spinner back.
     #[test]
     fn a_snapshot_wins_over_the_signal_beside_it() {
-        let raw = r#"{"projectChanged":"p1","boardSnapshot":{"project_id":"p1","tasks":[]}}"#;
+        let raw = r#"{"projectChanged":"RMS","boardSnapshot":{"project":"RMS","tasks":[]}}"#;
 
         match ServerWsMessage::parse(raw) {
             ServerWsMessage::BoardSnapshot(snapshot) => {
-                assert_eq!(snapshot.project_id, "p1");
+                assert_eq!(snapshot.project, "RMS");
                 assert!(snapshot.tasks.is_empty());
             }
             _ => panic!("expected a snapshot"),
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn the_signal_alone_is_still_understood() {
         assert!(matches!(
-            ServerWsMessage::parse(r#"{"projectChanged":"p1"}"#),
+            ServerWsMessage::parse(r#"{"projectChanged":"RMS"}"#),
             ServerWsMessage::ProjectChanged
         ));
     }

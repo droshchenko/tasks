@@ -22,7 +22,8 @@ use crate::tasks::TaskCommentResponse;
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
 pub struct GoalResponse {
     pub id: String,
-    pub project_id: String,
+    // The board's PREFIX, like everywhere else on this wire — see `crate::projects::ProjectResponse`.
+    pub project: String,
     pub name: String,
     pub description: String,
     // A palette name — `task_manager_shared::kind_color::KindColor` on the wire, read back with
@@ -62,8 +63,8 @@ pub struct GoalsResponse {
 
 #[derive(MyHttpInput)]
 pub struct GetGoalsInputModel {
-    #[http_body(name: "projectId", description: "Which project's goals to read")]
-    pub project_id: String,
+    #[http_body(name: "project", description: "Which project's goals to read, by prefix — RMS")]
+    pub project: String,
     #[http_body(
         name: "includeArchived",
         description: "Include goals closed longer ago than the project's archive window. Omitted means the live list"
@@ -78,8 +79,8 @@ pub struct GetGoalsInputModel {
 // task type's colour is picked in Settings with a mouse.
 #[derive(MyHttpInput)]
 pub struct SetGoalColorInputModel {
-    #[http_body(name: "projectId", description: "Which project the goal is on")]
-    pub project_id: String,
+    #[http_body(name: "project", description: "Which project the goal is on, by prefix — RMS")]
+    pub project: String,
     #[http_body(name: "goal", description: "Which goal, by id — RMS-G7 — or by its bare number")]
     pub goal: String,
     #[http_body(name: "color", description: "A palette colour name, e.g. blue")]

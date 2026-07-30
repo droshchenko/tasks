@@ -157,7 +157,7 @@ pub fn task_to_response(
 
     TaskResponse {
         id: compose_task_handle(&project.prefix, task.number),
-        project_id: task.project_id.clone(),
+        project: project.prefix.clone(),
         text: task.text.clone(),
         status: project.effective_status(&task.status),
         priority: rust_extensions::AsStr::as_str(&task.priority).to_string(),
