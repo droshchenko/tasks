@@ -34,6 +34,7 @@ impl From<&GoalDto> for GoalModel {
             created: src.created,
             updated: src.updated,
             close_moment: src.close_moment,
+            deleted_moment: src.deleted_moment,
         }
     }
 }
@@ -58,6 +59,7 @@ impl From<&GoalModel> for GoalDto {
             created: src.created,
             updated: src.updated,
             close_moment: src.close_moment,
+            deleted_moment: src.deleted_moment,
         }
     }
 }
@@ -142,6 +144,9 @@ pub fn goal_to_response(
         updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
         closed_unix_seconds: src
             .close_moment
+            .map(|itm| itm.unix_microseconds / 1_000_000),
+        deleted_unix_seconds: src
+            .deleted_moment
             .map(|itm| itm.unix_microseconds / 1_000_000),
     }
 }

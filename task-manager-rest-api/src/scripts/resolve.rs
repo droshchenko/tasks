@@ -67,7 +67,7 @@ pub fn resolve_task(board: &BoardInner, handle: &str) -> Result<ResolvedTask, St
     let project = resolve_project_by_prefix(board, &parsed.prefix)?;
 
     let task = board
-        .get_task(&project.id, parsed.number)
+        .get_task_including_deleted(&project.id, parsed.number)
         .ok_or_else(|| format!("no task {handle} on the {} board", project.prefix))?;
 
     Ok(ResolvedTask { project, task })
@@ -85,7 +85,7 @@ pub fn resolve_goal_by_handle(board: &BoardInner, handle: &str) -> Result<Resolv
     let project = resolve_project_by_prefix(board, &parsed.prefix)?;
 
     let goal = board
-        .get_goal(&project.id, parsed.number)
+        .get_goal_including_deleted(&project.id, parsed.number)
         .ok_or_else(|| format!("no goal {handle} on the {} board", project.prefix))?;
 
     Ok(ResolvedGoal { project, goal })

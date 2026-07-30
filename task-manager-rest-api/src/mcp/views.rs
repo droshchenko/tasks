@@ -180,6 +180,10 @@ pub struct GoalView {
         description = "When it was closed, unix seconds (UTC), and absent while it is open. A goal closed longer ago than the project's archive window is left out of goals_list unless you ask for it"
     )]
     pub closed_unix_seconds: Option<i64>,
+    #[property(
+        description = "When it was DELETED, unix seconds (UTC), and absent for a goal that is not. A deleted goal is gone from every listing and every screen and is still reachable by its id — which is the only way you are seeing this field. goals_update with `deleted: false` brings it back"
+    )]
+    pub deleted_unix_seconds: Option<i64>,
 }
 
 impl GoalView {
@@ -203,6 +207,9 @@ impl GoalView {
             updated_unix_seconds: goal.updated.unix_microseconds / 1_000_000,
             closed_unix_seconds: goal
                 .close_moment
+                .map(|itm| itm.unix_microseconds / 1_000_000),
+            deleted_unix_seconds: goal
+                .deleted_moment
                 .map(|itm| itm.unix_microseconds / 1_000_000),
         }
     }
@@ -664,6 +671,10 @@ pub struct TaskView {
         description = "When the task landed in `done`, unix seconds (UTC), and absent whenever it is not there. Work closed more than seven days ago is archived and left out of tasks_list unless you ask for it"
     )]
     pub closed_unix_seconds: Option<i64>,
+    #[property(
+        description = "When it was DELETED, unix seconds (UTC), and absent for a task that is not. A deleted task is gone from every board, listing and count and is still reachable by its id — which is the only way you are seeing this field. tasks_update with `deleted: false` brings it back"
+    )]
+    pub deleted_unix_seconds: Option<i64>,
 }
 
 impl TaskView {
@@ -707,6 +718,9 @@ impl TaskView {
             updated_unix_seconds: task.updated.unix_microseconds / 1_000_000,
             closed_unix_seconds: task
                 .close_moment
+                .map(|itm| itm.unix_microseconds / 1_000_000),
+            deleted_unix_seconds: task
+                .deleted_moment
                 .map(|itm| itm.unix_microseconds / 1_000_000),
         }
     }

@@ -34,6 +34,8 @@ pub struct TaskPatch {
     /// Which documents this task points at: ids to attach, ids to detach. Add/remove rather than a whole
     /// list, for the same reason labels are — see [`super::DocumentsPatch`].
     pub documents: super::DocumentsPatch,
+    /// `Some(false)` brings a deleted task back; `Some(true)` deletes it, as `delete_task` does.
+    pub deleted: Option<bool>,
     /// A note to append to the thread in the same call. Optional in general — and **required** when the
     /// change moves the task into `done`.
     pub comment: Option<String>,
@@ -55,6 +57,7 @@ impl TaskPatch {
             && self.depends_on.is_none()
             && self.subtasks.is_empty()
             && self.documents.is_empty()
+            && self.deleted.is_none()
             && self.comment.is_none()
     }
 
@@ -239,6 +242,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
         updated: now,
         // Nothing is created closed — a task always starts in Todo.
         close_moment: None,
+        deleted_moment: None,
     };
 
     let ctx = MyTelemetryContext::create_empty();
@@ -490,6 +494,17 @@ pub async fn update_task(
         task.close_moment = None;
     }
 
+    // Stamped once and cleared whole — see the same block on a goal.
+    match patch.deleted {
+        Some(true) => {
+            if task.deleted_moment.is_none() {
+                task.deleted_moment = Some(DateTimeAsMicroseconds::now());
+            }
+        }
+        Some(false) => task.deleted_moment = None,
+        None => {}
+    }
+
     task.updated = DateTimeAsMicroseconds::now();
 
     let ctx = MyTelemetryContext::create_empty();
@@ -503,23 +518,36 @@ pub async fn update_task(
     Ok(handle)
 }
 
-/// Take a task off a board for good.
+/// Mark a task deleted.
+///
+/// **It is not removed — from Postgres or from memory — and that is the change this replaced a hard delete
+/// with.** A deleted task drops out of every list, every count and every derived answer, and stays exactly
+/// where it was for one purpose: somebody searching for its id finds it and is told it is gone. A row that
+/// had been deleted outright could only answer "no such task", which is indistinguishable from a typo and
+/// from an id that belongs to another board.
+///
+/// Deleting twice is not an error and does not move the moment: the caller's intent is already true, and
+/// re-stamping it would rewrite when it happened.
 pub async fn delete_task(app: &AppContext, handle: &str) -> Result<String, String> {
     let board = app.board.read();
     let resolved = resolve_task(&board, handle)?;
-    let project_id = resolved.project.id.clone();
-    let number = resolved.task.number;
+    let project = resolved.project;
+    let mut task = resolved.task.as_ref().clone();
+
+    if task.deleted_moment.is_none() {
+        task.deleted_moment = Some(DateTimeAsMicroseconds::now());
+        task.updated = DateTimeAsMicroseconds::now();
+    }
 
     let ctx = MyTelemetryContext::create_empty();
-    app.tasks_repo.delete(&project_id, number, &ctx).await;
+    let dto: TaskDto = (&task).into();
+    app.tasks_repo.upsert(&dto, &ctx).await;
 
-    app.board.remove_task(&project_id, number);
-    app.notify_project_changed(&project_id).await;
+    let handle = crate::board::compose_task_handle(&project.prefix, task.number);
+    app.board.upsert_task(task);
+    app.notify_project_changed(&project.id).await;
 
-    Ok(crate::board::compose_task_handle(
-        &resolved.project.prefix,
-        number,
-    ))
+    Ok(handle)
 }
 
 /// Append a comment to a task's thread.

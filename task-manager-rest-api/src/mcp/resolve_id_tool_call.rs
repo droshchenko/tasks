@@ -108,7 +108,7 @@ impl McpToolCall<ResolveIdInput, ResolveIdResponse> for ResolveIdHandler {
         } else {
             current_holder.as_ref().and_then(|project| {
                 board
-                    .get_task(&project.id, parsed.number)
+                    .get_task_including_deleted(&project.id, parsed.number)
                     .map(|task| TaskView::from_model(&task, project, &board))
             })
         };
@@ -120,7 +120,7 @@ impl McpToolCall<ResolveIdInput, ResolveIdResponse> for ResolveIdHandler {
         } else {
             current_holder.as_ref().and_then(|project| {
                 board
-                    .get_goal(&project.id, parsed.number)
+                    .get_goal_including_deleted(&project.id, parsed.number)
                     .map(|goal| GoalView::from_model(&goal, project, &board))
             })
         };
@@ -135,13 +135,13 @@ impl McpToolCall<ResolveIdInput, ResolveIdResponse> for ResolveIdHandler {
                 let task = if marked_as_goal {
                     None
                 } else {
-                    board.get_task(&project.id, parsed.number)
+                    board.get_task_including_deleted(&project.id, parsed.number)
                 };
 
                 let goal = if task.is_some() {
                     None
                 } else {
-                    board.get_goal(&project.id, parsed.number)
+                    board.get_goal_including_deleted(&project.id, parsed.number)
                 };
 
                 // Composed in the spelling of whichever kind was found, so the id handed back is one the

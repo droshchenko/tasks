@@ -182,6 +182,7 @@ pub fn RenderHome(search: Option<String>) -> Element {
                         current: current.clone(),
                         cs,
                         assignees: Vec::new(),
+                        goals: Vec::new(),
                     }
                     {element}
                 }
@@ -192,6 +193,7 @@ pub fn RenderHome(search: Option<String>) -> Element {
     let search_text = cs_ra.search.clone();
     let kind_wanted = cs_ra.kind_filter.clone();
     let assignee_wanted = cs_ra.assignee_filter.clone();
+    let goal_wanted = cs_ra.goal_filter.clone();
 
     // Every filter narrows the same list, so they compose: a type AND an assignee AND whatever is in the box.
     //
@@ -210,9 +212,14 @@ pub fn RenderHome(search: Option<String>) -> Element {
                 now_unix_seconds,
             )
         })
+        // Deleted work is hidden — UNLESS something is being searched for, which is the one moment anybody
+        // wants it. That is why the snapshot carries it at all: a deletion that left nothing behind would
+        // answer a search for its id with "no such task", indistinguishable from a typo.
+        .filter(|task| task.deleted_unix_seconds.is_none() || !search_text.trim().is_empty())
         .filter(|task| matches_search(task, &search_text))
         .filter(|task| matches_kind(task, &kind_wanted))
         .filter(|task| matches_assignee(task, &assignee_wanted))
+        .filter(|task| matches_goal(task, &goal_wanted))
         .cloned()
         .collect();
 
@@ -222,6 +229,7 @@ pub fn RenderHome(search: Option<String>) -> Element {
     // on this board.
     let live: Vec<TaskResponse> = tasks_ra
         .iter()
+        .filter(|task| task.deleted_unix_seconds.is_none())
         .filter(|task| {
             !task_manager_shared::tasks::is_task_archived(
                 task,
@@ -233,6 +241,7 @@ pub fn RenderHome(search: Option<String>) -> Element {
         .collect();
 
     let assignees = assignees_on_board(&live);
+    let goals = goals_on_board(&live);
 
     // A flex column filling what is left of the window, so the board below it can be full height and each
     // of its columns can scroll on its own.
@@ -243,6 +252,7 @@ pub fn RenderHome(search: Option<String>) -> Element {
                 current: current.clone(),
                 cs,
                 assignees,
+                goals,
             }
 
             if !current.description.trim().is_empty() {
@@ -270,12 +280,33 @@ pub fn RenderHome(search: Option<String>) -> Element {
 /// thing you genuinely want to filter for: it is the pile nobody has picked up.
 const UNASSIGNED: &str = "\u{0}unassigned";
 
+/// The filter value meaning "work that belongs to no goal".
+///
+/// A NUL for the same reason `UNASSIGNED` carries one: it has to be a value no real goal handle can be, and a
+/// handle is `RMS-G7` — letters, digits and a dash. Nothing a person can type collides with it.
+const NO_GOAL: &str = "\u{0}nogoal";
+
 fn matches_kind(task: &TaskResponse, wanted: &str) -> bool {
     if wanted.is_empty() {
         return true;
     }
 
     task.kind.as_deref() == Some(wanted)
+}
+
+/// Whether a task belongs to the goal being filtered for. An empty filter matches everything, and the one
+/// reserved value matches work under NO goal — the same shape the assignee filter uses for "unassigned",
+/// because "show me what is not in any epic" is exactly as useful a question.
+fn matches_goal(task: &TaskResponse, wanted: &str) -> bool {
+    if wanted.is_empty() {
+        return true;
+    }
+
+    if wanted == NO_GOAL {
+        return task.goal.is_none();
+    }
+
+    task.goal.as_deref() == Some(wanted)
 }
 
 fn matches_assignee(task: &TaskResponse, wanted: &str) -> bool {
@@ -317,6 +348,37 @@ fn assignees_on_board(tasks: &[TaskResponse]) -> Vec<(String, String)> {
             .unwrap_or_else(|| assignee.to_string());
 
         result.push((assignee.to_string(), label));
+    }
+
+    result.sort_by_key(|itm| itm.1.to_lowercase());
+    result
+}
+
+/// The goals that actually have work on this board, as `(handle, label)`.
+///
+/// Built from the tasks rather than from a goals list, and for the same reason the assignee options are: an
+/// option that matches nothing is a dead end, and the point of the control is to narrow to something. It also
+/// means this screen needs no second request — a task carries its goal's handle and name already.
+fn goals_on_board(tasks: &[TaskResponse]) -> Vec<(String, String)> {
+    let mut result: Vec<(String, String)> = Vec::new();
+
+    for task in tasks {
+        let Some(goal) = task.goal.as_deref() else {
+            continue;
+        };
+
+        if result.iter().any(|(value, _)| value == goal) {
+            continue;
+        }
+
+        let label = task
+            .goal_name
+            .clone()
+            .filter(|itm| !itm.trim().is_empty())
+            .map(|name| format!("{goal} · {name}"))
+            .unwrap_or_else(|| goal.to_string());
+
+        result.push((goal.to_string(), label));
     }
 
     result.sort_by_key(|itm| itm.1.to_lowercase());
@@ -460,6 +522,9 @@ struct ComponentState {
     /// it to a different type.
     kind_filter: String,
     assignee_filter: String,
+    /// Which goal's work to show, by goal handle — or [`NO_GOAL`] for the work that is under none. Empty is
+    /// every task, which is what a board is.
+    goal_filter: String,
     /// The handle of the card being dragged, if one is. Kept here rather than read back out of the drag's
     /// `dataTransfer`: the payload is set there too, because some browsers will not start a drag without it,
     /// but a signal is what the drop handler can rely on.
@@ -613,12 +678,14 @@ fn RenderHeader(
     current: ProjectResponse,
     cs: Signal<ComponentState>,
     assignees: Vec<(String, String)>,
+    goals: Vec<(String, String)>,
 ) -> Element {
     let cs_ra = cs.read();
     let selected_id = cs_ra.selected.clone();
     let search_text = cs_ra.search.clone();
     let kind_wanted = cs_ra.kind_filter.clone();
     let assignee_wanted = cs_ra.assignee_filter.clone();
+    let goal_wanted = cs_ra.goal_filter.clone();
     drop(cs_ra);
 
     let mut cs = cs;
@@ -652,6 +719,24 @@ fn RenderHeader(
                             value: "{kind.id}",
                             selected: kind.id == kind_wanted,
                             "{kind.name}"
+                        }
+                    }
+                }
+                // Between the type and the assignee, because it is the same kind of question — which slice of
+                // this board — and because a goal is the frame the other two are read inside.
+                select {
+                    onchange: move |event| cs.write().goal_filter = event.value(),
+                    option { value: "", selected: goal_wanted.is_empty(), "Any goal" }
+                    option {
+                        value: "{NO_GOAL}",
+                        selected: goal_wanted == NO_GOAL,
+                        "No goal"
+                    }
+                    for goal in goals.iter() {
+                        option {
+                            value: "{goal.0}",
+                            selected: goal.0 == goal_wanted,
+                            "{goal.1}"
                         }
                     }
                 }
@@ -946,7 +1031,11 @@ fn RenderSticker(
 
     rsx! {
         div {
-            class: if being_dragged {
+            // Deleted first: it is the strongest thing to say about a card, and one only ever appears here
+            // because somebody searched for it.
+            class: if task.deleted_unix_seconds.is_some() {
+                "sticker deleted"
+            } else if being_dragged {
                 "sticker dragging"
             } else if task.blocked {
                 "sticker blocked"
@@ -1104,7 +1193,7 @@ fn handles(ids: &[String]) -> String {
 mod tests {
     use super::*;
 
-    fn task(id: &str, text: &str, labels: &[&str], assignee: Option<&str>) -> TaskResponse {
+    pub(super) fn task(id: &str, text: &str, labels: &[&str], assignee: Option<&str>) -> TaskResponse {
         TaskResponse {
             id: id.to_string(),
             project_id: "p".to_string(),
@@ -1130,6 +1219,7 @@ mod tests {
             created_unix_seconds: 0,
             updated_unix_seconds: 0,
             closed_unix_seconds: None,
+            deleted_unix_seconds: None,
         }
     }
 
@@ -1499,5 +1589,56 @@ mod tests {
         let ids: Vec<&str> = column.iter().map(|itm| itm.id.as_str()).collect();
 
         assert_eq!(ids, vec!["RMS-000001", "RMS-000002", "RMS-000003"]);
+    }
+}
+
+#[cfg(test)]
+mod deletion_and_goal_filter_tests {
+    use super::*;
+
+    fn with_goal(id: &str, goal: Option<&str>) -> TaskResponse {
+        let mut result = tests::task(id, "text", &[], None);
+        result.goal = goal.map(|itm| itm.to_string());
+        result
+    }
+
+    /// An empty filter is the board; a handle is one epic; and the reserved value is the work that belongs to
+    /// no epic at all — which is a question worth asking, and the reason it needs a value of its own.
+    #[test]
+    fn the_goal_filter_narrows_to_one_epic_or_to_none() {
+        let under = with_goal("RMS-000001", Some("RMS-G7"));
+        let elsewhere = with_goal("RMS-000002", Some("RMS-G8"));
+        let loose = with_goal("RMS-000003", None);
+
+        for task in [&under, &elsewhere, &loose] {
+            assert!(matches_goal(task, ""), "an empty filter is the whole board");
+        }
+
+        assert!(matches_goal(&under, "RMS-G7"));
+        assert!(!matches_goal(&elsewhere, "RMS-G7"));
+        assert!(!matches_goal(&loose, "RMS-G7"));
+
+        assert!(matches_goal(&loose, NO_GOAL));
+        assert!(!matches_goal(&under, NO_GOAL));
+    }
+
+    /// The options come off the board, so a goal nobody has work under is not offered — an option that
+    /// matches nothing is a dead end.
+    #[test]
+    fn the_goal_options_come_from_the_work_that_is_there() {
+        let mut named = with_goal("RMS-000001", Some("RMS-G7"));
+        named.goal_name = Some("Crypto payments".to_string());
+
+        let same_goal_again = with_goal("RMS-000002", Some("RMS-G7"));
+        let loose = with_goal("RMS-000003", None);
+
+        let goals = goals_on_board(&[named, same_goal_again, loose]);
+
+        assert_eq!(goals.len(), 1, "one entry per goal, not per task");
+        assert_eq!(goals[0].0, "RMS-G7");
+        assert_eq!(
+            goals[0].1, "RMS-G7 · Crypto payments",
+            "the handle is what you type back, the name is what you recognise"
+        );
     }
 }

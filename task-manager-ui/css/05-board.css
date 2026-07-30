@@ -159,6 +159,24 @@
   padding: 1px 6px;
 }
 
+/* Deleted work only ever appears while something is being searched for — it is off every board otherwise —
+   so this has to read as "this is not on the board" at a glance rather than as one more attribute. Red
+   rather than the blocked flag's amber: blocked is a state work passes through, deleted is not. */
+.sticker-deleted-flag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #b42318;
+  background: #fee4e2;
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+/* And the card itself, when a search turns one up: faded, so it cannot be mistaken for live work sitting in
+   a column. */
+.sticker.deleted {
+  opacity: 0.55;
+}
+
 /* Who has it, and how much is hanging off it. Under the title: the title is what the card is for, and this
    is the same follow-up question on every card, so it sits in the same place on every card. */
 .sticker-bottom {

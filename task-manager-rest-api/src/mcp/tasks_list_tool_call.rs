@@ -144,6 +144,12 @@ impl McpToolCall<TasksListInput, TasksListResponse> for TasksListHandler {
 
         let tasks: Vec<TaskView> = board
             .tasks_of_project(&project.id)
+            .into_iter()
+            // Deleted work is in the collection so that SEARCHING can find it — see
+            // `BoardInner::tasks_of_project` — and this is a listing, which must not. tasks_resolve_id is the
+            // door for a deleted task, and it says so when it opens one.
+            .filter(|task| !task.is_deleted())
+            .collect::<Vec<_>>()
             .iter()
             // Compared against the *effective* status, so filtering by `todo` also finds the tasks
             // whose column was deleted — which is where the board shows them.

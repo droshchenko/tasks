@@ -24,8 +24,8 @@ use documents_tool_calls::{
     DocumentsUploadHandler,
 };
 use goals_tool_calls::{
-    GoalsAddCommentHandler, GoalsCreateHandler, GoalsGetCommentsHandler, GoalsListHandler,
-    GoalsUpdateHandler,
+    GoalsAddCommentHandler, GoalsCreateHandler, GoalsDeleteHandler, GoalsGetCommentsHandler,
+    GoalsListHandler, GoalsUpdateHandler,
 };
 use labels_list_tool_call::LabelsListHandler;
 use projects_list_tool_call::ProjectsListHandler;
@@ -195,8 +195,13 @@ re-labelled or reassigned freely. `comment` is available on any update, not just
 optional everywhere else.\
 \
 FINISHED WORK IS NOT DELETED. It moves to `done`, which is what keeps a board readable as a history. \
-tasks_delete is for a task that should never have been created, it cannot be undone, and its number is \
-never reused.\
+tasks_delete and goals_delete are for something that should never have been created — and deleting a goal \
+is not closing it: closing says how it went, deleting says it should not be there.\
+\
+DELETION IS A FLAG, NOT A REMOVAL. What is deleted leaves every board, list and count, and stays exactly \
+where it was: searching for its id still finds it and reports it as deleted. That is the point — an id \
+coming back as \"no such task\" would be indistinguishable from a typo and from another board's id. Undo \
+it with `deleted: false` on tasks_update or goals_update. A number is never reused either way.\
 \
 A NEW TASK ALWAYS STARTS IN `todo`. tasks_create takes no status — moving work on is tasks_update's \
 job, which is also where landing it has to be explained. There is deliberately no way to create a task \
@@ -247,6 +252,7 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(TasksCreateHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(TasksUpdateHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(TasksDeleteHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(GoalsDeleteHandler::new(app.clone())));
 
     // Documents. After the board tools, because a document is read in the course of doing work rather than
     // to find out what the work is: the index first, then one text, then the writes.

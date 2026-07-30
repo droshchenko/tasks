@@ -189,11 +189,6 @@ impl BoardInner {
             .insert(task.number, task);
     }
 
-    pub(super) fn drop_task(&mut self, project_id: &str, number: i64) {
-        if let Some(of_project) = self.tasks.get_mut(project_id) {
-            of_project.remove(&number);
-        }
-    }
 
     pub(super) fn put_user(&mut self, user: Arc<UserModel>) {
         self.users.insert(user.email.clone(), user);
@@ -325,7 +320,28 @@ impl BoardInner {
             .count()
     }
 
+    /// One goal — **`None` for a deleted one**, which is what makes every read that goes through here forget
+    /// it: a task under a deleted goal reads as standalone, and closing, progress and the Goals screen stop
+    /// seeing it. Search is the one caller that must not forget, and it has its own door:
+    /// [`Self::get_goal_including_deleted`].
     pub fn get_goal(&self, project_id: &str, number: i64) -> Option<Arc<GoalModel>> {
+        let goal = self.goals.get(project_id)?.get(&number)?;
+
+        if goal.is_deleted() {
+            return None;
+        }
+
+        Some(goal.clone())
+    }
+
+    /// One goal, deleted or not. For search, which has to find what was deleted and say so — an id that comes
+    /// back as "no such goal" is indistinguishable from a typo, and that is exactly the confusion a deletion
+    /// that leaves nothing behind creates.
+    pub fn get_goal_including_deleted(
+        &self,
+        project_id: &str,
+        number: i64,
+    ) -> Option<Arc<GoalModel>> {
         self.goals.get(project_id)?.get(&number).cloned()
     }
 
@@ -338,7 +354,12 @@ impl BoardInner {
             return Vec::new();
         };
 
-        let mut result: Vec<Arc<GoalModel>> = of_project.values().cloned().collect();
+        let mut result: Vec<Arc<GoalModel>> = of_project
+            .values()
+            .filter(|goal| !goal.is_deleted())
+            .cloned()
+            .collect();
+
         result.sort_by_key(|itm| (itm.priority.order(), itm.number));
         result
     }
@@ -372,6 +393,12 @@ impl BoardInner {
                 continue;
             }
 
+            // A deleted task is not work this goal is judged by — it is work that should never have been
+            // counted at all. Leaving it in would hold a goal open on a card nobody can see.
+            if task.is_deleted() {
+                continue;
+            }
+
             total += 1;
 
             if task.status == task_manager_shared::projects::COLUMN_ID_DONE {
@@ -392,7 +419,7 @@ impl BoardInner {
 
         let mut result: Vec<Arc<TaskModel>> = of_project
             .values()
-            .filter(|task| task.goal_number == Some(number))
+            .filter(|task| task.goal_number == Some(number) && !task.is_deleted())
             .cloned()
             .collect();
 
@@ -494,12 +521,37 @@ impl BoardInner {
         }
     }
 
+    /// One task — **`None` for a deleted one.**
+    ///
+    /// Which is what makes a deleted blocker keep its dependents blocked: `is_blocked` treats an id that names
+    /// no task as unsatisfied, deliberately, so that a typo does not silently free work. A deletion lands in
+    /// exactly the same place, and it should: deleting a blocker is not the same statement as finishing it.
     pub fn get_task(&self, project_id: &str, number: i64) -> Option<Arc<TaskModel>> {
+        let task = self.tasks.get(project_id)?.get(&number)?;
+
+        if task.is_deleted() {
+            return None;
+        }
+
+        Some(task.clone())
+    }
+
+    /// One task, deleted or not — for search, which is the one thing a deleted task is kept for.
+    pub fn get_task_including_deleted(
+        &self,
+        project_id: &str,
+        number: i64,
+    ) -> Option<Arc<TaskModel>> {
         self.tasks.get(project_id)?.get(&number).cloned()
     }
 
     /// A project's tasks, **most urgent first and oldest first within one priority**. Not capped: a board is
     /// a hand-written list.
+    ///
+    /// **Deleted work is INCLUDED here, and that is deliberate.** This is what fills the snapshot the browser
+    /// holds, and the browser is where a search happens — filtering here would make a deleted task
+    /// unfindable, which is the one thing keeping the row was for. Every screen draws only what is not
+    /// deleted; the search box is the one that does not.
     ///
     /// Ordered here rather than by each reader, which is what keeps the board, the Goals screen and
     /// `tasks_list` from disagreeing about what is at the top of a column. The number is the tiebreaker
@@ -516,7 +568,10 @@ impl BoardInner {
     }
 
     pub fn tasks_amount(&self, project_id: &str) -> usize {
-        self.tasks.get(project_id).map(|itm| itm.len()).unwrap_or(0)
+        self.tasks
+            .get(project_id)
+            .map(|of_project| of_project.values().filter(|itm| !itm.is_deleted()).count())
+            .unwrap_or(0)
     }
 
     /// The projects this person may see. An admin sees every one without being a member of any.
@@ -543,8 +598,11 @@ impl BoardInner {
             return Vec::new();
         };
 
+        // A label exists for as long as a task wears it — and a deleted task wears nothing. Without this the
+        // last task carrying a tag could be deleted and the tag would stay in every filter, naming nothing.
         let unique: AHashSet<&String> = of_project
             .values()
+            .filter(|task| !task.is_deleted())
             .flat_map(|task| task.labels.iter())
             .collect();
 
@@ -619,7 +677,7 @@ impl BoardInner {
 
         let mut dependents: Vec<i64> = of_project
             .values()
-            .filter(|task| task.depends_on.contains(&number))
+            .filter(|task| !task.is_deleted() && task.depends_on.contains(&number))
             .map(|task| task.number)
             .collect();
 

@@ -216,6 +216,10 @@ pub struct GoalsUpdateInput {
     )]
     pub remove_documents: Option<Vec<String>>,
     #[property(
+        description = "Pass false to UNDELETE a goal somebody removed. Pass true to delete it, which goals_delete also does. Omit to leave it alone"
+    )]
+    pub deleted: Option<bool>,
+    #[property(
         description = "A note for the goal's thread as part of this same change, as Markdown. REQUIRED when closing, where it is the resolution: what came of the goal and anything the next person should know. Optional otherwise"
     )]
     pub comment: Option<String>,
@@ -246,8 +250,9 @@ goal. And it needs `comment` (with `comment_by`): the resolution, which is what 
 later to find out how the goal went. A closed goal leaves the screen once the project's archive window \
 has passed and is then reachable by its id.\
 \
-There is NO delete. A goal that ran its course is closed; one that should never have existed stays \
-until deletion exists.";
+DELETING IS NOT CLOSING, and they answer different questions. Closing says how a goal WENT and demands a \
+resolution for exactly that reason; goals_delete says it should never have existed. A goal can be deleted \
+whether it was open or closed, and `deleted: false` here brings it back.";
 }
 
 #[async_trait::async_trait]
@@ -275,6 +280,7 @@ impl McpToolCall<GoalsUpdateInput, GoalWriteResponse> for GoalsUpdateHandler {
                     remove: model.remove_documents,
                 }
                 .into_patch(),
+                deleted: model.deleted,
                 comment: model.comment,
                 comment_by: model.comment_by,
             },
@@ -398,4 +404,56 @@ fn read_comments(app: &AppContext, handle: &str) -> Result<GoalCommentsResponse,
         amount: comments.len() as i32,
         comments,
     })
+}
+
+// ------------------------------------------------------------------------------------------ delete
+
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct GoalsDeleteInput {
+    #[property(description = "Which goal to delete, by id — `RMS-G7`")]
+    pub id: String,
+}
+
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct GoalsDeleteResponse {
+    #[property(description = "The id of the goal that was deleted")]
+    pub id: String,
+}
+
+pub struct GoalsDeleteHandler {
+    app: Arc<AppContext>,
+}
+
+impl GoalsDeleteHandler {
+    pub fn new(app: Arc<AppContext>) -> Self {
+        Self { app }
+    }
+}
+
+impl ToolDefinition for GoalsDeleteHandler {
+    const FUNC_NAME: &'static str = "goals_delete";
+    const DESCRIPTION: &'static str = "Delete a goal that should never have existed.\
+\
+NOT THE SAME AS CLOSING, and the two answer different questions. Closing says how a goal WENT — which is \
+why it demands a resolution and refuses while any task is open. Deleting says it should not be there at \
+all, and asks nothing, because there is nothing to record about work that was never real.\
+\
+IT IS A FLAG, NOT A REMOVAL. The goal leaves the Goals screen, every project listing and every task that \
+pointed at it — such a task reads as standalone rather than pointing at something nobody can open — and it \
+stays reachable by its id, which reports it as deleted. Undo it with goals_update and `deleted: false`.\
+\
+THE TASKS UNDER IT ARE NOT DELETED. They are work, and whether work outlives its container is your \
+decision to make explicitly, not a side effect of this call.";
+}
+
+#[async_trait::async_trait]
+impl McpToolCall<GoalsDeleteInput, GoalsDeleteResponse> for GoalsDeleteHandler {
+    async fn execute_tool_call(
+        &self,
+        model: GoalsDeleteInput,
+    ) -> Result<GoalsDeleteResponse, String> {
+        let id = crate::scripts::delete_goal(&self.app, &model.id).await?;
+
+        Ok(GoalsDeleteResponse { id })
+    }
 }

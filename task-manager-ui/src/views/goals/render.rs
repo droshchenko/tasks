@@ -145,6 +145,13 @@ pub fn RenderGoals() -> Element {
     let mut loose: Vec<TaskResponse> = Vec::new();
 
     for task in &tasks {
+        // A deleted task is not work this screen has anything to say about — it is not in the counters above
+        // it either, and a list that disagreed with its own counter is the one thing this screen must not do.
+        // Searching for it is Home's job; here it is simply gone.
+        if task.deleted_unix_seconds.is_some() {
+            continue;
+        }
+
         match task.goal.as_ref() {
             Some(goal) => of_goal.entry(goal.clone()).or_default().push(task.clone()),
             None => loose.push(task.clone()),

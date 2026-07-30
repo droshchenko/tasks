@@ -92,10 +92,6 @@ impl Board {
         self.mutate(|inner| inner.put_task(Arc::new(task)));
     }
 
-    pub fn remove_task(&self, project_id: &str, number: i64) {
-        self.mutate(|inner| inner.drop_task(project_id, number));
-    }
-
     pub fn upsert_user(&self, user: UserModel) {
         self.mutate(|inner| inner.put_user(Arc::new(user)));
     }

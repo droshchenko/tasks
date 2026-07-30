@@ -99,6 +99,7 @@ fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> Task
         created: DateTimeAsMicroseconds::new(0),
         updated: DateTimeAsMicroseconds::new(0),
         close_moment: None,
+        deleted_moment: None,
     }
 }
 
@@ -116,7 +117,15 @@ fn goal(project_id: &str, number: i64) -> GoalModel {
         created: DateTimeAsMicroseconds::new(0),
         updated: DateTimeAsMicroseconds::new(0),
         close_moment: None,
+        deleted_moment: None,
     }
+}
+
+/// The same task, marked deleted. A fixture rather than a field on `task()` because most tests want work that
+/// exists, and the ones that do not should say so at the call site.
+fn deleted(mut task: TaskModel) -> TaskModel {
+    task.deleted_moment = Some(DateTimeAsMicroseconds::new(1));
+    task
 }
 
 fn user(email: &str, name: &str) -> UserModel {
@@ -287,7 +296,10 @@ fn the_counter_only_moves_forward_and_is_per_project() {
     assert_eq!(board.reserve_task_number("a"), Some(2));
     assert_eq!(board.reserve_task_number("b"), Some(1));
 
-    board.remove_task("a", 2);
+    // Deleting is a flag now, so the row does not even leave — which makes the promise easier to keep, not
+    // harder. The counter is what guarantees it either way: it only ever moves forward.
+    board.upsert_task(deleted(task("a", 2, COLUMN_ID_TODO, &[])));
+
     assert_eq!(
         board.reserve_task_number("a"),
         Some(3),
@@ -315,10 +327,17 @@ fn a_projects_labels_are_the_distinct_labels_its_tasks_carry() {
         vec!["mt4".to_string(), "ui".to_string()]
     );
 
-    // Dropping it from the last task carrying it removes the label from the vocabulary — there is no
-    // labels table for it to linger in.
-    board.remove_task("p", 1);
-    board.remove_task("p", 2);
+    // Dropping it from the last task carrying it removes the label from the vocabulary — there is no labels
+    // table for it to linger in. A DELETED task wears nothing, which is what this checks: the rows are still
+    // there and the labels are gone with them.
+    let mut first = task("p", 1, COLUMN_ID_TODO, &[]);
+    first.labels = vec!["ui".to_string(), "mt4".to_string()];
+    board.upsert_task(deleted(first));
+
+    let mut second = task("p", 2, COLUMN_ID_TODO, &[]);
+    second.labels = vec!["mt4".to_string()];
+    board.upsert_task(deleted(second));
+
     assert!(board.read().labels_of_project("p").is_empty());
 }
 
@@ -759,4 +778,105 @@ fn goals_come_back_most_urgent_first_too() {
         .collect();
 
     assert_eq!(numbers, vec![2, 3, 1]);
+}
+
+/// The whole shape of a deletion, in one place: gone from everything derived, still there to be found.
+///
+/// Each half is a separate way to get this wrong. Leaving deleted work in a count holds a goal open on a card
+/// nobody can see; taking it out of `tasks_of_project` would make it unfindable, which is the one thing
+/// keeping the row was for.
+#[test]
+fn a_deleted_task_leaves_every_derived_answer_and_stays_findable() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+    board.upsert_goal(goal("p", 1));
+
+    let mut live = task("p", 2, COLUMN_ID_TODO, &[]);
+    live.goal_number = Some(1);
+    live.labels = vec!["kept".to_string()];
+    board.upsert_task(live);
+
+    let mut gone = task("p", 3, COLUMN_ID_TODO, &[]);
+    gone.goal_number = Some(1);
+    gone.labels = vec!["lost".to_string()];
+    board.upsert_task(deleted(gone));
+
+    let read = board.read();
+
+    assert_eq!(read.goal_progress("p", 1), (1, 0), "counted as one, not two");
+    assert_eq!(read.tasks_of_goal("p", 1).len(), 1);
+    assert_eq!(read.open_tasks_of_goal("p", 1).len(), 1, "a deleted task cannot hold a goal open");
+    assert_eq!(read.tasks_amount("p"), 1);
+    assert_eq!(read.labels_of_project("p"), vec!["kept".to_string()]);
+
+    assert!(read.get_task("p", 3).is_none(), "hidden from the ordinary lookup");
+    assert!(
+        read.get_task_including_deleted("p", 3).is_some(),
+        "and found by the one search uses"
+    );
+
+    // In the snapshot, because the browser is where a search over text happens — the screen hides it there.
+    assert_eq!(
+        read.tasks_of_project("p").len(),
+        2,
+        "the snapshot carries deleted work so it can be searched"
+    );
+}
+
+/// A deleted BLOCKER keeps its dependents blocked, which falls out of the lookup returning `None` — the same
+/// place a typo lands. Deleting a blocker is not a statement that the work is done.
+#[test]
+fn a_deleted_blocker_still_blocks() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+
+    board.upsert_task(deleted(task("p", 1, COLUMN_ID_DONE, &[])));
+
+    let waiting = task("p", 2, COLUMN_ID_TODO, &[1]);
+    board.upsert_task(waiting.clone());
+
+    // And a deleted task that depends on something: it must not show up as waiting on it.
+    board.upsert_task(deleted(task("p", 3, COLUMN_ID_TODO, &[4])));
+    board.upsert_task(task("p", 4, COLUMN_ID_TODO, &[]));
+
+    let read = board.read();
+
+    assert!(
+        read.is_blocked(&waiting),
+        "a blocker that was deleted is not a blocker that was finished"
+    );
+
+    assert!(
+        read.blocks("p", 4).is_empty(),
+        "a deleted task is not somebody who is waiting on you"
+    );
+}
+
+/// A deleted goal disappears, and the work that pointed at it reads as standalone rather than pointing at
+/// something nobody can open. The tasks themselves survive — whether work outlives its container is a
+/// decision, not a side effect.
+#[test]
+fn a_deleted_goal_disappears_and_its_tasks_do_not() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+
+    let mut gone = goal("p", 1);
+    gone.deleted_moment = Some(DateTimeAsMicroseconds::new(1));
+    board.upsert_goal(gone);
+
+    let mut orphan = task("p", 2, COLUMN_ID_TODO, &[]);
+    orphan.goal_number = Some(1);
+    board.upsert_task(orphan.clone());
+
+    let read = board.read();
+
+    assert!(read.goals_of_project("p").is_empty());
+    assert!(read.get_goal("p", 1).is_none());
+    assert!(read.get_goal_including_deleted("p", 1).is_some(), "still findable by id");
+
+    assert!(
+        read.effective_goal(&orphan).is_none(),
+        "the task reads as standalone rather than pointing at a goal nobody can open"
+    );
+    assert_eq!(read.tasks_amount("p"), 1, "the task itself is untouched");
 }

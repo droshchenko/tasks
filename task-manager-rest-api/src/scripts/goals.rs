@@ -39,6 +39,10 @@ pub struct GoalPatch {
     pub priority: Option<String>,
     /// `Some(true)` closes the goal, `Some(false)` re-opens it, `None` leaves its state alone.
     pub close: Option<bool>,
+    /// `Some(false)` brings a deleted goal back. `Some(true)` deletes it, which `delete_goal` also does —
+    /// both are here because undoing has to live somewhere, and a delete tool that also undeletes reads as a
+    /// trick question.
+    pub deleted: Option<bool>,
     /// Changes to the goal's checklist. Says nothing about whether the goal may close — that is decided by
     /// its tasks, and an unticked item is not unfinished work the board knows about.
     pub subtasks: super::SubtasksPatch,
@@ -57,6 +61,7 @@ impl GoalPatch {
             && self.color.is_none()
             && self.priority.is_none()
             && self.close.is_none()
+            && self.deleted.is_none()
             && self.subtasks.is_empty()
             && self.documents.is_empty()
             && self.trimmed_comment().is_none()
@@ -180,6 +185,7 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
         updated: now,
         // Nothing is created closed. A goal closes only once its tasks are done, and it has none yet.
         close_moment: None,
+        deleted_moment: None,
     };
 
     let ctx = MyTelemetryContext::create_empty();
@@ -299,12 +305,58 @@ pub async fn update_goal(
         None => {}
     }
 
+    // Stamped once and cleared whole: deleting twice must not rewrite when it happened, and restoring has to
+    // leave no trace of the flag or the goal would read as deleted for ever.
+    match patch.deleted {
+        Some(true) => {
+            if goal.deleted_moment.is_none() {
+                goal.deleted_moment = Some(DateTimeAsMicroseconds::now());
+            }
+        }
+        Some(false) => goal.deleted_moment = None,
+        None => {}
+    }
+
     goal.updated = DateTimeAsMicroseconds::now();
 
     let ctx = MyTelemetryContext::create_empty();
     let dto: GoalDto = (&goal).into();
     app.goals_repo.upsert(&dto, &ctx).await;
 
+    app.board.upsert_goal(goal);
+    app.notify_project_changed(&project.id).await;
+
+    Ok(handle)
+}
+
+/// Mark a goal deleted.
+///
+/// **Not removed, and not the same act as closing.** Closing says how a goal WENT and demands a resolution
+/// for that reason; deleting says it should never have existed. The two are orthogonal — a deleted goal may
+/// have been open or closed — and neither is reachable from the other.
+///
+/// A deleted goal drops out of the Goals screen, out of every project listing and out of `effective_goal`, so
+/// a task that was under it reads as standalone rather than pointing at something nobody can open. The tasks
+/// themselves are NOT deleted with it: they are work, and whether work survives its container is a decision
+/// for whoever is deleting, not a side effect.
+///
+/// Deleting twice is not an error and does not move the moment.
+pub async fn delete_goal(app: &AppContext, handle: &str) -> Result<String, String> {
+    let board = app.board.read();
+    let resolved = resolve_goal_by_handle(&board, handle)?;
+    let project = resolved.project;
+    let mut goal = resolved.goal.as_ref().clone();
+
+    if goal.deleted_moment.is_none() {
+        goal.deleted_moment = Some(DateTimeAsMicroseconds::now());
+        goal.updated = DateTimeAsMicroseconds::now();
+    }
+
+    let ctx = MyTelemetryContext::create_empty();
+    let dto: GoalDto = (&goal).into();
+    app.goals_repo.upsert(&dto, &ctx).await;
+
+    let handle = compose_goal_handle(&project.prefix, goal.number);
     app.board.upsert_goal(goal);
     app.notify_project_changed(&project.id).await;
 

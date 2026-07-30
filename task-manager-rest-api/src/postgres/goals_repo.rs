@@ -103,6 +103,13 @@ pub struct GoalDto {
     // open" and "closed at the epoch" are different facts and only one of them is true of a live goal.
     #[sql_type("timestamp")]
     pub close_moment: Option<DateTimeAsMicroseconds>,
+    // When the goal was deleted; NULL for one that is not. Same shape and same reasons as a task's — see
+    // `TaskDto::deleted_moment`.
+    //
+    // Its arrival is what the goals_update tool description meant by "one that should never have existed
+    // stays until deletion exists".
+    #[sql_type("timestamp")]
+    pub deleted_moment: Option<DateTimeAsMicroseconds>,
 }
 
 pub struct GoalsRepo {

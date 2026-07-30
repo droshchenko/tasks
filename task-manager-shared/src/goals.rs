@@ -51,6 +51,8 @@ pub struct GoalResponse {
     // When the goal was closed, and absent while it is open. What the archive window is measured from: a
     // goal closed longer ago than the project's window is not returned unless asked for.
     pub closed_unix_seconds: Option<i64>,
+    // When it was deleted, and absent for a goal that is not — see `TaskResponse::deleted_unix_seconds`.
+    pub deleted_unix_seconds: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]

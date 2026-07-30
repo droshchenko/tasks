@@ -200,12 +200,23 @@ pub struct GoalModel {
     // When the goal was closed, and `None` while it is open — which makes this the whole of its state.
     // Cleared on re-opening, so a re-closed goal is dated by its latest close.
     pub close_moment: Option<DateTimeAsMicroseconds>,
+    // When it was deleted, and `None` for one that is not.
+    //
+    // **Deleted is not a third state beside open and closed** — it is orthogonal to both. A goal is deleted
+    // because it should never have existed, which is a different statement from how it went; closing is the
+    // statement about how it went, and it demands a resolution for exactly that reason.
+    pub deleted_moment: Option<DateTimeAsMicroseconds>,
 }
 
 impl GoalModel {
     /// Whether the goal is closed. The only state question there is — see the note on the struct.
     pub fn is_closed(&self) -> bool {
         self.close_moment.is_some()
+    }
+
+    /// Whether it has been deleted. Orthogonal to closed: a deleted goal may have been either.
+    pub fn is_deleted(&self) -> bool {
+        self.deleted_moment.is_some()
     }
 
     /// The status a reader shows: `done` for a closed goal, `todo` for an open one. Derived rather than
@@ -305,6 +316,19 @@ pub struct TaskModel {
     // Cleared when a task is re-opened, so a re-closed task is dated by its latest close rather than its
     // first.
     pub close_moment: Option<DateTimeAsMicroseconds>,
+    // When it was deleted, and `None` for one that is not.
+    //
+    // **A deleted task stays on the board in memory and stays in Postgres**, which is the whole point of the
+    // flag: it is hidden from every list and every count, and it is still there when somebody searches for
+    // its id — which is the one moment anybody wants a deleted task, and the moment a hard delete had nothing
+    // to say.
+    pub deleted_moment: Option<DateTimeAsMicroseconds>,
+}
+
+impl TaskModel {
+    pub fn is_deleted(&self) -> bool {
+        self.deleted_moment.is_some()
+    }
 }
 
 /// One person.

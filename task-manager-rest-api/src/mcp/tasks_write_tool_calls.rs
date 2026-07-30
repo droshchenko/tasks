@@ -191,6 +191,10 @@ pub struct TasksUpdateInput {
     )]
     pub remove_documents: Option<Vec<String>>,
     #[property(
+        description = "Pass false to UNDELETE a task somebody removed — a deletion is a flag, not a removal, so it undoes cleanly. Pass true to delete it, which tasks_delete also does. Omit to leave it alone"
+    )]
+    pub deleted: Option<bool>,
+    #[property(
         description = "A note to put on the task's thread as part of this same change, as Markdown. Optional in general — and REQUIRED when this change moves the task to `done`, where it has to say what was actually done. Write a line or two: what changed, and anything the next person should know"
     )]
     pub comment: Option<String>,
@@ -261,6 +265,7 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
                     remove: model.remove_documents,
                 }
                 .into_patch(),
+                deleted: model.deleted,
                 comment: model.comment,
                 comment_by: model.comment_by,
             },
@@ -275,9 +280,7 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct TasksDeleteInput {
-    #[property(
-        description = "Which task to remove, by id. Confirm with the user first — this cannot be undone"
-    )]
+    #[property(description = "Which task to delete, by id")]
     pub id: String,
 }
 
@@ -299,9 +302,14 @@ impl TasksDeleteHandler {
 
 impl ToolDefinition for TasksDeleteHandler {
     const FUNC_NAME: &'static str = "tasks_delete";
-    const DESCRIPTION: &'static str = "Take a task off a board for good. Finished work is NOT \
-deleted — it moves to `done` with tasks_update, which is what keeps a board readable as a history. \
-Delete only what should never have been there. The number is not reused, so ids stay stable.";
+    const DESCRIPTION: &'static str = "Delete a task. Finished work is NOT deleted — it moves to `done` \
+with tasks_update, which is what keeps a board readable as a history. Delete only what should never have \
+been there.\
+\
+IT IS A FLAG, NOT A REMOVAL. The task leaves every board, list and count, and stays exactly where it was: \
+searching for its id still finds it and reports it as deleted. That is the point — an id that came back as \
+\"no such task\" would be indistinguishable from a typo and from another board's id. Undo it with \
+tasks_update and `deleted: false`. The number is never reused either way.";
 }
 
 #[async_trait::async_trait]

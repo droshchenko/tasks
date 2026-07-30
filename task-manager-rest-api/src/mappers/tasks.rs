@@ -95,6 +95,7 @@ impl From<&TaskDto> for TaskModel {
             created: src.created,
             updated: src.updated,
             close_moment: src.close_moment,
+            deleted_moment: src.deleted_moment,
         }
     }
 }
@@ -123,6 +124,7 @@ impl From<&TaskModel> for TaskDto {
             created: src.created,
             updated: src.updated,
             close_moment: src.close_moment,
+            deleted_moment: src.deleted_moment,
         }
     }
 }
@@ -201,6 +203,12 @@ pub fn task_to_response(
         updated_unix_seconds: task.updated.unix_microseconds / 1_000_000,
         closed_unix_seconds: task
             .close_moment
+            .map(|itm| itm.unix_microseconds / 1_000_000),
+        // Sent rather than filtered out here: the board snapshot carries deleted work so that SEARCHING can
+        // find it, and the screen hides it. Filtering on the server would make a deleted task unfindable,
+        // which is the one thing the flag exists to prevent.
+        deleted_unix_seconds: task
+            .deleted_moment
             .map(|itm| itm.unix_microseconds / 1_000_000),
     }
 }

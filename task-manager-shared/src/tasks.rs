@@ -102,6 +102,13 @@ pub struct TaskResponse {
     // the seven-day archive window is measured from — a task closed longer ago than that is not returned
     // at all.
     pub closed_unix_seconds: Option<i64>,
+    // When it was deleted, and absent for a task that is not.
+    //
+    // **Deleted work travels to the client and is hidden THERE.** That is deliberate: filtering it out on the
+    // server would make it unfindable, and being findable after deletion is the entire reason the flag exists
+    // rather than a row being removed. The board draws only what is not deleted; a search shows what is,
+    // marked as gone.
+    pub deleted_unix_seconds: Option<i64>,
 }
 
 // A whole board in one response, **most urgent first and oldest first within one priority**.
@@ -245,6 +252,7 @@ mod tests {
             created_unix_seconds: 0,
             updated_unix_seconds: 0,
             closed_unix_seconds,
+            deleted_unix_seconds: None,
         }
     }
 

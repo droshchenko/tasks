@@ -123,13 +123,17 @@ pub struct TaskDto {
     // of a task in Todo.
     #[sql_type("timestamp")]
     pub close_moment: Option<DateTimeAsMicroseconds>,
-}
-
-// Deleting one task. The PK is composite, so both halves are needed.
-#[derive(WhereDbModel, Debug)]
-pub struct DeleteTaskWhereModel<'s> {
-    pub project_id: &'s str,
-    pub number: i64,
+    // When the task was deleted; NULL for one that is not.
+    //
+    // **A moment rather than a flag, and the row rather than a second table.** The moment because "deleted"
+    // and "deleted when" are one fact and two columns for it can disagree — the same reason `close_moment` is
+    // shaped this way. The row because a deleted task must still be FINDABLE: searching for its id has to
+    // turn it up and say it is gone, which a task moved out of the table could not do.
+    //
+    // Nullable, so it could be added to a populated table — and because "never deleted" and "deleted at the
+    // epoch" are different facts.
+    #[sql_type("timestamp")]
+    pub deleted_moment: Option<DateTimeAsMicroseconds>,
 }
 
 pub struct TasksRepo {
@@ -166,17 +170,5 @@ impl TasksRepo {
             )
             .await
             .expect("tasks: insert_or_update_db_entity failed");
-    }
-
-    pub async fn delete(&self, project_id: &str, number: i64, ctx: &MyTelemetryContext) {
-        self.postgres
-            .with_retries(3, Duration::from_secs(1))
-            .delete(
-                TABLE_NAME,
-                &DeleteTaskWhereModel { project_id, number },
-                Some(ctx),
-            )
-            .await
-            .expect("tasks: delete failed");
     }
 }

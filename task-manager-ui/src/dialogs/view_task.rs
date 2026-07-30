@@ -207,6 +207,17 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                 }
             }
 
+            // Said plainly, because this dialog is the one place a deleted task can still be opened — a
+            // search found it — and a reader who was not told would take it for live work.
+            if task.deleted_unix_seconds.is_some() {
+                div { class: "task-view-attr",
+                    span { class: "sticker-deleted-flag", "Deleted" }
+                    div { class: "field-hint",
+                        "Deleted, so it is off the board and out of every count. It is still here, and an agent can bring it back."
+                    }
+                }
+            }
+
             // Before the labels: a document attached to a task is usually the specification the work is done
             // against, which is worth more to a reader than any tag on it. Ids rather than names — the board
             // snapshot carries the references and not the documents, so a path costs a request per card and
