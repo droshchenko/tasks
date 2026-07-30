@@ -47,7 +47,7 @@ pub struct TasksListInput {
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct TasksListResponse {
     #[property(
-        description = "The matching tasks, oldest first. Not capped — a board is a hand-written list, not a data set"
+        description = "The matching tasks, MOST URGENT FIRST and oldest first within one priority — the same order the board draws its columns in, so the top of this list is the top of the column. Not capped — a board is a hand-written list, not a data set"
     )]
     pub tasks: Vec<TaskView>,
     #[property(description = "Number of rows in `tasks`")]

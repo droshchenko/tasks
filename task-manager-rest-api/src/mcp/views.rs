@@ -147,6 +147,10 @@ pub struct GoalView {
     )]
     pub color: String,
     #[property(
+        description = "How urgent the goal is: `super-high`, `high`, `normal`, `low` or `super-low`. The same scale a task carries, and what puts the goal where it is on the Goals screen — most urgent first. Not derived from its tasks: an epic can be urgent while none of its work has started"
+    )]
+    pub priority: String,
+    #[property(
         description = "`todo` while the goal is open, `done` once it is closed. Derived from whether it has been closed, so it cannot disagree with `closed_unix_seconds` — a goal has these two states and nothing in between in this version"
     )]
     pub status: String,
@@ -184,6 +188,7 @@ impl GoalView {
             name: goal.name.clone(),
             description: goal.description.clone(),
             color: rust_extensions::AsStr::as_str(&goal.color).to_string(),
+            priority: rust_extensions::AsStr::as_str(&goal.priority).to_string(),
             status: goal.status().to_string(),
             tasks_amount: tasks_amount as i32,
             done_amount: done_amount as i32,
@@ -328,6 +333,10 @@ pub struct TaskView {
         description = "Which column it sits in. A task whose stored status names a column the project no longer has reads as `todo`"
     )]
     pub status: String,
+    #[property(
+        description = "How urgent it is: `super-high`, `high`, `normal`, `low` or `super-low`. This is what decides where the card sits in its column — the board draws the most urgent at the top — and it is why tasks_list comes back in that order. `normal` is what most work is and what an unranked task reads as"
+    )]
+    pub priority: String,
     #[property(description = "What kind of work it is, or absent when it has no kind")]
     pub kind: Option<String>,
     #[property(
@@ -383,6 +392,7 @@ impl TaskView {
             project: project.prefix.clone(),
             text: task.text.clone(),
             status: project.effective_status(&task.status),
+            priority: rust_extensions::AsStr::as_str(&task.priority).to_string(),
             kind: project.effective_kind(task.kind.as_deref()),
             // Resolved rather than echoed, so a number naming no goal reads as standalone instead of as
             // an id the caller cannot look up.

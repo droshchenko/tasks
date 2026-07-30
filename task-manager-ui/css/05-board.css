@@ -204,6 +204,24 @@
   padding: 1px 6px;
 }
 
+/* The priority badge, shaped exactly like a task type's tag and coloured from the same palette — one visual
+   language for "a labelled thing about this card", so a reader learns the shape once.
+
+   Drawn only for a priority somebody chose: `Normal` has no badge, because the card's position in the column
+   already says it and a tag repeated on every card is a tag nobody reads. `white-space: nowrap` because
+   "Super High" wrapping mid-badge is how a card grows a line for two words. */
+.sticker-priority {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+}
+
 .project-picker {
   display: flex;
   align-items: center;

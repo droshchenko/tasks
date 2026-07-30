@@ -24,9 +24,9 @@ pub fn ViewGoalDialog(goal: GoalResponse) -> Element {
 
 fn render_goal(goal: &GoalResponse) -> Element {
     // Rendered rather than shown as source, and escaped rather than trusted — the same reason and the same
-    // call as a task's text: agents write Markdown, and `markdown::to_html` escapes raw HTML instead of
-    // passing it through.
-    let description_html = markdown::to_html(&goal.description);
+    // call as a task's text: agents write Markdown, and `md_to_html` escapes raw HTML instead of passing it
+    // through.
+    let description_html = super::md_to_html(&goal.description);
     let has_description = !goal.description.trim().is_empty();
 
     rsx! {
@@ -37,7 +37,7 @@ fn render_goal(goal: &GoalResponse) -> Element {
                 // there is no checklist.
                 div { class: "task-view-left",
                     if has_description {
-                        div { class: "task-view-text", dangerous_inner_html: "{description_html}" }
+                        div { class: "task-view-text md", dangerous_inner_html: "{description_html}" }
                     } else {
                         // Said rather than left blank: a goal with no text is a goal whose shape lives in
                         // its thread, which is normal — the conversation comes first and the summary often
@@ -62,6 +62,7 @@ fn render_goal(goal: &GoalResponse) -> Element {
 fn render_attributes(goal: &GoalResponse) -> Element {
     let closed = goal.closed_unix_seconds.is_some();
     let hex = KindColor::parse_or_default(&goal.color).hex();
+    let priority = task_manager_shared::priority::Priority::parse_or_default(&goal.priority);
 
     let status = if goal.status == COLUMN_ID_DONE {
         "Closed".to_string()
@@ -79,6 +80,17 @@ fn render_attributes(goal: &GoalResponse) -> Element {
             div { class: "task-view-attr",
                 div { class: "task-view-attr-label", "Status" }
                 span { class: "tag", "{status}" }
+            }
+
+            // Always, Normal included — the same reason as on the task dialog: this is the place a fact is
+            // looked up, and a row that vanishes is ambiguous where a row saying "Normal" is not.
+            div { class: "task-view-attr",
+                div { class: "task-view-attr-label", "Priority" }
+                span {
+                    class: "sticker-priority",
+                    style: "background: {priority.hex()}",
+                    "{priority.title()}"
+                }
             }
 
             div { class: "task-view-attr",
@@ -123,7 +135,7 @@ fn render_thread(goal: &GoalResponse) -> Element {
                     for (index , comment) in goal.comments.iter().enumerate() {
                         div { class: "task-view-comment", key: "{index}",
                             div { class: "task-view-comment-who", "{comment.who}" }
-                            div { dangerous_inner_html: "{markdown::to_html(&comment.text)}" }
+                            div { class: "md", dangerous_inner_html: "{super::md_to_html(&comment.text)}" }
                         }
                     }
                 }

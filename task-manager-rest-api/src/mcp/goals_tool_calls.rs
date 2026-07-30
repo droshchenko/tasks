@@ -40,7 +40,9 @@ pub struct GoalsListInput {
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct GoalsListResponse {
-    #[property(description = "The goals, oldest first")]
+    #[property(
+        description = "The goals, most urgent first and oldest first within one priority — the order the Goals screen shows them in"
+    )]
     pub goals: Vec<GoalView>,
     #[property(description = "Number of rows in `goals`")]
     pub amount: i32,
@@ -108,6 +110,10 @@ pub struct GoalsCreateInput {
     )]
     pub color: Option<String>,
     #[property(
+        description = "How urgent the goal is: `super-high`, `high`, `normal`, `low` or `super-low`. It decides where the goal sits on the Goals screen — most urgent at the top. Omit for `normal`, which is what most epics are and what makes the other four mean something"
+    )]
+    pub priority: Option<String>,
+    #[property(
         description = "A checklist for the goal itself, each item a `title` and optionally a longer `text`. For the small things an epic drags along that are not worth a card — NOT for the work, which is tasks under the goal. An unticked item does not hold the goal open. Usually omitted"
     )]
     pub subtasks: Option<Vec<SubtaskInput>>,
@@ -144,6 +150,7 @@ impl McpToolCall<GoalsCreateInput, GoalWriteResponse> for GoalsCreateHandler {
                 name: model.name,
                 description: model.description.unwrap_or_default(),
                 color: model.color,
+                priority: model.priority,
                 subtasks: SubtaskInput::into_new(model.subtasks),
             },
         )
@@ -167,6 +174,10 @@ pub struct GoalsUpdateInput {
         description = "Recolour it: gray, red, orange, amber, green, teal, blue or purple. Visual only — the colour the board marks this goal's cards with. Omit to leave it alone"
     )]
     pub color: Option<String>,
+    #[property(
+        description = "Re-rank it: `super-high`, `high`, `normal`, `low` or `super-low`. The goal moves up or down the Goals screen at once. Omit to leave it alone"
+    )]
+    pub priority: Option<String>,
     #[property(
         description = "Pass true to CLOSE the goal, which is only allowed once every one of its tasks is `done` and always requires `comment` — the resolution. Pass false to re-open a closed goal. Omit to leave its state alone"
     )]
@@ -236,6 +247,7 @@ impl McpToolCall<GoalsUpdateInput, GoalWriteResponse> for GoalsUpdateHandler {
                 name: model.name,
                 description: model.description,
                 color: model.color,
+                priority: model.priority,
                 close: model.close,
                 subtasks: SubtaskOps {
                     add: model.add_subtasks,

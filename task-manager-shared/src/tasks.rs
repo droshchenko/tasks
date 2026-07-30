@@ -49,6 +49,11 @@ pub struct TaskResponse {
     pub project_id: String,
     pub text: String,
     pub status: String,
+    // How urgent it is — `task_manager_shared::priority::Priority` on the wire, read back with
+    // `parse_or_default`. Never absent: a task nobody has ranked reads as `normal`, and so does a row written
+    // before the field existed. It is what decides where the card sits in its column.
+    #[serde(default)]
+    pub priority: String,
     pub kind: Option<String>,
     // Which goal this task is part of — its handle, `RMS-G7` — and its name. Both absent for a standalone
     // task, which is a normal state and not an unfinished one. Also both absent if the stored number names
@@ -90,7 +95,11 @@ pub struct TaskResponse {
     pub closed_unix_seconds: Option<i64>,
 }
 
-// A whole board in one response, oldest task first.
+// A whole board in one response, **most urgent first and oldest first within one priority**.
+//
+// Ordered by the server rather than by whoever draws it, so the board, the Goals screen and every agent
+// reading `tasks_list` agree about what is at the top — and so a client that only groups the list into
+// columns is already right.
 //
 // Not paged and not capped: a project's tasks are a hand-written list held entirely in memory, and
 // Home renders all the columns at once anyway.
@@ -209,6 +218,7 @@ mod tests {
             project_id: "p".to_string(),
             text: "text".to_string(),
             status: crate::projects::COLUMN_ID_DONE.to_string(),
+            priority: String::new(),
             kind: None,
             goal: None,
             goal_name: None,

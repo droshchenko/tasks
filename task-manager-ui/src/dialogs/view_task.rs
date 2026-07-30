@@ -73,9 +73,8 @@ fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
     let body = task_text_without_title(&task.text);
 
     // Rendered rather than shown as source: agents write Markdown, and a checklist as literal dashes is
-    // markedly harder to read. `markdown::to_html` escapes raw HTML instead of passing it through, which is
-    // what makes rendering text this side did not author safe.
-    let text_html = markdown::to_html(body);
+    // markedly harder to read. See `md_to_html` for which dialect and why raw HTML in it is harmless.
+    let text_html = super::md_to_html(body);
 
     rsx! {
         div { class: "task-view",
@@ -90,7 +89,7 @@ fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                         // load, whereas most one-line tasks are one line on purpose.
                         div { class: "field-hint", "Nothing beyond the title." }
                     } else {
-                        div { class: "task-view-text", dangerous_inner_html: "{text_html}" }
+                        div { class: "task-view-text md", dangerous_inner_html: "{text_html}" }
                     }
 
                     // Nothing at all when there is no checklist, rather than an empty heading: most tasks
@@ -117,6 +116,8 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
     } else {
         task.status.clone()
     };
+
+    let priority = task_manager_shared::priority::Priority::parse_or_default(&task.priority);
 
     let assignee = task
         .assignee_name
@@ -159,6 +160,19 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
             div { class: "task-view-attr",
                 div { class: "task-view-attr-label", "Status" }
                 span { class: "tag", "{status}" }
+            }
+
+            // Always, unlike on a card — including Normal. A card leaves Normal out because its position in
+            // the column already says it and a badge on every card is noise; the dialog is where somebody
+            // comes to look a fact up, and a missing row there reads as "this build has no priorities" rather
+            // than as "it is normal".
+            div { class: "task-view-attr",
+                div { class: "task-view-attr-label", "Priority" }
+                span {
+                    class: "sticker-priority",
+                    style: "background: {priority.hex()}",
+                    "{priority.title()}"
+                }
             }
 
             // The type's id, uncoloured. Its colour and icon live on the project's type list, which this
@@ -325,7 +339,7 @@ fn render_thread(task: &TaskResponse) -> Element {
                     for (index , comment) in task.comments.iter().enumerate() {
                         div { class: "task-view-comment", key: "{index}",
                             div { class: "task-view-comment-who", "{comment.who}" }
-                            div { dangerous_inner_html: "{markdown::to_html(&comment.text)}" }
+                            div { class: "md", dangerous_inner_html: "{super::md_to_html(&comment.text)}" }
                         }
                     }
                 }

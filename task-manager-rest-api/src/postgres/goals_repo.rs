@@ -77,6 +77,9 @@ pub struct GoalDto {
     // gamble a startup on. `None` reads as the default swatch, which is the same leniency an unrecognised
     // name gets — and every write puts a real name in.
     pub color: Option<String>,
+    // How urgent the goal is, as the wire value of `Priority`. Nullable for the same reason `color` above is,
+    // and `None` reads as Normal.
+    pub priority: Option<String>,
     #[sql_type("jsonb")]
     #[json]
     pub comments: Vec<GoalCommentJsonModel>,

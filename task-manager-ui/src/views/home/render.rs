@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use task_manager_shared::kind_color::KindColor;
+use task_manager_shared::priority::Priority;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO, ProjectResponse};
 use task_manager_shared::task_id::task_id_display;
 use task_manager_shared::tasks::TaskResponse;
@@ -777,7 +778,7 @@ fn RenderColumn(
     let mut in_column: Vec<&TaskResponse> =
         tasks.iter().filter(|itm| itm.status == column.id).collect();
 
-    goals_first(&mut in_column);
+    board_order(&mut in_column);
 
     let cs_ra = cs.read();
     let dragging = cs_ra.dragging.clone();
@@ -897,6 +898,10 @@ fn RenderSticker(
 
     let title = task_manager_shared::task_title::task_title(&task.text);
 
+    // An unrecognised value reads as Normal, which is also what a card written before priorities existed
+    // carries — so neither draws a badge, and neither jumps the queue.
+    let priority = Priority::parse_or_default(&task.priority);
+
     let assignee = task
         .assignee_name
         .clone()
@@ -972,6 +977,17 @@ fn RenderSticker(
             div { class: "sticker-body",
                 div { class: "sticker-top",
                     span { class: "sticker-id", "{task_id_display(&task.id)}" }
+                    // Only when somebody actually ranked it. Normal is what most work is, so a badge on every
+                    // card would be a badge nobody reads — and the position in the column already says as
+                    // much as the badge does. This is here to answer "why is that at the top".
+                    if priority.is_worth_showing() {
+                        span {
+                            class: "sticker-priority",
+                            style: "background: {priority.hex()}",
+                            title: "Priority: {priority.title()}",
+                            "{priority.title()}"
+                        }
+                    }
                     if let Some(kind) = kind {
                         span {
                             class: "sticker-kind",
@@ -1037,20 +1053,23 @@ fn RenderSticker(
     }
 }
 
-/// Put the work that belongs to a goal at the top of a column, grouped by goal.
+/// Order a column: **the most urgent card first**, and within one priority the work that belongs to a goal
+/// first, grouped by goal.
 ///
-/// Two effects, and both are the point. Cards under a goal come first, so a column reads as "this is what
-/// the epics need" and then "and this is loose" — which is what the loose pile actually is. And cards of the
-/// same goal end up adjacent, without which a column of coloured bands is stripes rather than groups.
+/// Priority leads, and it has to: the whole of what a priority means on this product is where the card sits,
+/// so a grouping that outranked it would make Super High mean "near the top of its own group", which is not
+/// a priority at all. Two cards ranked the same are then arranged as they always were — cards under a goal
+/// above the loose ones, so a column reads as "this is what the epics need" and then "and this is loose", and
+/// cards of one goal adjacent, without which a column of coloured bands is stripes rather than groups.
 ///
-/// A STABLE sort, so inside each group the board's own oldest-first order survives. Which goal leads is
-/// whatever the handles compare to; it is arbitrary but it does not change between repaints, and a group
-/// that moved every time the board pushed would be worse than an arbitrary order.
-fn goals_first(tasks: &mut [&TaskResponse]) {
+/// A STABLE sort, so inside a group the board's own order — oldest first, as the server sent it — survives.
+/// Which goal leads is whatever the handles compare to; arbitrary, but the same on every repaint, and a group
+/// that moved each time the board pushed would be worse than an arbitrary order.
+fn board_order(tasks: &mut [&TaskResponse]) {
     tasks.sort_by(|left, right| {
-        left.goal
-            .is_none()
-            .cmp(&right.goal.is_none())
+        Priority::order_of(&left.priority)
+            .cmp(&Priority::order_of(&right.priority))
+            .then_with(|| left.goal.is_none().cmp(&right.goal.is_none()))
             .then_with(|| left.goal.cmp(&right.goal))
     });
 }
@@ -1073,6 +1092,9 @@ mod tests {
             project_id: "p".to_string(),
             text: text.to_string(),
             status: COLUMN_ID_TODO.to_string(),
+            // Blank rather than `normal`, so every ordering test also proves that a task written before
+            // priorities existed sorts where a Normal one does.
+            priority: String::new(),
             kind: None,
             goal: None,
             goal_name: None,
@@ -1394,7 +1416,7 @@ mod tests {
             &under_a_again,
         ];
 
-        goals_first(&mut column);
+        board_order(&mut column);
 
         let ids: Vec<&str> = column.iter().map(|itm| itm.id.as_str()).collect();
 
@@ -1409,5 +1431,54 @@ mod tests {
             ],
             "both cards of RMS-G10 first and in board order, then RMS-G20, then the loose pile in board order"
         );
+    }
+
+    /// Priority outranks the goal grouping, and that is the whole meaning of the field: a Super High card is
+    /// at the top of its COLUMN, not at the top of its own little group. The loose Super High card here beats
+    /// two cards that belong to goals.
+    #[test]
+    fn priority_outranks_the_goal_grouping() {
+        let mut normal_under_a = task("RMS-000001", "a", &[], None);
+        let mut urgent_loose = task("RMS-000002", "urgent", &[], None);
+        let mut quiet_under_a = task("RMS-000003", "later", &[], None);
+
+        normal_under_a.goal = Some("RMS-G10".to_string());
+        quiet_under_a.goal = Some("RMS-G10".to_string());
+
+        urgent_loose.priority = "super-high".to_string();
+        quiet_under_a.priority = "super-low".to_string();
+
+        let mut column = vec![&normal_under_a, &urgent_loose, &quiet_under_a];
+
+        board_order(&mut column);
+
+        let ids: Vec<&str> = column.iter().map(|itm| itm.id.as_str()).collect();
+
+        assert_eq!(
+            ids,
+            vec!["RMS-000002", "RMS-000001", "RMS-000003"],
+            "super-high first even with no goal, then the normal one, then super-low last"
+        );
+    }
+
+    /// A card written before priorities existed carries an empty string, and it has to sit exactly where a
+    /// `normal` one does — otherwise the first push after a deploy would reshuffle half a board.
+    #[test]
+    fn an_empty_priority_sits_where_normal_sits() {
+        let mut blank = task("RMS-000001", "blank", &[], None);
+        let mut normal = task("RMS-000002", "normal", &[], None);
+        let mut low = task("RMS-000003", "low", &[], None);
+
+        blank.priority = String::new();
+        normal.priority = "normal".to_string();
+        low.priority = "low".to_string();
+
+        let mut column = vec![&low, &blank, &normal];
+
+        board_order(&mut column);
+
+        let ids: Vec<&str> = column.iter().map(|itm| itm.id.as_str()).collect();
+
+        assert_eq!(ids, vec!["RMS-000001", "RMS-000002", "RMS-000003"]);
     }
 }

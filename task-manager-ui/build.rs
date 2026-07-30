@@ -14,6 +14,7 @@ fn main() {
         .add_file("06-auth.css")
         .add_file("07-dialog.css")
         .add_file("08-goals.css")
+        .add_file("09-markdown.css")
         .compile("./public/assets/app.css");
 
     generate_task_icons_list();

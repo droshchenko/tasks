@@ -37,6 +37,10 @@ pub struct TasksCreateInput {
     )]
     pub text: String,
     #[property(
+        description = "How urgent it is: `super-high`, `high`, `normal`, `low` or `super-low`. It decides where the card sits — the board puts the most urgent at the top of its column. OMIT IT unless the work is genuinely out of the ordinary: `normal` is the default and the scale only says anything while most tasks are on it. Ask rather than guess when somebody's words are vague — \"important\" is not a priority"
+    )]
+    pub priority: Option<String>,
+    #[property(
         description = "What kind of work it is, by kind id. Read the kind descriptions from projects_list first — the meanings are per project. Omit for no kind"
     )]
     pub kind: Option<String>,
@@ -95,6 +99,7 @@ impl McpToolCall<TasksCreateInput, TaskWriteResponse> for TasksCreateHandler {
                 goal: model.goal.clone(),
                 project_prefix: model.project,
                 text: model.text,
+                priority: model.priority,
                 kind: model.kind,
                 assignee: model.assignee,
                 labels: model.labels.unwrap_or_default(),
@@ -124,6 +129,10 @@ pub struct TasksUpdateInput {
         description = "Rewrite what the task says, as Markdown. Omit to leave the text alone"
     )]
     pub text: Option<String>,
+    #[property(
+        description = "Re-rank it: `super-high`, `high`, `normal`, `low` or `super-low`. The card moves up or down its column immediately, on every screen watching the board. Omit to leave the priority alone; there is no way to clear it, because `normal` IS the absence of a ranking"
+    )]
+    pub priority: Option<String>,
     #[property(
         description = "Reclassify it, by kind id. Pass an empty string to clear the kind; omit to leave it alone"
     )]
@@ -220,6 +229,7 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
                 goal: model.goal.clone(),
                 text: model.text,
                 status: model.status,
+                priority: model.priority,
                 kind: model.kind,
                 assignee: model.assignee,
                 add_labels: model.add_labels.unwrap_or_default(),

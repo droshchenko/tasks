@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use task_manager_shared::kind_color::KindColor;
+use task_manager_shared::priority::Priority;
 use task_manager_shared::projects::{COLUMN_ID_DONE, COLUMN_ID_TODO};
 
 use super::{
@@ -81,6 +82,9 @@ fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> Task
         number,
         text: format!("task {number}"),
         status: status.to_string(),
+        // Everything the ordering tests do not care about is Normal, so a list that comes back in number
+        // order is the tiebreaker working rather than the priority sort being absent.
+        priority: Priority::default(),
         kind: None,
         goal_number: None,
         assignee: None,
@@ -102,6 +106,7 @@ fn goal(project_id: &str, number: i64) -> GoalModel {
         name: format!("goal {number}"),
         description: String::new(),
         color: KindColor::default(),
+        priority: Priority::default(),
         subtasks: Vec::new(),
         comments: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
@@ -691,4 +696,63 @@ fn a_nonsense_archive_window_falls_back_to_the_default() {
     let mut two = project("p", "RMS", &[]);
     two.archive_days = Some(2);
     assert_eq!(two.archive_after().as_secs(), 2 * 24 * 60 * 60);
+}
+
+/// The order IS the feature. A column is drawn straight off this list, so the most urgent has to arrive
+/// first — and within one priority the board's old oldest-first order has to survive, or cards would
+/// shuffle on every repaint for no reason a reader could see.
+#[test]
+fn tasks_come_back_most_urgent_first_and_oldest_first_within_a_priority() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+
+    // Inserted in an order that has nothing to do with the answer: numbers ascending, priorities scrambled.
+    for (number, priority) in [
+        (1, Priority::Normal),
+        (2, Priority::SuperLow),
+        (3, Priority::SuperHigh),
+        (4, Priority::Normal),
+        (5, Priority::High),
+        (6, Priority::Low),
+    ] {
+        let mut itm = task("p", number, COLUMN_ID_TODO, &[]);
+        itm.priority = priority;
+        board.upsert_task(itm);
+    }
+
+    let numbers: Vec<i64> = board
+        .read()
+        .tasks_of_project("p")
+        .iter()
+        .map(|itm| itm.number)
+        .collect();
+
+    assert_eq!(numbers, vec![3, 5, 1, 4, 6, 2]);
+}
+
+/// A goal is ranked the same way and read the same way. Two rules on one product — one for tasks and
+/// another for goals — is the thing this test exists to prevent.
+#[test]
+fn goals_come_back_most_urgent_first_too() {
+    let board = board();
+    board.upsert_project(project("p", "RMS", &[]));
+
+    for (number, priority) in [
+        (1, Priority::Low),
+        (2, Priority::SuperHigh),
+        (3, Priority::Normal),
+    ] {
+        let mut itm = goal("p", number);
+        itm.priority = priority;
+        board.upsert_goal(itm);
+    }
+
+    let numbers: Vec<i64> = board
+        .read()
+        .goals_of_project("p")
+        .iter()
+        .map(|itm| itm.number)
+        .collect();
+
+    assert_eq!(numbers, vec![2, 3, 1]);
 }

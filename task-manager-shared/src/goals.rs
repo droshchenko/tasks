@@ -28,6 +28,10 @@ pub struct GoalResponse {
     // A palette name — `task_manager_shared::kind_color::KindColor` on the wire, read back with
     // `parse_or_default`. Purely visual: it is how a goal is recognised on the board without reading.
     pub color: String,
+    // How urgent the goal is — the same five-value scale a task carries, read back with
+    // `Priority::parse_or_default`. It is what decides where the goal sits on the Goals screen.
+    #[serde(default)]
+    pub priority: String,
     pub status: String,
     pub tasks_amount: i32,
     pub done_amount: i32,

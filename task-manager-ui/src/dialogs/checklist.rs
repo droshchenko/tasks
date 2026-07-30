@@ -81,8 +81,8 @@ pub fn Checklist(items: Vec<SubtaskResponse>) -> Element {
                                 // Markdown, escaped rather than trusted — the same call and the same reason
                                 // as a task's text: an agent wrote it.
                                 div {
-                                    class: "task-view-check-text",
-                                    dangerous_inner_html: "{markdown::to_html(&item.text)}",
+                                    class: "task-view-check-text md",
+                                    dangerous_inner_html: "{super::md_to_html(&item.text)}",
                                 }
                             }
                         }

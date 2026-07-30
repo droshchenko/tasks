@@ -368,6 +368,7 @@ fn RenderGoal(
 
     let closed = goal.closed_unix_seconds.is_some();
     let hex = KindColor::parse_or_default(&goal.color).hex();
+    let priority = task_manager_shared::priority::Priority::parse_or_default(&goal.priority);
 
     // Counters as the server sent them. NOT recomputed from the list below: that list is absent until the
     // goal is expanded, and the numbers count archived work which a board read leaves out.
@@ -425,6 +426,16 @@ fn RenderGoal(
 
                 div { class: "goal-meta",
                     span { class: "goal-id", "{goal.id}" }
+                    // Only when it was ranked, exactly as on a card: this screen is already in priority order,
+                    // so the badge is here to say why a goal is where it is rather than to label every row.
+                    if priority.is_worth_showing() {
+                        span {
+                            class: "sticker-priority",
+                            style: "background: {priority.hex()}",
+                            title: "Priority: {priority.title()}",
+                            "{priority.title()}"
+                        }
+                    }
                     if closed {
                         span { class: "goal-closed-flag", "Closed" }
                     }
@@ -558,6 +569,7 @@ fn RenderBacklog(
 #[component]
 fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
     let title = task_manager_shared::task_title::task_title(&task.text);
+    let priority = task_manager_shared::priority::Priority::parse_or_default(&task.priority);
 
     let kind = task
         .kind
@@ -598,6 +610,17 @@ fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
             },
 
             span { class: "goal-task-id", "{task_id_display(&task.id)}" }
+
+            // Same rule as on a card: drawn only when it was ranked, because the row's position already says
+            // it and a label on every line says nothing.
+            if priority.is_worth_showing() {
+                span {
+                    class: "sticker-priority",
+                    style: "background: {priority.hex()}",
+                    title: "Priority: {priority.title()}",
+                    "{priority.title()}"
+                }
+            }
 
             if let Some(kind) = kind {
                 span {

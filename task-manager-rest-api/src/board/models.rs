@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use task_manager_shared::kind_color::KindColor;
+use task_manager_shared::priority::Priority;
 
 /// One column of a project's board, in memory.
 ///
@@ -179,6 +180,10 @@ pub struct GoalModel {
     // Visual only, and from the same palette task types use: a goal is recognised on a board by its
     // colour before anybody reads the strip, and a second palette would break that at a glance.
     pub color: KindColor,
+    // How urgent the goal is — the same scale a task carries, and what decides where it sits on the Goals
+    // screen. Not derived from the tasks under it: an epic can be urgent while its first task is not, and a
+    // number computed from the work would take the decision away from the person making it.
+    pub priority: Priority,
     // The goal's own checklist, in the order it was written. Private to the goal: it says nothing about
     // whether the goal can close — that is decided by its TASKS, and folding the two together would make
     // one counter mean two things.
@@ -252,6 +257,10 @@ pub struct TaskModel {
     // The stored status. Read it through `ProjectModel::effective_status` — this field can name a
     // column that no longer exists.
     pub status: String,
+    // How urgent it is. Unlike a status or a kind there is nothing to be lenient about: the scale is a
+    // product-wide enum rather than per-project configuration, so it cannot name something a project no
+    // longer has, and a value nobody set is Normal.
+    pub priority: Priority,
     pub kind: Option<String>,
     // The goal this task is part of, by the goal's number within this same project — a task can only
     // belong to a goal on its own board, so the project is implied and storing a prefix would only give

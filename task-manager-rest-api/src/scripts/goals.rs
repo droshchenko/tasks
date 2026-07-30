@@ -16,6 +16,8 @@ pub struct NewGoal {
     /// A palette colour name. `None` takes the default swatch — a goal without an opinion about its
     /// colour is normal, and picking one is what the browser is for.
     pub color: Option<String>,
+    /// How urgent the goal is. `None` is Normal.
+    pub priority: Option<String>,
     /// The goal's own checklist, if it opens with one.
     pub subtasks: Vec<super::NewSubtask>,
 }
@@ -30,6 +32,8 @@ pub struct GoalPatch {
     pub name: Option<String>,
     pub description: Option<String>,
     pub color: Option<String>,
+    /// Re-rank it. `None` leaves the priority alone — every goal has one, so there is nothing to clear.
+    pub priority: Option<String>,
     /// `Some(true)` closes the goal, `Some(false)` re-opens it, `None` leaves its state alone.
     pub close: Option<bool>,
     /// Changes to the goal's checklist. Says nothing about whether the goal may close — that is decided by
@@ -46,6 +50,7 @@ impl GoalPatch {
         self.name.is_none()
             && self.description.is_none()
             && self.color.is_none()
+            && self.priority.is_none()
             && self.close.is_none()
             && self.subtasks.is_empty()
             && self.trimmed_comment().is_none()
@@ -126,6 +131,11 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
         Some(color) => super::parse_kind_color(color)?,
     };
 
+    let priority = match &new_goal.priority {
+        None => task_manager_shared::priority::Priority::default(),
+        Some(priority) => super::parse_priority(priority)?,
+    };
+
     // Before the number is reserved, with the rest of the validation: a checklist item with no title must not
     // burn a goal number.
     let subtasks = super::build_subtasks(&new_goal.subtasks)?;
@@ -145,6 +155,7 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
         name: new_goal.name.trim().to_string(),
         description: new_goal.description.trim().to_string(),
         color,
+        priority,
         subtasks,
         comments: Vec::new(),
         created: now,
@@ -184,7 +195,7 @@ pub async fn update_goal(
 ) -> Result<String, String> {
     if patch.is_empty() {
         return Err(
-            "nothing to update: pass at least one of name, description, color, close, a checklist change or comment"
+            "nothing to update: pass at least one of name, description, color, priority, close, a checklist change or comment"
                 .to_string(),
         );
     }
@@ -210,6 +221,10 @@ pub async fn update_goal(
 
     if let Some(color) = &patch.color {
         goal.color = super::parse_kind_color(color)?;
+    }
+
+    if let Some(priority) = &patch.priority {
+        goal.priority = super::parse_priority(priority)?;
     }
 
     // On the clone, like every other field here: an op naming an item that is not there refuses the whole

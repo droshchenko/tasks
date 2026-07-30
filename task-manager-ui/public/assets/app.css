@@ -618,6 +618,24 @@ input[readonly] {
   padding: 1px 6px;
 }
 
+/* The priority badge, shaped exactly like a task type's tag and coloured from the same palette — one visual
+   language for "a labelled thing about this card", so a reader learns the shape once.
+
+   Drawn only for a priority somebody chose: `Normal` has no badge, because the card's position in the column
+   already says it and a tag repeated on every card is a tag nobody reads. `white-space: nowrap` because
+   "Super High" wrapping mid-badge is how a card grows a line for two words. */
+.sticker-priority {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+}
+
 .project-picker {
   display: flex;
   align-items: center;
@@ -1524,5 +1542,153 @@ button.task-view-check-row:hover {
 .goal-task-status {
   width: 110px;
   text-align: right;
+}
+
+/* Rendered Markdown, wherever it is shown.
+   Every text in this application — a task, a goal, a comment, a checklist item — is Markdown written by an
+   agent through `/mcp`, so `.md` sits on the container of each of them and this file is the whole of how they
+   look. One class rather than a rule per place: the same text is shown in four dialogs, and four sets of
+   almost-identical rules would drift.
+
+   Browser defaults are the enemy here, not the starting point: an `<h3>` inside a paragraph of body text is
+   two thirds of a page tall by default, and a `<table>` has no borders at all. */
+
+/* The browser's first-paragraph margin would push every text down off the top of its pane, and the last one
+   would leave a gap above whatever follows — the checklist, in the task dialog. The space between blocks is
+   what is wanted; the space at the ends is not. */
+.md > *:first-child {
+  margin-top: 0;
+}
+
+.md > *:last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 8px;
+}
+
+/* Headings inside a text, not headings of a page. An agent writes `###` to mean "next section of this task",
+   which is a line of bold text with air above it — the default 1.5em would read as a second dialog title. */
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 14px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 8px;
+  /* Enough to hold the marker and no more: the default is around 40px, which indents a list of five bullets
+     far enough to read as a quotation. */
+  padding-left: 20px;
+}
+
+.md li {
+  margin: 2px 0;
+}
+
+/* GFM's `- [ ]` / `- [x]`. The checkbox is emitted disabled — the text is read here, not edited; a checklist
+   that is actually toggled is `subtasks`, which has its own rows. Killing the marker so the box is the
+   marker, rather than a bullet with a box after it. */
+.md li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -14px;
+}
+
+.md input[type="checkbox"] {
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+}
+
+.md blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+/* A fenced block. `code` already has the font and the tint from the tokens file; what a block needs on top is
+   room, and no wrapping — indentation carries meaning in the code an agent quotes. */
+.md pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+
+.md pre code {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.md hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* THE TABLE — why this file exists.
+   A GFM table arrives as a bare `<table>`, and a bare table is columns of numbers with nothing to say which
+   column a number is in. Ruled on every cell rather than only under the header: these are tables of ids,
+   precisions and minimums, read across a row to answer one question about one network, and a row is only
+   followed accurately when its cells are boxed.
+
+   Not `.table` from the table file: that one is a full-width data grid with an uppercase header, sized for a
+   page. This is a table inside a paragraph of text, so it takes its width from its contents. */
+.md table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+  /* Not `width: 100%`: a two-column table stretched across the pane puts its values a hand's width from their
+     labels. `max-width` so a wide one still stops at the pane instead of pushing it. */
+  max-width: 100%;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.md th {
+  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Zebra striping, because these tables are wider than they are tall and the eye loses the row. */
+.md tbody tr:nth-child(even) td {
+  background: rgba(9, 30, 66, 0.02);
+}
+
+/* A cell holds a value, not a sentence: `USDT-TON` broken across two lines stops being one token. Wrapping
+   stays on for prose cells — this only forbids breaking inside a word. */
+.md td code {
+  white-space: nowrap;
+}
+
+/* The last resort for a table too wide for its pane. `auto` and not `scroll` so nothing shows unless it is
+   needed, and on the wrapper rather than the table because a scrolling table cannot show a border.
+   Note that scrollbars are hidden application-wide (see the tokens file) — this scrolls by trackpad or by
+   dragging, which is acceptable for the rare eight-column table and is still better than clipping it. */
+.md {
+  overflow-x: auto;
 }
 

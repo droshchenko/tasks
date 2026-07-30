@@ -127,6 +127,19 @@ changed. A comment deliberately does not move the task's `updated`, so a busy th
 active work. Every task reports `comments_amount`; when it is not zero, tasks_get_comments is worth \
 reading before picking the task up — the reason the work is shaped the way it is usually lives there.\
 \
+PRIORITY IS WHAT DECIDES THE ORDER, AND THE ORDER IS WHAT YOU ARE GIVEN. A task and a goal each carry one \
+of five values — `super-high`, `high`, `normal`, `low`, `super-low` — and every list comes back most urgent \
+first, oldest first within one priority. That is the same order the board draws its columns in, so the top \
+of `tasks_list` is the top of the column a person is looking at: to pick up the next thing, take the first \
+one that is not `blocked`.\
+\
+`normal` IS THE DEFAULT AND MOST WORK SHOULD STAY THERE. The scale only says something while most tasks sit \
+in the middle of it — a board where everything is `high` is a board with no priorities at all. Set one when \
+the work is genuinely out of the ordinary, and ASK rather than guess when what you were told is vague: \
+\"important\" and \"soon\" are not priorities. Re-ranking is a normal thing to do and takes effect on every \
+open screen at once; there is no way to clear a priority, because `normal` is what having none means. A \
+goal's priority is its own — it is not computed from its tasks, and a task does not inherit it.\
+\
 A CHECKLIST BREAKS ONE PIECE OF WORK DOWN INSIDE IT — IT IS NOT A SECOND BOARD. A task and a goal each \
 carry `subtasks`: an ordered list of items, each with a one-line `title`, an optional longer `text`, and \
 `done`. Write one with `add_subtasks` once you have read a task and worked out what it involves, and tick \

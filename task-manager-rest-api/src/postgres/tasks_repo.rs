@@ -66,6 +66,12 @@ pub struct TaskDto {
     pub number: i64,
     pub task_text: String,
     pub status: String,
+    // How urgent it is, as the wire value of `Priority`. NULLABLE for the same reason `goals.color` is: the
+    // column arrives on a table that already has rows, and the generator takes a column's nullability from
+    // the Rust type — a non-Option field would emit `add priority text not null`, which Postgres refuses on a
+    // populated table. NULL reads as Normal, which is exactly what an unranked task is, and every write puts
+    // a real value in.
+    pub priority: Option<String>,
     pub kind: Option<String>,
     // Which goal this task is part of, by the goal's number in this same project. `None` for a
     // standalone task. A number rather than a handle for the same reason `depends_on` holds numbers.

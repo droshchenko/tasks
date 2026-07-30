@@ -71,6 +71,11 @@ impl From<&TaskDto> for TaskModel {
             number: src.number,
             text: src.task_text.clone(),
             status: src.status.clone(),
+            // A NULL column is a task written before priorities existed, and an unrecognised value is one
+            // written by a build that knew one more — both read as Normal rather than failing the load.
+            priority: task_manager_shared::priority::Priority::parse_or_default(
+                src.priority.as_deref().unwrap_or_default(),
+            ),
             kind: src.kind.clone(),
             goal_number: src.goal_number,
             assignee: src.assignee.clone(),
@@ -99,6 +104,9 @@ impl From<&TaskModel> for TaskDto {
             number: src.number,
             task_text: src.text.clone(),
             status: src.status.clone(),
+            // Always a real value on the way out, even for a task nobody ranked: the column is nullable only
+            // so it could be added to a populated table, not so a write has two ways to say "Normal".
+            priority: Some(rust_extensions::AsStr::as_str(&src.priority).to_string()),
             kind: src.kind.clone(),
             goal_number: src.goal_number,
             assignee: src.assignee.clone(),
@@ -146,6 +154,7 @@ pub fn task_to_response(
         project_id: task.project_id.clone(),
         text: task.text.clone(),
         status: project.effective_status(&task.status),
+        priority: rust_extensions::AsStr::as_str(&task.priority).to_string(),
         kind: project.effective_kind(task.kind.as_deref()),
         // Resolved and composed, so a task whose goal number names nothing reads as standalone rather
         // than as a dangling number nobody can look up.

@@ -18,6 +18,9 @@ use super::resolve::{resolve_project_by_prefix, resolve_task};
 pub struct TaskPatch {
     pub text: Option<String>,
     pub status: Option<String>,
+    /// Re-rank it. `None` leaves the priority alone; there is no "clear it", because every task has one and
+    /// what a caller means by none is `normal`.
+    pub priority: Option<String>,
     pub kind: Option<String>,
     /// Move it under a goal, by goal id. An empty string detaches it; `None` leaves it where it is.
     pub goal: Option<String>,
@@ -40,6 +43,7 @@ impl TaskPatch {
     fn is_empty(&self) -> bool {
         self.text.is_none()
             && self.status.is_none()
+            && self.priority.is_none()
             && self.kind.is_none()
             && self.goal.is_none()
             && self.assignee.is_none()
@@ -142,6 +146,9 @@ fn parse_dependencies(src: &[String], project: &ProjectModel) -> Result<Vec<i64>
 pub struct NewTask {
     pub project_prefix: String,
     pub text: String,
+    /// How urgent it is. `None` is Normal — most work is, and making every caller rank everything would make
+    /// the ranking mean nothing.
+    pub priority: Option<String>,
     pub kind: Option<String>,
     /// Which goal this task is part of, by goal id. `None` leaves it standalone.
     pub goal: Option<String>,
@@ -167,6 +174,11 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     let kind = match &new_task.kind {
         None => None,
         Some(kind) => validate_kind(&project, kind)?,
+    };
+
+    let priority = match &new_task.priority {
+        None => task_manager_shared::priority::Priority::default(),
+        Some(priority) => super::parse_priority(priority)?,
     };
 
     let depends_on = parse_dependencies(&new_task.depends_on, &project)?;
@@ -195,6 +207,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
         text: new_task.text.trim().to_string(),
         // Always Todo. Moving it on is tasks_update's job, which is where the Done rule lives.
         status: COLUMN_ID_TODO.to_string(),
+        priority,
         kind,
         goal_number,
         assignee: normalise_assignee(new_task.assignee.as_deref()),
@@ -349,7 +362,7 @@ pub async fn update_task(
 ) -> Result<String, String> {
     if patch.is_empty() {
         return Err(
-            "nothing to update: pass at least one of text, status, kind, assignee, labels, dependencies, a checklist change or comment"
+            "nothing to update: pass at least one of text, status, priority, kind, assignee, labels, dependencies, a checklist change or comment"
                 .to_string(),
         );
     }
@@ -373,6 +386,10 @@ pub async fn update_task(
 
     if let Some(status) = &patch.status {
         task.status = validate_status(&project, status)?;
+    }
+
+    if let Some(priority) = &patch.priority {
+        task.priority = super::parse_priority(priority)?;
     }
 
     if let Some(kind) = &patch.kind {

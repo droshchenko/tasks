@@ -154,6 +154,7 @@ a task assigned `AI` have to be the same string or a filter on one would miss th
 | — | The human id `PREFIX-000042` is **composed on read**, never stored — see above. Zero-padded; `RMS-1` typed by a human parses the same way. |
 | `text` | Markdown — the UI renders it. |
 | `status` | A column id of this project. Unknown → reads as `todo`. **Always `todo` on creation** — `tasks_create` takes no status. |
+| `priority` | One of five: `super-high`, `high`, `normal`, `low`, `super-low`. Decides where the card sits in its column. See below. |
 | `kind` | A kind id of this project. Optional. |
 | `assignee` | An email, or the reserved `AI`. |
 | `labels` | Free tags, lowercased and de-duplicated. |
@@ -180,6 +181,43 @@ reachable by its id, and `include_archived` brings the history back. The window 
 a typo or a deleted blocker does not silently free the task. `blocks` is the reverse edge, read
 off the rest of the board — the only way to see who is waiting on you. Closing the last blocker
 clears `blocked` on the next read, with nothing to update by hand.
+
+## Priority — five steps, and it decides the order
+
+A task **and a goal** each carry one of `super-high`, `high`, `normal`, `low`, `super-low`. A fixed scale
+rather than a number: a number invites 7-vs-8 arguments and drifts upward until everything is a 9, whereas
+five named steps make somebody choose between *this* and *that*. Unlike columns and kinds it is **not**
+per-project — urgency does not mean something different on another board, and one scale is what lets two
+boards be read side by side.
+
+**The order is the whole feature.** Every list the server hands out — the board read, the WebSocket push,
+`tasks_list`, `goals_list`, a goal's own task list — comes back **most urgent first, oldest first within one
+priority**. Sorted in `BoardInner` rather than by each reader, so the board, the Goals screen and every agent
+agree about what is at the top of a column, and a client that only groups the list into columns is already
+right. Within one priority the tiebreaker is the task number, which is the order the board had before
+priorities existed — so nothing moved for work nobody has ranked.
+
+On the board, priority **outranks the goal grouping**: a Super High card is at the top of its column, not at
+the top of its own group. The grouping (cards under a goal above the loose pile, cards of one goal adjacent)
+is what breaks a tie between two cards ranked the same. The alternative would make Super High mean "near the
+top of its own group", which is not a priority at all.
+
+`normal` is the default, and a row written before the field existed reads as `normal` — as does a value this
+build does not recognise, the same leniency a colour gets. **A write is the opposite: an unreadable priority
+is refused**, naming the five, because a write is somebody deciding and quietly turning a typo into Normal is
+how work nobody meant to deprioritise sinks. Spelling is lenient in both directions (`Super High`,
+`super_high`, `superhigh`); the refusal is for values that mean nothing.
+
+There is no way to clear it. `normal` *is* the absence of a ranking, so a field that could also be empty would
+have two spellings for one state.
+
+**A card shows the badge only when the priority is not Normal** — the position in the column already says it,
+and a tag repeated on every card is a tag nobody reads. The two dialogs show it always, Normal included: that
+is where a fact is looked up, and a row that vanishes is ambiguous where one saying "Normal" is not.
+
+A goal's priority is **its own**, not derived from its tasks: an epic can be urgent while none of its work has
+started, and a number computed from the work would take the decision away from the person making it. Nor does
+a task inherit its goal's.
 
 ## The checklist — subtasks that never leave the task
 

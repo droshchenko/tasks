@@ -15,6 +15,11 @@ impl From<&GoalDto> for GoalModel {
             color: task_manager_shared::kind_color::KindColor::parse_or_default(
                 src.color.as_deref().unwrap_or_default(),
             ),
+            // NULL is a goal written before priorities existed; it reads as Normal, which is what an unranked
+            // goal is.
+            priority: task_manager_shared::priority::Priority::parse_or_default(
+                src.priority.as_deref().unwrap_or_default(),
+            ),
             // A NULL column is a goal written before checklists existed, and it reads as having none.
             subtasks: src
                 .subtasks
@@ -41,6 +46,7 @@ impl From<&GoalModel> for GoalDto {
             name: src.name.clone(),
             description: src.description.clone(),
             color: Some(rust_extensions::AsStr::as_str(&src.color).to_string()),
+            priority: Some(rust_extensions::AsStr::as_str(&src.priority).to_string()),
             // Always a real array, even when empty — the column is nullable only so it could be added to a
             // populated table.
             subtasks: Some(src.subtasks.iter().map(|itm| itm.into()).collect()),
@@ -112,6 +118,7 @@ pub fn goal_to_response(
         name: src.name.clone(),
         description: src.description.clone(),
         color: rust_extensions::AsStr::as_str(&src.color).to_string(),
+        priority: rust_extensions::AsStr::as_str(&src.priority).to_string(),
         status: src.status().to_string(),
         tasks_amount: tasks_amount as i32,
         done_amount: done_amount as i32,

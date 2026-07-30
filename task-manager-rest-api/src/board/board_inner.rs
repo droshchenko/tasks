@@ -329,14 +329,17 @@ impl BoardInner {
         self.goals.get(project_id)?.get(&number).cloned()
     }
 
-    /// A project's goals, oldest first — which is also numeric order, since the counter only goes up.
+    /// A project's goals, **most urgent first and oldest first within one priority** — the same order tasks
+    /// come back in, because a screen that ranked one and not the other would be two different rules on one
+    /// product. Within a priority, the number is the tiebreaker, which is also oldest-first since the counter
+    /// only goes up.
     pub fn goals_of_project(&self, project_id: &str) -> Vec<Arc<GoalModel>> {
         let Some(of_project) = self.goals.get(project_id) else {
             return Vec::new();
         };
 
         let mut result: Vec<Arc<GoalModel>> = of_project.values().cloned().collect();
-        result.sort_by_key(|itm| itm.number);
+        result.sort_by_key(|itm| (itm.priority.order(), itm.number));
         result
     }
 
@@ -379,8 +382,9 @@ impl BoardInner {
         (total, done)
     }
 
-    /// The tasks of one goal, oldest first. Includes archived work, for the reason given on
-    /// [`BoardInner::goal_progress`] — the list and the counter have to agree.
+    /// The tasks of one goal, most urgent first and oldest first within one priority — the same order the
+    /// board uses. Includes archived work, for the reason given on [`BoardInner::goal_progress`] — the list
+    /// and the counter have to agree.
     pub fn tasks_of_goal(&self, project_id: &str, number: i64) -> Vec<Arc<TaskModel>> {
         let Some(of_project) = self.tasks.get(project_id) else {
             return Vec::new();
@@ -392,7 +396,7 @@ impl BoardInner {
             .cloned()
             .collect();
 
-        result.sort_by_key(|itm| itm.number);
+        result.sort_by_key(|itm| (itm.priority.order(), itm.number));
         result
     }
 
@@ -494,14 +498,20 @@ impl BoardInner {
         self.tasks.get(project_id)?.get(&number).cloned()
     }
 
-    /// A project's tasks, oldest first. Not capped: a board is a hand-written list.
+    /// A project's tasks, **most urgent first and oldest first within one priority**. Not capped: a board is
+    /// a hand-written list.
+    ///
+    /// Ordered here rather than by each reader, which is what keeps the board, the Goals screen and
+    /// `tasks_list` from disagreeing about what is at the top of a column. The number is the tiebreaker
+    /// because it is the only total order there is — and within one priority it means oldest first, which is
+    /// what the board did before priorities existed.
     pub fn tasks_of_project(&self, project_id: &str) -> Vec<Arc<TaskModel>> {
         let Some(of_project) = self.tasks.get(project_id) else {
             return Vec::new();
         };
 
         let mut tasks: Vec<Arc<TaskModel>> = of_project.values().cloned().collect();
-        tasks.sort_by_key(|itm| itm.number);
+        tasks.sort_by_key(|itm| (itm.priority.order(), itm.number));
         tasks
     }
 
