@@ -127,6 +127,23 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
 
     rsx! {
         div { class: "task-view-attrs",
+            // FIRST, above the status: which epic this belongs to is the frame everything else is read in.
+            // "todo" means one thing under "Crypto payments" and another on a task that stands alone, so the
+            // frame has to arrive before the details rather than under them.
+            //
+            // Drawn as the band the board draws, in the goal's own colour, so the question is answered the
+            // same way on both screens. The handle beside the name: the name is what a person reads, the
+            // handle is what they type back into the search box or to an agent.
+            if let Some(goal) = task.goal.as_ref() {
+                div { class: "task-view-attr",
+                    div { class: "task-view-attr-label", "Goal" }
+                    div { class: "task-view-goal", style: "background: {goal_hex}",
+                        span { class: "task-view-goal-id", "{goal}" }
+                        span { "{goal_title}" }
+                    }
+                }
+            }
+
             div { class: "task-view-attr",
                 div { class: "task-view-attr-label", "Status" }
                 span { class: "tag", "{status}" }
@@ -157,18 +174,6 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                 div { "{found.project_prefix} · {found.project_name}" }
             }
 
-            // Drawn as the band the board draws, in the goal's own colour, so "which epic is this part of"
-            // is answered the same way on both screens. The handle beside the name: the name is what a
-            // person reads, the handle is what they type back into the search box or to an agent.
-            if let Some(goal) = task.goal.as_ref() {
-                div { class: "task-view-attr",
-                    div { class: "task-view-attr-label", "Goal" }
-                    div { class: "task-view-goal", style: "background: {goal_hex}",
-                        span { class: "task-view-goal-id", "{goal}" }
-                        span { "{goal_title}" }
-                    }
-                }
-            }
 
             if task.blocked {
                 div { class: "task-view-attr",
