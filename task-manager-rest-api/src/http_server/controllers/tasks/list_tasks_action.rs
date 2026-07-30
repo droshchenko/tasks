@@ -14,7 +14,7 @@ use_my_http_server!();
     route: "/api/tasks/v1/list",
     controller: "Tasks",
     summary: "Read a board",
-    description: "The only task endpoint there is, and it only reads. Every task mutation arrives through /mcp — Home is a viewer, and nothing on it is edited with a mouse. Tasks come back oldest first with `blocked` and `blocks` derived, their handles composed from the project's current prefix, and an unknown status already folded into Todo. Work closed longer ago than the project's archive window is left out unless `includeArchived` asks for it: a board wants the live window, and the Goals screen wants the lot, because a goal outlives that window and its list has to agree with its own counters.",
+    description: "Reads a board. Every task mutation arrives through /mcp except one: moving a card between columns, which is /api/tasks/v1/move — see the note there for why that one is open. Tasks come back oldest first with `blocked` and `blocks` derived, their handles composed from the project's current prefix, and an unknown status already folded into Todo. Work closed longer ago than the project's archive window is left out unless `includeArchived` asks for it: a board wants the live window, and the Goals screen wants the lot, because a goal outlives that window and its list has to agree with its own counters.",
     input_data: "GetTasksInputModel",
     result: [
         {status_code: 200, description: "The board", model: "TasksResponse"},

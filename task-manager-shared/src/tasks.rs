@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 // Never put `///` doc comments on fields of a struct deriving MyHttpInput or
 // MyHttpObjectStructure: the macro's attribute parser panics with `Somehow we got Punct here: =`.
 //
-// There are no task *input* models in this file on purpose. Every task mutation arrives through
-// `/mcp`; the REST surface reads the board and configures the product, and nothing else. If you
-// find yourself adding `CreateTaskInputModel` here, the design changed — update README.md first.
+// There is ONE task input model here that writes, and it is deliberately the narrowest possible: a move
+// between columns. Everything else about a task — its text, its type, its assignee, its thread — arrives
+// through `/mcp`, and the REST surface otherwise reads the board and configures the product. If you find
+// yourself adding `CreateTaskInputModel` here, the design changed — update README.md first.
 
 // One comment on a task's thread.
 //
@@ -120,6 +121,30 @@ pub struct FindTaskResponse {
     // Why there is no task, in words. Empty on a hit — an id that is not there has to come back as a
     // message, never as an empty result that reads like "there is nothing there".
     pub not_found: String,
+}
+
+// Move one task to another column.
+//
+// The FIRST write the browser makes about the state of the board, and a deliberate change of mind rather
+// than an oversight: dragging a card between columns is the one gesture a board is expected to have, and
+// refusing it taught people the screen was broken rather than that it was a viewer. Everything else about a
+// task still arrives through `/mcp` — its text, its type, who is on it, its thread.
+//
+// Two things make this safe to open up where the rest is not. The move is one field with a closed set of
+// values, validated against the project like any other status change; and unlike MCP, this side HAS a
+// session, so the comment a landing needs is signed by whoever dragged the card instead of by a `who` the
+// caller made up.
+#[derive(MyHttpInput)]
+pub struct MoveTaskInputModel {
+    #[http_body(name: "taskId", description: "Which task to move, by id — RMS-42")]
+    pub task_id: String,
+    #[http_body(name: "status", description: "The column to move it to, by column id")]
+    pub status: String,
+    #[http_body(
+        name: "comment",
+        description: "What was actually done. REQUIRED when the move lands the task in `done`, refused as a move without it — the same rule tasks_update obeys, for the same reason: the Done column is what makes a board worth reading months later"
+    )]
+    pub comment: Option<String>,
 }
 
 #[derive(MyHttpInput)]

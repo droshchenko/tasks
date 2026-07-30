@@ -19,6 +19,10 @@ mod edit_members;
 pub use edit_members::*;
 mod edit_project;
 pub use edit_project::*;
+mod land_task;
+pub use land_task::*;
+mod message;
+pub use message::*;
 mod view_goal;
 pub use view_goal::*;
 mod view_task;
@@ -68,6 +72,20 @@ pub enum DialogState {
     ViewGoal {
         goal: GoalResponse,
     },
+    /// A card was dragged into Done and the server will refuse the move without a resolution. Carries the
+    /// column it is being dropped into rather than assuming `done`: a project can only have one Done, but
+    /// spelling it out keeps the dialog from knowing which id that is.
+    LandTask {
+        handle: String,
+        status: String,
+    },
+    /// Something the board tried failed, said in the caller's own words. Not a toast: a refused move is a
+    /// sentence worth reading — "RMS-42 is part of RMS-G7, which is closed" — and a message that fades is a
+    /// message half the readers miss.
+    Message {
+        title: String,
+        text: String,
+    },
 }
 
 /// Mounted once, at the top of the signed-in shell, so a dialog overlays whatever screen opened it.
@@ -91,6 +109,27 @@ pub fn RenderDialog() -> Element {
         },
         DialogState::ViewGoal { goal } => rsx! {
             ViewGoalDialog { goal }
+        },
+        DialogState::Message { title, text } => rsx! {
+            MessageDialog { title, text }
+        },
+        DialogState::LandTask { handle, status } => rsx! {
+            LandTaskDialog {
+                handle: handle.clone(),
+                on_submit: move |comment: String| {
+                    let handle = handle.clone();
+                    let status = status.clone();
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::move_task(&handle, &status, Some(&comment)).await {
+                            // Nothing to refresh: the move comes back as a WebSocket push carrying the whole
+                            // board, which is also why this does not write the task back by hand.
+                            Ok(()) => close(),
+                            Err(err) => submit_failed(err.message),
+                        }
+                    });
+                },
+            }
         },
         DialogState::EditKindTemplate { template, on_saved } => rsx! {
             EditKindTemplateDialog {

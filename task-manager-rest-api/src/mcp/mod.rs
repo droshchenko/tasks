@@ -30,11 +30,16 @@ use users_list_tool_call::UsersListHandler;
 
 const INSTRUCTIONS: &str = "A task board that agents work and people configure. \
 \
-THIS IS THE ONLY WAY THE BOARD CHANGES. Projects, their columns, their kinds and who may see them are \
-set up by a person in the browser; every task, every status change, every assignment and every comment \
-arrives through these tools. The browser side is a viewer — nothing on it is edited with a mouse. So \
-when someone says \"move that to done\" or \"put Yuri on it\" or \"note that we decided X\", there is \
-no other route: it happens here or it does not happen.\
+THIS IS ALL BUT ONE WAY THE BOARD CHANGES. Projects, their columns, their kinds and who may see them \
+are set up by a person in the browser; every task, every assignment, every comment, every goal arrives \
+through these tools. So when someone says \"put Yuri on it\" or \"note that we decided X\", there is no \
+other route: it happens here or it does not happen.\
+\
+The exception is worth knowing about because it changes what you can assume between two calls: a person \
+can DRAG A CARD BETWEEN COLUMNS in the browser, and can recolour a goal. So a task's status may have \
+moved since you last read it, by a hand rather than by a tool — re-read before reasoning about where \
+work sits, and treat a status you were told about minutes ago as stale. A landing done that way still \
+carries its comment: the browser is made to ask for one, the same rule this tool obeys.\
 \
 CALL projects_list FIRST. It is the only tool that reveals what exists, and it returns the five \
 vocabularies every other call is written in: the project prefixes that name a board, the column ids a \

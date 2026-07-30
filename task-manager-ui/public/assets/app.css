@@ -717,6 +717,29 @@ input[type="text"].board-search {
   text-overflow: ellipsis;
 }
 
+/* A column while a card is over it: it says it will take the drop, and only then. A column that lit up on an
+   ordinary mouse-over would be promising something it cannot do. */
+.board-column.drop-target {
+  background: #e7f0ff;
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+/* The card in flight. Faded rather than hidden: it is still where it was until the server says otherwise,
+   and a card that vanished under the pointer would look like a move that had already happened. */
+.sticker.dragging {
+  opacity: 0.45;
+}
+
+/* A card is dragged by its whole face, so say so. `grab` rather than `move`: nothing has moved yet. */
+.sticker {
+  cursor: grab;
+}
+
+.sticker.dragging {
+  cursor: grabbing;
+}
+
 .full-screen {
   min-height: 100vh;
   display: flex;

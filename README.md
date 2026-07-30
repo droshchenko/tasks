@@ -1,11 +1,20 @@
 # task-manager-mcp
 
-A task board that **agents work and humans configure**. Every task mutation arrives through MCP;
-the browser UI only sets things up and watches.
+A task board that **agents work and humans configure**. Every task mutation arrives through MCP,
+with two named exceptions the browser owns: **moving a card between columns**, and **a goal's
+colour**. Nothing else is edited with a mouse — not a task's text, not its type, not who is on it,
+not a thread.
 
 That split is the whole design. It is not a Jira with an MCP bolted on — the MCP surface is the
 primary interface, and the UI exists because projects, columns, kinds and people have to be
 configured by a person, and because someone wants to see the board.
+
+The two exceptions are deliberate and each is one field wide. A colour is presentation rather than
+state, and task types have always been coloured with a mouse. A move is the one gesture a board is
+expected to have; refusing it taught people the screen was broken rather than that it was a viewer.
+Both go through the same scripts and the same validation an MCP call does — a landing in `done`
+still owes a comment — and the move signs that comment with the session, which is the one thing this
+door does better than MCP, where the author is a string the caller passes.
 
 Product namespace on the host: `task-manager-mcp`. Successor to `rms/development-tasks-mcp`, which
 this replaces once the first version lands.
@@ -14,7 +23,7 @@ this replaces once the first version lands.
 
 | | |
 |---|---|
-| **`task-manager-rest-api`** | service-sdk HTTP. Three surfaces on one port: `/api/v1/*` (reads for the UI + configuration CRUD), `/mcp` (every task mutation), `/ws` (invalidation push). Owns Postgres. |
+| **`task-manager-rest-api`** | service-sdk HTTP. Three surfaces on one port: `/api/v1/*` (reads for the UI, configuration CRUD, and the two writes the board owns — a task's column and a goal's colour), `/mcp` (every other task mutation), `/ws` (the whole board, pushed). Owns Postgres. |
 | **`task-manager-ui`** | Dioxus CSR (`dioxus/web`), a static bundle. Talks to the REST API through `flurl`. |
 | **`task-manager-shared`** | Wire models, shared verbatim by both. WASM-clean by default; a `server` feature gates `MyHttpInput` / `MyHttpObjectStructure`. |
 

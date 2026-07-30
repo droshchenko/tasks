@@ -237,6 +237,7 @@ pub fn RenderHome(search: Option<String>) -> Element {
                         column: column.clone(),
                         project: current.clone(),
                         tasks: visible.clone(),
+                        cs,
                     }
                 }
             }
@@ -440,6 +441,13 @@ struct ComponentState {
     /// it to a different type.
     kind_filter: String,
     assignee_filter: String,
+    /// The handle of the card being dragged, if one is. Kept here rather than read back out of the drag's
+    /// `dataTransfer`: the payload is set there too, because some browsers will not start a drag without it,
+    /// but a signal is what the drop handler can rely on.
+    dragging: Option<String>,
+    /// The column the pointer is over while dragging, so it can say it will accept the card. Cleared on the
+    /// drop and on the drag ending anywhere, including outside the board.
+    drop_target: Option<String>,
 }
 
 impl ComponentState {
@@ -460,6 +468,15 @@ impl ComponentState {
 
         self.selected = project_id;
         self.tasks.reset();
+        // A drag cannot survive the board changing under it — the card it holds is not on this one.
+        self.dragging = None;
+        self.drop_target = None;
+    }
+
+    /// Give up on a drag, wherever it ended.
+    fn drag_ended(&mut self) {
+        self.dragging = None;
+        self.drop_target = None;
     }
 }
 
@@ -752,7 +769,9 @@ fn RenderColumn(
     column: BoardColumn,
     project: ProjectResponse,
     tasks: Vec<TaskResponse>,
+    cs: Signal<ComponentState>,
 ) -> Element {
+    let mut cs = cs;
     // The server has already folded an unknown status into `todo`, so a plain comparison is enough here —
     // the leniency lives in one place rather than being re-implemented per client.
     let mut in_column: Vec<&TaskResponse> =
@@ -760,8 +779,71 @@ fn RenderColumn(
 
     goals_first(&mut in_column);
 
+    let cs_ra = cs.read();
+    let dragging = cs_ra.dragging.clone();
+    let hovering = cs_ra.drop_target.as_deref() == Some(column.id.as_str());
+    drop(cs_ra);
+
+    // Highlighted only while a card is actually in flight AND over this column: a column that lights up on
+    // an ordinary mouse-over would be promising something it cannot do.
+    let class = if dragging.is_some() && hovering {
+        "board-column drop-target"
+    } else {
+        "board-column"
+    };
+
+    let column_id = column.id.clone();
+    let column_name = column.name.clone();
+    let over_id = column.id.clone();
+    let done = column.id == COLUMN_ID_DONE;
+
     rsx! {
-        div { class: "board-column",
+        div {
+            class: "{class}",
+            // `prevent_default` is what makes a drop possible at all: without it the browser treats every
+            // element as refusing the drag, and `ondrop` never fires. That is the single most common way a
+            // drag-and-drop is built and then quietly does nothing.
+            ondragover: move |event| {
+                event.prevent_default();
+
+                let mut write = cs.write();
+                if write.dragging.is_some() && write.drop_target.as_deref() != Some(over_id.as_str()) {
+                    write.drop_target = Some(over_id.clone());
+                }
+            },
+            ondrop: move |event| {
+                event.prevent_default();
+
+                let Some(handle) = cs.write().dragging.take() else {
+                    return;
+                };
+
+                cs.write().drop_target = None;
+
+                let status = column_id.clone();
+                let column_name = column_name.clone();
+
+                // Landing owes an explanation, and the server refuses the move without one — so the drop
+                // asks for it rather than failing. Every other column moves straight away: the push comes
+                // back with the whole board, so there is nothing to write back here.
+                if done {
+                    crate::dialogs::open(crate::dialogs::DialogState::LandTask {
+                        handle,
+                        status,
+                    });
+                    return;
+                }
+
+                spawn(async move {
+                    if let Err(err) = crate::api::move_task(&handle, &status, None).await {
+                        crate::dialogs::open(crate::dialogs::DialogState::Message {
+                            title: format!("{handle} did not move to {column_name}"),
+                            text: err.message,
+                        });
+                    }
+                });
+            },
+
             div { class: "board-column-header",
                 span { class: "board-column-name", "{column.name}" }
                 span { class: "board-column-count", "{in_column.len()}" }
@@ -773,7 +855,12 @@ fn RenderColumn(
             // you are looking at is still answerable once the cards have moved.
             div { class: "board-column-body",
                 for task in in_column {
-                    RenderSticker { key: "{task.id}", task: task.clone(), project: project.clone() }
+                    RenderSticker {
+                        key: "{task.id}",
+                        task: task.clone(),
+                        project: project.clone(),
+                        cs,
+                    }
                 }
             }
         }
@@ -786,7 +873,12 @@ fn RenderColumn(
 /// on the card, and only there. A column of full cards is a wall of Markdown you have to read to scan, which
 /// is the opposite of what a board is for; a column of titles is a list you can take in at a glance.
 #[component]
-fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
+fn RenderSticker(
+    task: TaskResponse,
+    project: ProjectResponse,
+    cs: Signal<ComponentState>,
+) -> Element {
+    let mut cs = cs;
     let kind = task
         .kind
         .as_ref()
@@ -826,10 +918,31 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
     let found = crate::api::find_task_locally(&task, &project);
     let found_on_the_card = found.clone();
 
+    let dragged = task.id.clone();
+    let being_dragged = cs.read().dragging.as_deref() == Some(task.id.as_str());
+
     rsx! {
         div {
-            class: if task.blocked { "sticker blocked" } else { "sticker" },
+            class: if being_dragged {
+                "sticker dragging"
+            } else if task.blocked {
+                "sticker blocked"
+            } else {
+                "sticker"
+            },
             style: "{border}",
+            // The card is the drag handle — all of it, so there is nothing to aim at.
+            draggable: true,
+            ondragstart: move |event| {
+                // Written into the drag's own payload AND into the state. The payload is what some browsers
+                // insist on before they will start a drag at all; the state is what the drop reads, because
+                // it is the one of the two that cannot be emptied by the browser on the way.
+                let _ = event.data_transfer().set_data("text/plain", &dragged);
+                cs.write().dragging = Some(dragged.clone());
+            },
+            // Fires wherever the drag ended, including nowhere — without it, a card abandoned outside the
+            // board would stay dimmed and every column would keep offering to accept it.
+            ondragend: move |_| cs.write().drag_ended(),
             // The whole card, not only the eye. Double rather than single, because a single click on a card
             // is how you select one and this board has no selection — a stray click must not throw a dialog
             // in front of somebody who was only scrolling.

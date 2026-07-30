@@ -1,17 +1,15 @@
 use flurl::HttpVerb;
 use task_manager_shared::projects::ProjectResponse;
 use task_manager_shared::tasks::{
-    FindTaskInputModel, FindTaskResponse, GetTasksInputModel, TaskResponse, TasksResponse,
+    FindTaskInputModel, FindTaskResponse, GetTasksInputModel, MoveTaskInputModel, TaskResponse,
+    TasksResponse,
 };
 
 use crate::models::RequestError;
 
-use super::{authed, handle_http_response};
+use super::{authed, handle_http_empty, handle_http_response};
 
 /// Read a board.
-///
-/// The only task call there is: every mutation goes through `/mcp`, so there is deliberately no
-/// `create_task` or `update_task` here. If one shows up, the design changed.
 pub async fn get_tasks(
     project_id: &str,
     include_archived: bool,
@@ -53,4 +51,25 @@ pub fn find_task_locally(task: &TaskResponse, project: &ProjectResponse) -> Find
         archived: false,
         not_found: String::new(),
     }
+}
+
+/// Move a task to another column — the one thing the board changes about a task.
+///
+/// Everything else still goes through `/mcp`: the text, the type, the assignee, the thread. This is the
+/// narrowest opening that makes a board behave like a board, and the server applies exactly the rules an
+/// MCP status change obeys — including that landing in `done` needs a comment, which is what `comment` is
+/// for. The author is not passed: this side has a session, so the server signs it with whoever dragged the
+/// card.
+pub async fn move_task(
+    task_id: &str,
+    status: &str,
+    comment: Option<&str>,
+) -> Result<(), RequestError> {
+    let request = MoveTaskInputModel {
+        task_id: task_id.to_string(),
+        status: status.to_string(),
+        comment: comment.map(|itm| itm.to_string()),
+    };
+
+    handle_http_empty(authed("/api/tasks/v1/move", HttpVerb::Post, request).await).await
 }
