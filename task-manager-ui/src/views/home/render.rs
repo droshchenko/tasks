@@ -1608,9 +1608,9 @@ mod deletion_and_goal_filter_tests {
     /// no epic at all — which is a question worth asking, and the reason it needs a value of its own.
     #[test]
     fn the_goal_filter_narrows_to_one_epic_or_to_none() {
-        let under = with_goal("RMS-000001", Some("RMS-G7"));
-        let elsewhere = with_goal("RMS-000002", Some("RMS-G8"));
-        let loose = with_goal("RMS-000003", None);
+        let under = with_goal("RMS-1", Some("RMS-G7"));
+        let elsewhere = with_goal("RMS-2", Some("RMS-G8"));
+        let loose = with_goal("RMS-3", None);
 
         for task in [&under, &elsewhere, &loose] {
             assert!(matches_goal(task, ""), "an empty filter is the whole board");
@@ -1628,11 +1628,11 @@ mod deletion_and_goal_filter_tests {
     /// matches nothing is a dead end.
     #[test]
     fn the_goal_options_come_from_the_work_that_is_there() {
-        let mut named = with_goal("RMS-000001", Some("RMS-G7"));
+        let mut named = with_goal("RMS-1", Some("RMS-G7"));
         named.goal_name = Some("Crypto payments".to_string());
 
-        let same_goal_again = with_goal("RMS-000002", Some("RMS-G7"));
-        let loose = with_goal("RMS-000003", None);
+        let same_goal_again = with_goal("RMS-2", Some("RMS-G7"));
+        let loose = with_goal("RMS-3", None);
 
         let goals = goals_on_board(&[named, same_goal_again, loose]);
 
