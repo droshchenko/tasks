@@ -429,6 +429,39 @@ nothing its owner could not already open. It is not `HttpOnly`, because the clie
 tool names one by; the internal id stays inside the process. Which folders of a document tree are open is the
 one preference still in local storage — it can be dozens of paths, and a cookie is sent on every request.
 
+## Deleting is a flag
+
+A task and a goal each carry a `deleted_moment`: a moment rather than a bool, because "deleted" and "deleted
+when" are one fact and two columns for it can disagree — the same reason `close_moment` is shaped that way.
+
+**Nothing is removed, from Postgres or from memory, and that is the whole point.** What is deleted drops out of
+every board, list, count and derived answer, and stays exactly where it was so that SEARCHING still finds it
+and reports it as gone. A row deleted outright could only answer "no such task", which is indistinguishable
+from a typo and from another board's id — and the moment anybody wants a deleted task is precisely the moment
+they are searching for its id.
+
+So the split is: `tasks_of_project` keeps deleted work, because it fills the snapshot the browser searches;
+`get_task`, `get_goal`, `goals_of_project`, `goal_progress`, `tasks_of_goal`, `tasks_amount`,
+`labels_of_project` and `blocks` all forget it. Search has its own doors — `get_task_including_deleted` and
+`get_goal_including_deleted` — and the screens hide deleted work unless the search box has something in it, in
+which case it is drawn faded and flagged.
+
+Two consequences worth stating, because both fall out rather than being written:
+
+* **A deleted blocker keeps its dependents blocked.** `is_blocked` treats an id naming no task as unsatisfied —
+  deliberately, so a typo cannot silently free work — and a deletion lands in the same place. Deleting a
+  blocker is not a statement that it was finished.
+* **A deleted goal's tasks are not deleted with it.** They read as standalone, because `effective_goal` no
+  longer resolves. Whether work outlives its container is a decision somebody makes explicitly, not a side
+  effect of removing the container.
+
+**Deleting a goal is not closing it.** Closing says how a goal WENT — which is why it demands a resolution and
+refuses while any task is open. Deleting says it should never have existed, and asks nothing, because there is
+nothing to record about work that was never real. A goal can be deleted whether it was open or closed.
+
+Both undo cleanly: `deleted: false` on `tasks_update` or `goals_update`. Deleting twice does not move the
+moment.
+
 ## Who is who
 
 **Authentication is Google OAuth.** `client_id`, `client_secret` and `redirect_uri` come from the
