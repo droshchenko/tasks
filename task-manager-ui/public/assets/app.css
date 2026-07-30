@@ -1698,14 +1698,31 @@ button.task-view-check-row:hover {
  * a second design for it would be a second thing to maintain. What is NOT copied is that console's markdown
  * block: every text in this product carries `.md` and 09-markdown.css is the whole of how they look. */
 
+/* This screen is the one that does NOT scroll as a page: the tree and the viewer each scroll inside
+ * themselves, so the project picker and the file list stay put while a long document moves.
+ *
+ * A fixed height rather than `flex: 1 1 auto`, and that is forced by what is above it — `.main-content` is
+ * padding and nothing else, and `#main-panel` only sets `min-height`, so there is no flex parent for a
+ * growing child to fill. Every other screen wants exactly that (a board grows the page and the window
+ * scrolls); this one wants the opposite, so it takes the window height minus what sits above it rather than
+ * asking the shell to change for one screen.
+ *
+ * The subtraction: the sticky top bar, plus `.main-content`'s 20px of padding top and bottom. */
 .docs-page {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  /* Both this and the row below need it: without `min-height: 0` a long document pushes the page taller
-   * instead of scrolling inside its own pane, and the tree scrolls off the top of the window. */
+  height: calc(100vh - var(--topbar-height) - 40px);
+  /* Without it a long tree makes this box grow past the height just set — the default `min-height: auto` on
+   * a flex item is its content, not the size you gave its parent. */
   min-height: 0;
-  flex: 1 1 auto;
+}
+
+/* The header brings its own bottom margin for the screens that stack; here the column `gap` does that job,
+ * and both together would be a double space that eats the tree's height. */
+.docs-page .page-header {
+  margin-bottom: 0;
+  flex: 0 0 auto;
 }
 
 .files-layout {
