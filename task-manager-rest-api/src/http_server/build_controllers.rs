@@ -47,9 +47,6 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
     // is not exposed here at all — it is not a place a person browses.
     http_server_builder.register_post_action(documents::ListDocumentsAction::new(app.clone()));
     http_server_builder.register_post_action(documents::GetDocumentAction::new(app.clone()));
-    // A GET, and the only endpoint here a browser tag fetches by itself — see the action for why its token is
-    // in the url.
-    http_server_builder.register_get_action(documents::GetRawDocumentAction::new(app.clone()));
 
     http_server_builder.register_post_action(goals::ListGoalsAction::new(app.clone()));
     http_server_builder.register_post_action(goals::SetGoalColorAction::new(app.clone()));

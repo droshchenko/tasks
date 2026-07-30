@@ -26,9 +26,28 @@ pub struct GoogleAuthUrlResponse {
     pub url: String,
 }
 
-// What a completed sign-in hands back: the session token every later request carries in its
-// `Authorization` header, and that /ws takes as a `token=` query parameter because the browser
-// WebSocket API cannot send headers.
+/// The cookie the session travels in.
+///
+/// **A cookie rather than a header, and `HttpOnly` rather than local storage**, which buys three things a
+/// header could not. The browser attaches it to requests our code does not make — an `<img>` or an `<iframe>`
+/// pointed at a document's bytes, and the WebSocket handshake — so neither needs the token spelled into its
+/// url, where it would land in browser history, in `Referer`, in proxy logs, and in any link somebody copied.
+/// `HttpOnly` then puts it out of reach of script entirely, which matters here because this product renders
+/// html somebody else uploaded.
+pub const SESSION_COOKIE: &str = "task_manager_session";
+
+/// The cookie remembering which board is open, by PREFIX.
+///
+/// Not `HttpOnly`: the client writes it when the picker changes, so it has to be able to. It is a preference
+/// and never an authority — every request that acts on a project checks membership of the project it names,
+/// so a hand-edited cookie opens nothing its owner could not already open.
+pub const PROJECT_COOKIE: &str = "task_manager_project";
+
+// What a completed sign-in hands back.
+//
+// The token is in the response as well as in a `Set-Cookie` on it, because the browser is not the only thing
+// that signs in — and because a client that wants to keep one has somewhere to read it from. What the browser
+// uses is the cookie.
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
 pub struct GoogleCallbackResponse {
     pub token: String,

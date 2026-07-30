@@ -286,10 +286,14 @@ as metadata (worked out from the extension when nobody says), and `content_size`
 
 **base64 appears in exactly one place: an MCP argument.** JSON cannot carry bytes, so `documents_upload` takes
 `binary_base64` and `documents_get` hands one back, decoded and encoded at that boundary and nowhere else. The
-browser never sees base64 at all — it points an `<img>` or an `<iframe>` at `/api/documents/v1/raw`, which
-serves the real bytes with the document's own `Content-Type`, so a PDF opens in the browser's own viewer. That
-endpoint takes the session token as a QUERY PARAMETER, because neither tag can send an `Authorization`
-header — the same trade the WebSocket already makes here, for the same reason.
+browser never sees base64 at all — it points an `<img>` or an `<iframe>` at `/raw/{prefix}/{path}`, which serves
+the real bytes with the document's own `Content-Type`, so a PDF opens in the browser's own viewer.
+
+**That route is a PATH mirroring the tree, not a query, and that is what makes a framed html page work.** A page
+asks for its own `style.css` with a relative url, which the browser resolves against the address the page came
+from: served as `/raw/TM/docs/page.html`, `style.css` beside it resolves to `/raw/TM/docs/style.css` and
+arrives. From a query url it would resolve back onto the api route and arrive as nothing. A path of arbitrary
+depth is not something the routing macro can express, which is why this one is a middleware.
 
 **The path is the key; the id is the identity.** `documents_upload` takes a project, a path and a payload, and
 looks the path up: found, and it writes a *new version* of the document that lives there, keeping its id and
@@ -386,6 +390,32 @@ so Refresh is the answer to "an agent just uploaded something".
 
 **The `(project_id, doc_path)` index is unique**, as the backstop under the path-is-the-key rule: the
 application checks before it writes, and the index is what stops two writes racing past that check.
+
+## The session is a cookie
+
+`HttpOnly`, `Secure`, `SameSite`, `Path=/`, and it expires with the token inside it. It replaced a token in
+local storage carried in an `Authorization` header, and the move bought three things that header could not:
+
+* **The browser attaches it to requests our code does not make.** An `<img>` or an `<iframe>` pointed at a
+  document's bytes, and the WebSocket handshake. All three used to need the token spelled into their url —
+  where it lands in browser history, in `Referer`, in proxy logs, and in any link somebody copied and sent on.
+  A raw document url is now safe to hand to a colleague: it opens for them only if they are signed in and on
+  that board.
+* **Script cannot read it.** Which matters here specifically, because this product renders html somebody else
+  uploaded. A token in local storage is a token an uploaded page can take.
+* **`fetch` sends it with no help from us** — its default is `credentials: "same-origin"` and every api url is
+  relative, so the client attaches nothing and therefore cannot leak anything.
+
+The `Authorization` header is still accepted, and the WebSocket still reads a `token=` query. Both are there so
+the deploy did not sign everybody out mid-session, and both can go once no live token predates the change.
+
+Which board is open is a cookie too — **by prefix, not by id.** It is a preference and never an authority:
+every request that acts on a project checks membership of the project it names, so a hand-edited cookie opens
+nothing its owner could not already open. It is not `HttpOnly`, because the client is what writes it.
+
+**The prefix is what crosses the boundary generally.** `RMS` is what a person calls a board and what every MCP
+tool names one by; the internal id stays inside the process. Which folders of a document tree are open is the
+one preference still in local storage — it can be dozens of paths, and a cookie is sent on every request.
 
 ## Who is who
 

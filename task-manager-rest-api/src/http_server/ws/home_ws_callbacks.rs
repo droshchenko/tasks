@@ -32,18 +32,41 @@ impl MyWebSocketCallback for HomeWsCallbacks {
         http_request: MyWebSocketHttpRequest,
         _disconnect_timeout: Duration,
     ) -> Result<(), WebSocketConnectedFail> {
-        // The browser WebSocket API cannot send custom headers, so the session token arrives as a query
-        // parameter. The `Authorization` header is honoured too, for anything that is not a browser.
+        // The browser WebSocket API cannot send custom headers — but it DOES send cookies on the handshake,
+        // which is what the session now travels in. So the token no longer has to be spelled into the url,
+        // where it landed in browser history and in proxy logs.
+        //
+        // The other two are still read, and in this order: an `Authorization` header for anything that is not
+        // a browser, and the old `token=` query for a tab that was already open when this shipped. The query
+        // form can go once no live session predates the change.
         let token = http_request
             .get_headers()
-            .get("Authorization")
+            .get("Cookie")
             .and_then(|value| value.to_str().ok())
-            .map(|value| {
-                value
-                    .trim()
-                    .strip_prefix("Bearer ")
-                    .unwrap_or(value.trim())
-                    .to_string()
+            .and_then(|cookies| {
+                cookies.split(';').find_map(|pair| {
+                    let (name, value) = pair.split_once('=')?;
+
+                    if name.trim() == task_manager_shared::auth::SESSION_COOKIE {
+                        Some(value.trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .filter(|itm| !itm.is_empty())
+            .or_else(|| {
+                http_request
+                    .get_headers()
+                    .get("Authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .map(|value| {
+                        value
+                            .trim()
+                            .strip_prefix("Bearer ")
+                            .unwrap_or(value.trim())
+                            .to_string()
+                    })
             })
             .or_else(|| {
                 http_request.get_uri().query().and_then(|query| {

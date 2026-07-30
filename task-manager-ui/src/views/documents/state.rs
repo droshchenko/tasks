@@ -15,7 +15,11 @@ use task_manager_shared::projects::ProjectResponse;
 #[derive(Default)]
 pub struct DocumentsState {
     pub projects: DataState<Vec<ProjectResponse>>,
-    /// Which project is being browsed.
+    /// Which project is being browsed, by PREFIX.
+    ///
+    /// The prefix rather than the id because everything this screen does with a project is spoken in one: the
+    /// api calls take a prefix, and every raw url carries one. Translating an id at each of those would be a
+    /// step to forget.
     pub selected_project: String,
     /// The project's whole index — paths, sizes and kinds, no payloads. One request rather than a fetch per
     /// folder: the server holds the index in memory, so the whole of it costs less than the round trips

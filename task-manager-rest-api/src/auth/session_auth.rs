@@ -14,6 +14,32 @@ pub struct AuthUser {
     pub is_admin: bool,
 }
 
+/// Pull the session token out of the request: the cookie first, the `Authorization` header second.
+///
+/// **The cookie is where it lives now.** A header cannot be attached to a request our code does not make, and
+/// three of them matter here: the `<img>` and the `<iframe>` that fetch a document's bytes, and the WebSocket
+/// handshake. All three used to need the token spelled into their url — where it lands in history, in
+/// `Referer` and in proxy logs — and the cookie is what removes that.
+///
+/// The header is still accepted, and deliberately: at the moment this shipped every signed-in browser held a
+/// token in local storage and no cookie, and refusing it would have signed everybody out mid-session for
+/// nothing. It costs three lines and can go once no live token predates the change.
+pub fn extract_session(ctx: &HttpContext) -> Option<String> {
+    let from_cookie = ctx
+        .request
+        .get_cookies()
+        .get(task_manager_shared::auth::SESSION_COOKIE)
+        .map(str::trim)
+        .filter(|itm| !itm.is_empty())
+        .map(|itm| itm.to_string());
+
+    if from_cookie.is_some() {
+        return from_cookie;
+    }
+
+    extract_bearer(ctx)
+}
+
 /// Pull the session token out of the `Authorization` header.
 pub fn extract_bearer(ctx: &HttpContext) -> Option<String> {
     let raw = ctx
@@ -46,19 +72,16 @@ pub async fn resolve_auth_user(
     app: &Arc<AppContext>,
     ctx: &HttpContext,
 ) -> Result<AuthUser, HttpFailResult> {
-    let Some(token) = extract_bearer(ctx) else {
+    let Some(token) = extract_session(ctx) else {
         return Err(unauthorized("Not authenticated"));
     };
 
     resolve_auth_user_from_token(app, &token).await
 }
 
-/// The same resolution, from a token that did NOT arrive in a header.
-///
-/// It exists for the one request a browser makes without our code in the loop: an `<iframe>` or an `<img>`
-/// pointed at a document's bytes. Neither tag can carry an `Authorization` header, so the token travels as a
-/// query parameter — exactly the trade the WebSocket already makes here, and for exactly the same reason. It
-/// is the same token, checked the same way; only the envelope differs.
+/// The same resolution, from a token pulled out of somewhere other than the standard request path — the
+/// WebSocket handshake, which is not an `HttpContext`. It is the same token, checked the same way; only the
+/// envelope differs.
 pub async fn resolve_auth_user_from_token(
     app: &Arc<AppContext>,
     token: &str,
@@ -118,17 +141,6 @@ pub async fn require_project_access(
     project_id: &str,
 ) -> Result<AuthUser, HttpFailResult> {
     let user = resolve_auth_user(app, ctx).await?;
-    check_project_access(app, user, project_id)
-}
-
-/// Board access for a caller whose token came from a query parameter — see
-/// [`resolve_auth_user_from_token`].
-pub async fn require_project_access_with_token(
-    app: &Arc<AppContext>,
-    token: &str,
-    project_id: &str,
-) -> Result<AuthUser, HttpFailResult> {
-    let user = resolve_auth_user_from_token(app, token).await?;
     check_project_access(app, user, project_id)
 }
 

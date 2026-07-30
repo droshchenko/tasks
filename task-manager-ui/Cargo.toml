@@ -50,6 +50,10 @@ web-sys = { version = "*", features = [
     "Location",
     # Replacing the URL after the OAuth callback, so a reload does not re-submit a spent code.
     "History",
+    # Reading and writing the cookie that remembers which board is open. `HtmlDocument` rather than
+    # `Document` because `cookie()` lives on the html-specific interface.
+    "Document",
+    "HtmlDocument",
 ] }
 js-sys = { version = "*" }
 # `JsValue::from_str` for the console helper, and the state argument of `History::replace_state_with_url`.

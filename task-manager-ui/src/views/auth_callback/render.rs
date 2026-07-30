@@ -79,7 +79,14 @@ fn exchange_the_code(
 
                 match crate::api::finish_google_login(&code, &state).await {
                     Ok(response) => {
-                        crate::web::storage::save_session_token(&response.token);
+                        // Nothing to store: the session arrived as an `HttpOnly` cookie set on this very
+                        // response, and the browser has already kept it. The token in the body is there for
+                        // clients that are not browsers.
+                        //
+                        // What IS done here is clearing whatever an older build left in local storage, so a
+                        // dead token does not sit there for a year. `response.token` is deliberately unused.
+                        let _ = &response.token;
+                        crate::web::storage::clear_session_token();
                         replace_url_with_root();
                         navigator().push(AppRoute::Home { search: None });
                         cs.write().exchange.set_loaded(());

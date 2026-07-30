@@ -53,6 +53,7 @@ pub fn RenderDocuments(selected: String) -> Element {
         };
     }
 
+    // A PREFIX, despite the name of the state field it comes from — see `DocumentsState::selected_project`.
     let project_id = cs_ra.selected_project.clone();
     let show_source = cs_ra.show_source;
 
@@ -92,7 +93,7 @@ pub fn RenderDocuments(selected: String) -> Element {
     // shows exactly what the pane is showing rather than a second rendering of it.
     let raw_url = document
         .as_ref()
-        .map(|itm| raw_document_url(&itm.project_id, &itm.id, &token()))
+        .map(|itm| raw_document_url(&project_id, &itm.path))
         .unwrap_or_default();
 
     // By content type, not by `is_binary`. That was the bug: html is stored as TEXT — it is diffable and
@@ -104,7 +105,7 @@ pub fn RenderDocuments(selected: String) -> Element {
         .unwrap_or(false);
 
     let viewer = match found {
-        Some(Ok(found)) => render_found(found, show_source),
+        Some(Ok(found)) => render_found(&project_id, found, show_source),
         Some(Err(note)) => note,
         None => rsx! {
             div { class: "viewer-note", "Select a document." }
@@ -130,9 +131,12 @@ pub fn RenderDocuments(selected: String) -> Element {
                             navigator().push(crate::AppRoute::Documents { selected: String::new() });
                         },
                         for project in projects.iter() {
+                            // Valued by PREFIX: this screen speaks prefixes to the api and puts one in every
+                            // raw url, so carrying an id here would only be a translation waiting to be
+                            // forgotten.
                             option {
-                                value: "{project.id}",
-                                selected: project.id == project_id,
+                                value: "{project.prefix}",
+                                selected: project.prefix == project_id,
                                 "{project.prefix} · {project.name}"
                             }
                         }
@@ -198,14 +202,7 @@ fn is_markdown_content_type(content_type: &str) -> bool {
     content_type == "text/markdown" || content_type.starts_with("text/markdown;")
 }
 
-/// The session token, for the two tags that fetch a document's bytes themselves.
-///
-/// They cannot send an `Authorization` header, so it goes in the url — the same trade the WebSocket makes here.
-fn token() -> String {
-    crate::web::storage::get_session_token().unwrap_or_default()
-}
-
-fn render_found(found: &FindDocumentResponse, show_source: bool) -> Element {
+fn render_found(project_prefix: &str, found: &FindDocumentResponse, show_source: bool) -> Element {
     let Some(document) = found.document.as_ref() else {
         let reason = if found.not_found.is_empty() {
             "Nothing found.".to_string()
@@ -216,7 +213,7 @@ fn render_found(found: &FindDocumentResponse, show_source: bool) -> Element {
         return render_viewer_note(&reason, !found.in_trash);
     };
 
-    render_document(document, show_source)
+    render_document(project_prefix, document, show_source)
 }
 
 /// How one document is drawn.
@@ -224,8 +221,12 @@ fn render_found(found: &FindDocumentResponse, show_source: bool) -> Element {
 /// **Decided by the content type, and only then by whether there is text to fall back to.** The order matters
 /// and getting it wrong is what this function was rewritten for: html is text, so a viewer that asked
 /// `is_binary` first drew a web page as markup.
-fn render_document(document: &DocumentResponse, show_source: bool) -> Element {
-    let raw_url = raw_document_url(&document.project_id, &document.id, &token());
+fn render_document(
+    project_prefix: &str,
+    document: &DocumentResponse,
+    show_source: bool,
+) -> Element {
+    let raw_url = raw_document_url(project_prefix, &document.path);
 
     if is_image_content_type(&document.content_type) {
         return rsx! {
@@ -318,8 +319,8 @@ fn get_projects<'s>(
                         let remembered = crate::web::storage::get_last_project();
 
                         let initial = remembered
-                            .filter(|id| response.projects.iter().any(|itm| &itm.id == id))
-                            .or_else(|| response.projects.first().map(|itm| itm.id.clone()))
+                            .filter(|prefix| response.projects.iter().any(|itm| &itm.prefix == prefix))
+                            .or_else(|| response.projects.first().map(|itm| itm.prefix.clone()))
                             .unwrap_or_default();
 
                         // The project and the folders it was left open at, decided in one write before any row

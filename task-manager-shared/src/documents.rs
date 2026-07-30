@@ -85,32 +85,17 @@ pub struct FindDocumentResponse {
 
 #[derive(MyHttpInput)]
 pub struct GetDocumentsInputModel {
-    #[http_body(name: "projectId", description: "Which project's documents to index")]
-    pub project_id: String,
-}
-
-// Ask for a document's BYTES, as an `<iframe>` or an `<img>` asks.
-//
-// Everything is a query parameter, including the token, and that is not sloppiness: this is the one request
-// the browser makes with none of our code in the loop, and neither tag can carry an `Authorization` header.
-// The WebSocket in this same product makes the same trade for the same reason.
-#[derive(MyHttpInput)]
-pub struct GetRawDocumentInputModel {
-    #[http_query(name: "projectId", description: "Which project the document belongs to")]
-    pub project_id: String,
-    #[http_query(name: "id", description: "Which document, by id")]
-    pub id: String,
-    #[http_query(
-        name: "token",
-        description: "The session token. In the url because an <iframe> and an <img> cannot send headers"
+    #[http_body(
+        name: "project",
+        description: "Which project's documents to index, by PREFIX — `RMS`. The handle a person uses for a board everywhere else in this product; the internal id never crosses this boundary"
     )]
-    pub token: String,
+    pub project: String,
 }
 
 #[derive(MyHttpInput)]
 pub struct GetDocumentInputModel {
-    #[http_body(name: "projectId", description: "Which project the document belongs to")]
-    pub project_id: String,
+    #[http_body(name: "project", description: "Which project the document belongs to, by prefix")]
+    pub project: String,
     #[http_body(name: "id", description: "Which document, by the id its index entry reports")]
     pub id: String,
 }
@@ -192,20 +177,33 @@ pub fn is_html_content_type(content_type: &str) -> bool {
     content_type == "text/html" || content_type.starts_with("text/html;")
 }
 
+/// Where the raw bytes of every document live: `/raw/{prefix}/{path}`.
+pub const RAW_ROUTE_PREFIX: &str = "/raw/";
+
 /// The url that serves a document's raw bytes.
 ///
 /// Built rather than fetched, because the two tags that use it — `<img>` and `<iframe>` — make the request
 /// themselves; nothing in the client ever reads the bytes. Here in `shared` so the one place that spells the
 /// route is the one place both sides read it from.
 ///
-/// Every value is percent-encoded: an id is a `SortableId` and safe, but a token is base64-ish and a path can
-/// hold anything, and one unescaped `&` silently truncates the url into a request for the wrong document.
-pub fn raw_document_url(project_id: &str, id: &str, token: &str) -> String {
+/// **A PATH that mirrors the document tree, not a query, and that is what makes a framed html page work.** A
+/// page asks for its own `style.css` with a relative url, which the browser resolves against the address the
+/// page came from: served as `/raw/TM/docs/page.html`, `style.css` beside it resolves to `/raw/TM/docs/style.css`
+/// and arrives. From a query url it would resolve back onto the api route and arrive as nothing.
+///
+/// **No token in it.** The session is a cookie, which the browser attaches by itself — so this url is safe to
+/// copy, to put in history and to hand to somebody: it opens for them only if they are signed in and on the
+/// board.
+///
+/// Each segment is percent-encoded and the separators are not, so a `?` or a `#` in a document's name cannot
+/// truncate the url while `docs/design/system.md` still arrives as three segments.
+pub fn raw_document_url(project_prefix: &str, path: &str) -> String {
+    let encoded: Vec<String> = path.split(PATH_SEPARATOR).map(percent_encode).collect();
+
     format!(
-        "/api/documents/v1/raw?projectId={}&id={}&token={}",
-        percent_encode(project_id),
-        percent_encode(id),
-        percent_encode(token)
+        "{RAW_ROUTE_PREFIX}{}/{}",
+        percent_encode(project_prefix),
+        encoded.join("/")
     )
 }
 
@@ -227,6 +225,56 @@ fn percent_encode(src: &str) -> String {
     }
 
     encoded
+}
+
+/// Split `/raw/{prefix}/{path}` back into its two halves, percent-decoded.
+///
+/// `None` for anything that is not this route, which is what lets a request fall through to whatever owns it.
+/// A project prefix can hold no `/` — it is validated to letters, digits and `_` where it is set — so the
+/// first separator after the route prefix is unambiguously the end of it.
+///
+/// Beside the builder on purpose: a url that is written in one place and read in another is a url that drifts,
+/// and the round-trip test below is only possible with both halves here.
+pub fn parse_raw_document_url(path: &str) -> Option<(String, String)> {
+    let rest = path.strip_prefix(RAW_ROUTE_PREFIX)?;
+    let (prefix, document_path) = rest.split_once(PATH_SEPARATOR)?;
+
+    if prefix.is_empty() || document_path.is_empty() {
+        return None;
+    }
+
+    let decoded: Vec<String> = document_path
+        .split(PATH_SEPARATOR)
+        .map(|segment| percent_decode(segment))
+        .collect();
+
+    Some((percent_decode(prefix), decoded.join("/")))
+}
+
+/// Reverses [`percent_encode`]. Anything that is not a well-formed escape is passed through as itself, which
+/// is the lenient half of the pair: a url nobody built with the encoder still names something rather than
+/// failing to parse.
+fn percent_decode(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut decoded: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+
+    while at < bytes.len() {
+        if bytes[at] == b'%' && at + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[at + 1..at + 3]).ok();
+
+            if let Some(byte) = hex.and_then(|hex| u8::from_str_radix(hex, 16).ok()) {
+                decoded.push(byte);
+                at += 3;
+                continue;
+            }
+        }
+
+        decoded.push(bytes[at]);
+        at += 1;
+    }
+
+    String::from_utf8_lossy(&decoded).to_string()
 }
 
 /// `1.2 KB`, `340 B` — enough to tell a note from a specification, which is all a listing needs a size for.
@@ -417,16 +465,51 @@ mod tests {
         assert_eq!(document_folders("notes.md"), Vec::<&str>::new());
     }
 
+    /// The separators survive as separators and everything else is escaped — which is the whole trick: the
+    /// path has to keep its shape so a framed page's relative links resolve, while a `?` in a name must not
+    /// start a query string.
     #[test]
-    fn a_raw_url_escapes_every_value_it_carries() {
+    fn a_raw_url_keeps_its_separators_and_escapes_the_rest() {
         assert_eq!(
-            raw_document_url("p1", "d1", "tok"),
-            "/api/documents/v1/raw?projectId=p1&id=d1&token=tok"
+            raw_document_url("TM", "docs/design/system.md"),
+            "/raw/TM/docs/design/system.md"
         );
 
-        // The case that matters: an unescaped `&` in a token would truncate the url and ask for nothing.
-        let url = raw_document_url("p1", "d1", "a&b=c");
-        assert!(url.ends_with("token=a%26b%3Dc"), "{url}");
+        assert_eq!(
+            raw_document_url("TM", "docs/a b?c.md"),
+            "/raw/TM/docs/a%20b%3Fc.md"
+        );
+
+        // Two bytes in utf-8, so two escapes.
+        assert_eq!(raw_document_url("TM", "é.md"), "/raw/TM/%C3%A9.md");
+    }
+
+    /// The two halves have to agree, or a url the client builds is a url the server cannot read.
+    #[test]
+    fn a_raw_url_round_trips() {
+        for (prefix, path) in [
+            ("TM", "docs/design/system.md"),
+            ("RMS", "notes.md"),
+            ("TM", "docs/a b?c.md"),
+            ("TM", "é.md"),
+            ("TM", "docs/100% done.md"),
+        ] {
+            let url = raw_document_url(prefix, path);
+
+            assert_eq!(
+                parse_raw_document_url(&url),
+                Some((prefix.to_string(), path.to_string())),
+                "{url} does not round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn what_is_not_a_raw_url_falls_through() {
+        assert_eq!(parse_raw_document_url("/api/documents/v1/list"), None);
+        assert_eq!(parse_raw_document_url("/raw/"), None);
+        assert_eq!(parse_raw_document_url("/raw/TM"), None, "a project is not a document");
+        assert_eq!(parse_raw_document_url("/raw/TM/"), None);
     }
 
     #[test]

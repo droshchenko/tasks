@@ -37,7 +37,16 @@ async fn handle_request(
     input_data: GetDocumentInputModel,
     ctx: &HttpContext,
 ) -> Result<HttpOkResult, HttpFailResult> {
-    crate::auth::require_project_access(&action.app, ctx, &input_data.project_id).await?;
+    let project_id = {
+        let board = action.app.board.read();
+
+        match crate::scripts::resolve_project_by_prefix(&board, &input_data.project) {
+            Ok(project) => project.id.clone(),
+            Err(err) => return Err(crate::http_server::errors::not_found(err)),
+        }
+    };
+
+    crate::auth::require_project_access(&action.app, ctx, &project_id).await?;
 
     let telemetry = service_sdk::my_telemetry::MyTelemetryContext::create_empty();
     let id = input_data.id.trim();
@@ -46,7 +55,7 @@ async fn handle_request(
         // The caller passed a project AND an id, and the id is what actually finds the row — so the two have
         // to be checked to agree. Without this, membership of one project would read any document of any
         // other: the access check above is about the project that was NAMED, not the one the document is on.
-        if row.project_id != input_data.project_id {
+        if row.project_id != project_id {
             return Err(forbidden("That document belongs to another project"));
         }
 
@@ -65,7 +74,7 @@ async fn handle_request(
         .documents_repo
         .get_trashed(id, &telemetry)
         .await
-        .map(|itm| itm.project_id == input_data.project_id)
+        .map(|itm| itm.project_id == project_id)
         .unwrap_or(false);
 
     let not_found = if in_trash {

@@ -275,15 +275,13 @@ pub fn start_ws() {
 
 /// Hold the socket open and bump `board_revision` when the server says a board changed.
 ///
-/// It carries the session token as a query parameter because the browser WebSocket API cannot send headers.
+/// It carries nothing: the session is a cookie, which the browser attaches to the handshake by itself.
 ///
 /// No reconnect loop yet: a dropped socket leaves the board static until the page is reloaded, and since the
 /// live dot came off the header there is nothing on screen that says so — only a line in the console. If that
 /// starts biting, the fix is a reconnect, not putting the dot back.
 fn kick_off_ws(mut app_state: Signal<AppState>) {
     spawn(async move {
-        let token = crate::web::storage::get_session_token().unwrap_or_default();
-
         // Bound before use: `get_origin` borrows from the settings, so calling it on a temporary would
         // not outlive the statement.
         let settings = dioxus_utils::js::GlobalAppSettings::new();
@@ -295,10 +293,13 @@ fn kick_off_ws(mut app_state: Signal<AppState>) {
             origin.replacen("http", "ws", 1)
         };
 
+        // No token in the url any more: the session is a cookie, and the browser sends cookies on the
+        // WebSocket handshake — which is the one thing the WebSocket API will do that it will not do with a
+        // header. It used to be spelled here, where it landed in browser history and in proxy logs.
         let ws_url = if ws_origin.ends_with('/') {
-            format!("{ws_origin}ws?token={token}")
+            format!("{ws_origin}ws")
         } else {
-            format!("{ws_origin}/ws?token={token}")
+            format!("{ws_origin}/ws")
         };
 
         // The channel is installed before the socket opens, so a `watch` sent by Home while the

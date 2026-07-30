@@ -88,19 +88,22 @@ pub async fn handle_http_response_opt<T: DeserializeOwned>(
     Err(read_error_body(&mut response).await)
 }
 
-/// A request carrying the session token, for any verb.
+/// A request carrying the session, for any verb.
 ///
-/// URLs are relative: FlUrl's wasm backend resolves `/api/...` against the page origin, so no base URL
-/// is ever computed or configured.
+/// **It attaches nothing, and that is the point.** The session is an `HttpOnly` cookie now, so the browser
+/// sends it — `fetch` defaults to `credentials: "same-origin"` and every url here is relative, which is what
+/// makes them same-origin. The client therefore cannot read the token, cannot leak it into a url, and cannot
+/// hand it to a page it renders.
+///
+/// The function stays rather than being inlined: every call site reads as "this one needs a session", and the
+/// day something has to be attached again there is one place to do it.
+///
+/// URLs are relative: FlUrl's wasm backend resolves `/api/...` against the page origin, so no base URL is ever
+/// computed or configured.
 async fn authed<TModel: THttpRequestBuilder>(
     url: &str,
     verb: HttpVerb,
     model: TModel,
 ) -> Result<FlUrlResponse, FlUrlError> {
-    let token = crate::web::storage::get_session_token().unwrap_or_default();
-
-    FlUrl::new(url)
-        .with_header("Authorization", format!("Bearer {token}"))
-        .execute_request(verb, model)
-        .await
+    FlUrl::new(url).execute_request(verb, model).await
 }

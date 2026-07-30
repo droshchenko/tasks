@@ -3,7 +3,9 @@ use encryption::aes::AesKey;
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 
 /// How long a session token is good for.
-const SESSION_TTL_HOURS: i64 = 12;
+/// How long a session lasts. `pub(crate)` because the cookie carrying it has to expire with it — a cookie
+/// outliving its token leaves the browser sending a credential the server has stopped accepting.
+pub(crate) const SESSION_TTL_HOURS: i64 = 12;
 
 /// How long a sign-in may take between leaving for Google and coming back.
 ///

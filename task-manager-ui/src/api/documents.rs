@@ -11,9 +11,9 @@ use super::{authed, handle_http_response};
 ///
 /// The tree is built from the paths this returns; folders exist nowhere else. Reads only, like the board:
 /// documents are written, moved, deleted and restored through `/mcp`.
-pub async fn get_documents(project_id: &str) -> Result<DocumentsResponse, RequestError> {
+pub async fn get_documents(project_prefix: &str) -> Result<DocumentsResponse, RequestError> {
     let request = GetDocumentsInputModel {
-        project_id: project_id.to_string(),
+        project: project_prefix.to_string(),
     };
 
     handle_http_response(authed("/api/documents/v1/list", HttpVerb::Post, request).await).await
@@ -25,11 +25,11 @@ pub async fn get_documents(project_id: &str) -> Result<DocumentsResponse, Reques
 /// somebody opens it. A deleted document comes back as a miss carrying `in_trash`, which is a different thing
 /// to show than "no such document".
 pub async fn get_document(
-    project_id: &str,
+    project_prefix: &str,
     id: &str,
 ) -> Result<FindDocumentResponse, RequestError> {
     let request = GetDocumentInputModel {
-        project_id: project_id.to_string(),
+        project: project_prefix.to_string(),
         id: id.to_string(),
     };
 

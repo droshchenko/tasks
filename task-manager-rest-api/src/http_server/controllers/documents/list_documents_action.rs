@@ -38,24 +38,25 @@ async fn handle_request(
     input_data: GetDocumentsInputModel,
     ctx: &HttpContext,
 ) -> Result<HttpOkResult, HttpFailResult> {
-    crate::auth::require_project_access(&action.app, ctx, &input_data.project_id).await?;
+    // The prefix is what a person calls a board, and it is what every other surface of this product names one
+    // by — so it is what crosses this boundary too. Resolved once, here; everything below speaks in ids.
+    let project_id = {
+        let board = action.app.board.read();
 
-    // The project is checked to exist before the index is read rather than after: an unknown id would
-    // otherwise come back as an empty list, which reads as "this project has no documents".
-    if action
-        .app
-        .board
-        .read()
-        .get_project(&input_data.project_id)
-        .is_none()
-    {
-        return Err(not_found("No such project"));
-    }
+        match crate::scripts::resolve_project_by_prefix(&board, &input_data.project) {
+            Ok(project) => project.id.clone(),
+            // The resolver's own message, which lists the prefixes that DO exist — "no such project" alone
+            // leaves the caller unable to tell a typo from an empty instance.
+            Err(err) => return Err(not_found(err)),
+        }
+    };
+
+    crate::auth::require_project_access(&action.app, ctx, &project_id).await?;
 
     let documents = action
         .app
         .documents_index
-        .of_project(&input_data.project_id)
+        .of_project(&project_id)
         .iter()
         .map(document_entry_to_index_entry)
         .collect();

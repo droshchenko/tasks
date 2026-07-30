@@ -51,10 +51,28 @@ pub fn RenderGoals() -> Element {
     // The selection is remembered in the same place Home remembers it, so switching tabs keeps you on the
     // board you were looking at rather than on whichever project sorts first.
     use_effect(move || {
-        let project_id = cs.read().selected.clone();
+        let (project_id, prefix) = {
+            let cs_ra = cs.read();
+            let project_id = cs_ra.selected.clone();
+
+            // The cookie holds the prefix, so the id is translated back here — read out of the list this
+            // screen already has rather than stored a second time.
+            let prefix = match cs_ra.projects.as_ref() {
+                RenderState::Loaded(projects) => projects
+                    .iter()
+                    .find(|itm| itm.id == project_id)
+                    .map(|itm| itm.prefix.clone()),
+                _ => None,
+            };
+
+            (project_id, prefix)
+        };
 
         if !project_id.is_empty() {
-            crate::web::storage::save_last_project(&project_id);
+            if let Some(prefix) = prefix {
+                crate::web::storage::save_last_project(&prefix);
+            }
+
             crate::web::watch_project(&project_id);
         }
     });
@@ -227,10 +245,18 @@ fn get_projects(
 
                 match crate::api::get_projects().await {
                     Ok(response) => {
+                        // The cookie holds the PREFIX — what a person calls a board — and this screen works
+                        // in ids, so it is resolved here rather than stored twice.
                         let remembered = crate::web::storage::get_last_project();
 
                         let initial = remembered
-                            .filter(|id| response.projects.iter().any(|itm| &itm.id == id))
+                            .and_then(|prefix| {
+                                response
+                                    .projects
+                                    .iter()
+                                    .find(|itm| itm.prefix == prefix)
+                                    .map(|itm| itm.id.clone())
+                            })
                             .or_else(|| response.projects.first().map(|itm| itm.id.clone()))
                             .unwrap_or_default();
 

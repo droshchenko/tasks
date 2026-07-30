@@ -11,7 +11,7 @@ use_my_http_server!();
     route: "/api/auth/v1/logout",
     controller: "Auth",
     summary: "Sign out",
-    description: "Always succeeds, and does nothing on the server. A session is carried inside its token rather than stored, so signing out means the client discards it. Revoking a live token is not possible by design — the TTL is short, and disabling a person locks them out on their very next request, which is what revocation would actually be for.",
+    description: "Always succeeds. It clears the session cookie, which is the whole of signing out now that the session lives in one: the token itself is not stored server-side, it is carried inside itself, so there is nothing to revoke. Revoking a live token is not possible by design — the TTL is short, and disabling a person locks them out on their very next request, which is what revocation would actually be for.",
     result: [
         {status_code: 204, description: "Signed out"},
     ]
@@ -30,8 +30,10 @@ async fn handle_request(
     _action: &LogoutAction,
     _ctx: &HttpContext,
 ) -> Result<HttpOkResult, HttpFailResult> {
-    // Nothing to do server-side: the session lives inside the token, so signing out is the client
-    // dropping it. The endpoint exists so the UI has one thing to call and so this is written down
-    // somewhere other than a comment in the client.
-    HttpOutput::Empty.into_ok_result(true)
+    // Clearing the cookie IS the sign-out: it is `HttpOnly`, so the client cannot drop it itself — which is
+    // exactly the property that makes it worth having, and exactly why this endpoint now does something.
+    HttpOutput::from_builder()
+        .set_status_code(204)
+        .set_cookie(crate::auth::clear_session_cookie())
+        .into_ok_result(true)
 }

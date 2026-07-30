@@ -111,10 +111,28 @@ pub fn RenderHome(search: Option<String>) -> Element {
     // reactive: remember the choice for the next visit, and tell the socket which board to push about.
     // Sending the subscription on every change is also what makes switching projects not need a reconnect.
     use_effect(move || {
-        let project_id = cs.read().selected.clone();
+        let (project_id, prefix) = {
+            let cs_ra = cs.read();
+            let project_id = cs_ra.selected.clone();
+
+            // The cookie holds the prefix, so the id is translated back here — read out of the list this
+            // screen already has rather than stored a second time.
+            let prefix = match cs_ra.projects.as_ref() {
+                RenderState::Loaded(projects) => projects
+                    .iter()
+                    .find(|itm| itm.id == project_id)
+                    .map(|itm| itm.prefix.clone()),
+                _ => None,
+            };
+
+            (project_id, prefix)
+        };
 
         if !project_id.is_empty() {
-            crate::web::storage::save_last_project(&project_id);
+            if let Some(prefix) = prefix {
+                crate::web::storage::save_last_project(&prefix);
+            }
+
             crate::web::watch_project(&project_id);
         }
     });

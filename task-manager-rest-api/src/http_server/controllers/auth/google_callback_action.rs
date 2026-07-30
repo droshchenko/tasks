@@ -93,5 +93,17 @@ async fn handle_request(
 
     let token = crate::auth::SessionToken::issue(identity.email).to_token(&action.app.session_key);
 
-    HttpOutput::as_json(GoogleCallbackResponse { token }).into_ok_result(true)
+    // The cookie is what the browser will actually use from here on; the body carries the same token because
+    // signing in is not exclusively a browser's act, and a client that wants to hold one has somewhere to read
+    // it from.
+    HttpOutput::from_builder()
+        .set_content_as_text(
+            serde_json::to_string(&GoogleCallbackResponse {
+                token: token.clone(),
+            })
+            .unwrap_or_default(),
+        )
+        .set_content_type(WebContentType::Json)
+        .set_cookie(crate::auth::issue_session_cookie(token))
+        .into_ok_result(true)
 }
