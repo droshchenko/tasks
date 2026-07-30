@@ -334,6 +334,71 @@ impl DocumentOps {
     }
 }
 
+/// One build a task produced, as a tool sees it.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct GhActionView {
+    #[property(
+        description = "The url of the run — a link a person can open, and the way this build is named when you remove it"
+    )]
+    pub url: String,
+    #[property(
+        description = "What it is called, e.g. `my-service v1.2.3`. Never empty: when nobody named it, one was worked out from the url"
+    )]
+    pub title: String,
+    #[property(
+        description = "When the build was ATTACHED to the task, unix seconds (UTC) — not when GitHub ran it. Nothing here reads GitHub"
+    )]
+    pub moment_unix_seconds: i64,
+}
+
+impl GhActionView {
+    pub fn from_models(src: &[crate::board::GhActionModel]) -> Vec<Self> {
+        src.iter()
+            .map(|itm| Self {
+                url: itm.url.clone(),
+                title: itm.title.clone(),
+                moment_unix_seconds: itm.moment.unix_microseconds / 1_000_000,
+            })
+            .collect()
+    }
+}
+
+/// One build link to attach, as a write tool takes it.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct GhActionInput {
+    #[property(
+        description = "The url of the GitHub Actions run, like `https://github.com/<owner>/<repo>/actions/runs/<id>`. Any http(s) link is accepted — an enterprise install is not on github.com — but it has to be a LINK: a run number on its own is refused, because a reference nobody can open is not a record of a build"
+    )]
+    pub url: String,
+    #[property(
+        description = "What to call it — what shipped and which version, e.g. `my-service v1.2.3`. This is what the card draws, so write what a person scanning the task would want to read. Omit it and one is worked out from the url (`my-service #18423`), which is a fallback rather than a good name"
+    )]
+    pub title: Option<String>,
+}
+
+/// The build-link fields of a write tool, gathered so the conversion lives in one place.
+pub struct GhActionOps {
+    pub add: Option<Vec<GhActionInput>>,
+    pub remove: Option<Vec<String>>,
+}
+
+impl GhActionOps {
+    pub fn into_patch(self) -> crate::scripts::GhActionsPatch {
+        crate::scripts::GhActionsPatch {
+            add: self
+                .add
+                .unwrap_or_default()
+                .into_iter()
+                .map(|itm| crate::scripts::NewGhAction {
+                    url: itm.url,
+                    title: itm.title,
+                })
+                .collect(),
+            remove: self.remove.unwrap_or_default(),
+        }
+    }
+}
+
 /// One document, as a tool sees it — WITHOUT its text.
 ///
 /// The split matters here more than anywhere else on this surface: a document can be a whole specification,
@@ -659,6 +724,10 @@ pub struct TaskView {
         description = "Ids of the documents this task points at. Ids only — read one with documents_get, or documents_list to see what they are called. Read them BEFORE starting the task: a document attached to a piece of work is usually the specification for it. An id here may be in the trash, since deleting a document moves it there and a reference is never quietly dropped"
     )]
     pub documents: Vec<String>,
+    #[property(
+        description = "The builds this task produced, oldest first — GitHub Actions runs, each a url and what it is called. THE OTHER DIRECTION FROM `documents`: a document is what the work was done against, a build is what came out of it. Empty for most tasks; when it is not, this is what actually shipped from this piece of work, and it is the first thing to look at when somebody asks whether a change is out"
+    )]
+    pub gh_actions: Vec<GhActionView>,
     #[property(description = "How many comments are on the thread")]
     pub comments_amount: i32,
     #[property(description = "When the task was created, unix seconds (UTC)")]
@@ -713,6 +782,7 @@ impl TaskView {
             blocked: board.is_blocked(task),
             subtasks: SubtaskView::from_models(&task.subtasks),
             documents: task.documents.clone(),
+            gh_actions: GhActionView::from_models(&task.gh_actions),
             comments_amount: task.comments.len() as i32,
             created_unix_seconds: task.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: task.updated.unix_microseconds / 1_000_000,

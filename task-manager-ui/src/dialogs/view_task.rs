@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use task_manager_shared::projects::COLUMN_ID_DONE;
 use task_manager_shared::task_title::{task_text_without_title, task_title};
-use task_manager_shared::tasks::{FindTaskResponse, TaskLinkResponse, TaskResponse};
+use task_manager_shared::tasks::{
+    FindTaskResponse, TaskGhActionResponse, TaskLinkResponse, TaskResponse,
+};
 
 /// One task, shown in full.
 ///
@@ -221,6 +223,14 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                 super::DocumentRefs { ids: task.documents.clone() }
             }
 
+            // Straight after the documents, because the two are the same question asked in opposite
+            // directions: a document is what the work was done against, a build is what came out of it. Most
+            // tasks produced none and draw nothing at all — an empty "Builds" heading on every card would be
+            // noise on all of them.
+            if !task.gh_actions.is_empty() {
+                {render_gh_actions(&task.gh_actions)}
+            }
+
             if !task.labels.is_empty() {
                 div { class: "task-view-attr",
                     div { class: "task-view-attr-label", "Labels" }
@@ -262,6 +272,56 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
             }
         }
     }
+}
+
+/// The builds this task produced, oldest first.
+///
+/// **Real links, and the only thing on this screen that leaves the product.** A run lives on GitHub, so it
+/// opens in a new tab: the board a person came from stays where it was, and the back button is not the way
+/// back from a CI log. The name is what the row draws and the url is its tooltip — the url is what makes the
+/// link work, not what anybody reads.
+fn render_gh_actions(builds: &[TaskGhActionResponse]) -> Element {
+    rsx! {
+        div { class: "task-view-attr",
+            div { class: "task-view-attr-label", "Builds" }
+            div { class: "gh-actions",
+                for build in builds.iter() {
+                    a {
+                        class: "gh-action",
+                        key: "{build.url}",
+                        href: "{build.url}",
+                        target: "_blank",
+                        rel: "noopener noreferrer",
+                        title: "{build.url}",
+                        span { class: "gh-action-title", "{build.title}" }
+                        span { class: "gh-action-moment", "{attached_on(build.moment_unix_seconds)}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The day a build was recorded, as `2026-07-30`.
+///
+/// An absolute date rather than the age the Closed row shows, and for the opposite reason: a close date is
+/// read to work out how long the card has left on the board, whereas a build is looked up long afterwards to
+/// answer "which one was that" — where "112 days ago" is arithmetic the reader has to do themselves.
+///
+/// ISO order rather than the browser's locale, so a column of them sorts by eye and `03-04` is never
+/// ambiguous.
+fn attached_on(moment_unix_seconds: i64) -> String {
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(
+        (moment_unix_seconds * 1_000) as f64,
+    ));
+
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.get_full_year(),
+        // JavaScript counts months from zero, which is the one detail this function exists to get right.
+        date.get_month() + 1,
+        date.get_date()
+    )
 }
 
 /// A list of task handles with what each one is doing, every handle a way into that task.

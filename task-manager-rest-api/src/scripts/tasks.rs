@@ -34,6 +34,9 @@ pub struct TaskPatch {
     /// Which documents this task points at: ids to attach, ids to detach. Add/remove rather than a whole
     /// list, for the same reason labels are — see [`super::DocumentsPatch`].
     pub documents: super::DocumentsPatch,
+    /// Which builds came out of this task: links to attach, links to detach. Add/remove for the same reason
+    /// again — see [`super::GhActionsPatch`].
+    pub gh_actions: super::GhActionsPatch,
     /// `Some(false)` brings a deleted task back; `Some(true)` deletes it, as `delete_task` does.
     pub deleted: Option<bool>,
     /// A note to append to the thread in the same call. Optional in general — and **required** when the
@@ -57,6 +60,7 @@ impl TaskPatch {
             && self.depends_on.is_none()
             && self.subtasks.is_empty()
             && self.documents.is_empty()
+            && self.gh_actions.is_empty()
             && self.deleted.is_none()
             && self.comment.is_none()
     }
@@ -237,6 +241,10 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
         depends_on,
         subtasks,
         documents,
+        // Never anything here on creation, and there is deliberately no way to pass one: a build is what
+        // comes OUT of the work, so it cannot exist before the task that produced it does. They arrive
+        // through tasks_update as the work ships.
+        gh_actions: Vec::new(),
         comments: Vec::new(),
         created: now,
         updated: now,
@@ -386,7 +394,7 @@ pub async fn update_task(
 ) -> Result<String, String> {
     if patch.is_empty() {
         return Err(
-            "nothing to update: pass at least one of text, status, priority, kind, assignee, labels, dependencies, a checklist change, a document reference or comment"
+            "nothing to update: pass at least one of text, status, priority, kind, assignee, labels, dependencies, a checklist change, a document reference, a build link or comment"
                 .to_string(),
         );
     }
@@ -471,6 +479,12 @@ pub async fn update_task(
         .documents
         .apply(app, &project.id, &mut task.documents, handle)
         .await?;
+
+    // On the clone too, and validated the same way — but nothing outside the call is consulted: a build link
+    // is a url somebody reports, and this service never goes and looks at it.
+    patch
+        .gh_actions
+        .apply(&mut task.gh_actions, DateTimeAsMicroseconds::now())?;
 
     let comment = build_comment(patch.trimmed_comment(), patch.comment_by.as_deref())?;
     let landing = is_landing(was_done, &task.status);
@@ -722,6 +736,24 @@ mod tests {
         let patch = TaskPatch {
             documents: crate::scripts::DocumentsPatch {
                 add: vec!["some-id".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!patch.is_empty());
+    }
+
+    /// And so does a build link, which is the whole of the call an agent makes after shipping something —
+    /// nothing else about the task changed, so the emptiness check has to see it.
+    #[test]
+    fn a_build_link_alone_is_not_an_empty_update() {
+        let patch = TaskPatch {
+            gh_actions: crate::scripts::GhActionsPatch {
+                add: vec![crate::scripts::NewGhAction {
+                    url: "https://github.com/o/r/actions/runs/1".to_string(),
+                    title: None,
+                }],
                 ..Default::default()
             },
             ..Default::default()

@@ -167,6 +167,7 @@ a task assigned `AI` have to be the same string or a filter on one would miss th
 | `labels` | Free tags, lowercased and de-duplicated. |
 | `depends_on` | **Numbers** of blocking tasks, within the same project. |
 | `subtasks` | A checklist. Each item: a `SortableId`, a one-line `title`, a longer Markdown `text`, and `done`. See below. |
+| `gh_actions` | The builds this work produced. Each one: the `url` of a GitHub Actions run, a `title`, and when it was attached. See below. |
 | `comments` | A thread. Each comment: moment, `who`, Markdown text. |
 | `close_moment` | When the task landed in Done; absent whenever it is not there. Cleared on re-open, so a re-closed task is dated by its latest close. |
 | `created`, `updated` | A comment does not move `updated` — the thread is a separate record from the work. |
@@ -269,6 +270,50 @@ says that perfectly well. The columns arrive on tables that already have rows, a
 derives a column's nullability from the Rust type: a non-`Option` field would emit
 `alter table … add subtasks jsonb not null`, which Postgres refuses on a populated table. `NULL` reads as an
 empty checklist and every write puts a real array in. Same arrangement, and same reason, as `goals.color`.
+
+## Builds — the link from the work to what shipped
+
+A task carries `gh_actions`: the GitHub Actions runs that came out of it, oldest first. Each entry is a
+run `url`, a `title` — `my-service v1.2.3` — and the moment the link was attached. It lives in a `jsonb`
+column on the task row, exactly like the thread and the checklist, so recording a build is one atomic
+upsert of one row and the links ride along in the board snapshot with nothing to resolve.
+
+**It is a document reference pointing the other way, and that is why the two are drawn next to each
+other.** A document is what the work was done *against*; a build is what came *out* of it. Nothing else
+in this service connects a piece of work to the artefact it produced, and the question it answers —
+"this change, did it ship, and as what" — is asked long after the task is closed, when the CI history is
+the only other place to look and nobody remembers which run it was.
+
+**The url is the identity.** A run already has an id and it is in the url, so nothing is minted here:
+adding a url the task already carries is *not* a duplicate and not an error — the same build re-reported
+is what a re-run looks like from here. The existing entry keeps its moment, because that is when this
+build was recorded against the work, and takes the new title if one was given, since a caller bothering
+to name it a second time is correcting the first. Removing names the url; one that is not there is not
+an error, exactly as with a label.
+
+**Nothing is fetched.** This service never talks to GitHub — what is stored is what the caller said. So
+there is no run status here, nothing goes stale, and the moment is when the link was *attached* rather
+than when GitHub ran anything: a time read off a url nobody fetched would be a guess dressed as a
+record. For the same reason the host is not checked against `github.com` — an enterprise install answers
+on its own domain, and refusing a real build over its hostname would be a cosmetic rule with a real cost.
+What *is* checked is that the value is an `http(s)` link at all: a bare run number stored here would draw
+a row nobody can click.
+
+**A title is optional and never empty.** When nobody writes one, it is worked out from the url —
+`…/<owner>/<repo>/actions/runs/<id>` becomes `my-service #18423`, and anything else falls back to the
+host and the last segment. Requiring one would only have produced names copied out of the url by
+whoever was in a hurry; a derived name says the same thing and is honest about being derived.
+
+**Only `tasks_update` writes them, through `add_gh_actions` / `remove_gh_actions`** — the same add/remove
+shape as labels and document references, and for the same reason: a task collects builds one at a time
+over the life of the work, so a whole-list write would drop whatever the caller had not read.
+`tasks_create` deliberately takes none: a build is what comes out of the work, so it cannot exist before
+the task that produced it.
+
+In the browser the task dialog draws them under the documents, one per line: the title as a link, the
+date beside it, the url as the tooltip. They are the one thing on that screen that leaves the product, so
+they open in a new tab — the board stays where it was, and the back button is not the way home from a CI
+log. Most tasks produced no builds and draw nothing at all rather than an empty heading.
 
 ## Documents
 

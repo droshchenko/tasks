@@ -4,7 +4,9 @@ use mcp_server_middleware::*;
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppContext;
-use crate::mcp::{SubtaskEditInput, SubtaskInput, SubtaskOps, TaskView};
+// `GhActionInput` is imported rather than named through `crate::mcp::` at the point of use: the
+// ApplyJsonSchema derive resolves a nested type's schema by its bare name, so a path there does not compile.
+use crate::mcp::{GhActionInput, SubtaskEditInput, SubtaskInput, SubtaskOps, TaskView};
 use crate::scripts::{NewTask, TaskPatch};
 
 /// What every write tool returns: the task as it now stands.
@@ -191,6 +193,14 @@ pub struct TasksUpdateInput {
     )]
     pub remove_documents: Option<Vec<String>>,
     #[property(
+        description = "Builds this task produced, to record on it: each one the `url` of its GitHub Actions run and what to call it. CALL THIS WHEN A CHANGE MADE IN THIS TASK IS BUILT — the link is how somebody months later gets from the work to what shipped from it, and nothing else in this service records that. Added to whatever the task already carries, so you need not know the current list; the same url twice is one build, not two"
+    )]
+    pub add_gh_actions: Option<Vec<GhActionInput>>,
+    #[property(
+        description = "Build links to take off, by url — for one recorded against the wrong task. Applied after add_gh_actions. A url that is not there is not an error"
+    )]
+    pub remove_gh_actions: Option<Vec<String>>,
+    #[property(
         description = "Pass false to UNDELETE a task somebody removed — a deletion is a flag, not a removal, so it undoes cleanly. Pass true to delete it, which tasks_delete also does. Omit to leave it alone"
     )]
     pub deleted: Option<bool>,
@@ -230,7 +240,12 @@ IT IS ALSO WHERE THE CHECKLIST IS KEPT. add_subtasks writes the breakdown of the
 ticks items off as you go, and every item names itself by the `id` the task reports — an id that is not \
 there is refused rather than ignored. The checklist is INSIDE the task and nothing derives from it: an \
 unticked item does not stop the task from landing, so it is a note to whoever reads the task next, not a \
-second board.";
+second board.\
+\
+AND IT IS WHERE A BUILD IS RECORDED. When a change made in this task gets built, put the run on it with \
+add_gh_actions — the url and what it is called. That link is the only thing connecting the work to what \
+shipped from it, and it is what somebody reading the task months later needs first. Do it in the same \
+call that lands the task where you can.";
 }
 
 #[async_trait::async_trait]
@@ -263,6 +278,11 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
                 documents: crate::mcp::DocumentOps {
                     add: model.add_documents,
                     remove: model.remove_documents,
+                }
+                .into_patch(),
+                gh_actions: crate::mcp::GhActionOps {
+                    add: model.add_gh_actions,
+                    remove: model.remove_gh_actions,
                 }
                 .into_patch(),
                 deleted: model.deleted,

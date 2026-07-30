@@ -1,5 +1,6 @@
 mod column_templates;
 mod documents;
+mod gh_actions;
 mod goals;
 mod kind_templates;
 mod load_state;
@@ -12,6 +13,7 @@ mod users;
 
 pub use column_templates::*;
 pub use documents::*;
+pub use gh_actions::*;
 pub use goals::*;
 pub use kind_templates::*;
 pub use load_state::*;

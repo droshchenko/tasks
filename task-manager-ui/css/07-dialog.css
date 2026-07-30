@@ -418,6 +418,49 @@ button.task-view-check-row:hover {
   font-weight: 600;
 }
 
+/* What came out of the work: one build per line, drawn like the document references above it, because they
+   are the same kind of thing pointing in opposite directions. */
+.gh-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* An anchor rather than a button — it leaves the product, so it has to behave like a link does: middle-click,
+   copy address, open in a new tab. The name and the date sit on one row with the date pushed to the end. */
+.gh-action {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.gh-action:hover {
+  background: var(--surface-2);
+}
+
+/* Truncated rather than wrapped, so the rows stay one line each in a 200px column. */
+.gh-action-title {
+  flex: 1 1 auto;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* When, quietly. It is the thing you read after you have found the build you meant, never before. */
+.gh-action-moment {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 /* The lower half. The header stays put and only the thread under it moves, so which list you are scrolling
    is still answerable once the comments have moved. */
 .task-view-bottom {

@@ -187,6 +187,15 @@ References to a deleted document are deliberately NOT cleaned up, because restor
 a reference quietly dropped would not come back with it. The trash is invisible in the browser: \
 documents_trash is the only way to see what is in it.\
 \
+A BUILD IS RECORDED ON THE TASK THAT PRODUCED IT. When a change made in a task is built, put the \
+GitHub Actions run on that task with `add_gh_actions` on tasks_update: the `url` of the run and a `title` \
+saying what shipped — `my-service v1.2.3`. It is the reverse of a document: a document is what the work \
+was done AGAINST, a build is what came OUT of it, and nothing else in this service records that \
+connection. Record it as the build happens, ideally in the same call that lands the task; a link nobody \
+attached is one somebody has to go and find in a CI history later. The same url twice is one build, the \
+moment is stamped for you, and no check is made against GitHub — what is stored is what you said, so say \
+it accurately.\
+\
 MOVING A TASK TO `done` REQUIRES A COMMENT, AND THE MOVE IS REFUSED WITHOUT ONE. Pass `comment` and \
 `comment_by` to tasks_update in the same call as the status change. Say what was actually done — what \
 changed, and anything the next person should know — not that it is finished, which the column already \
@@ -308,6 +317,30 @@ mod tests {
                     "the schema does not mention {expected}: {schema}"
                 );
             }
+        }
+    }
+
+    /// The build links are the other nested object here, and unlike the checklist they are on ONE tool — a
+    /// task produces builds, a goal does not — so they get their own test rather than a line in the loop
+    /// above. Same failure mode either way: a shape the derive cannot describe is first noticed by a client
+    /// asking for the tool list.
+    #[tokio::test]
+    async fn tasks_update_describes_its_build_fields() {
+        let schema = super::tasks_write_tool_calls::TasksUpdateInput::get_json_schema(false)
+            .await
+            .build();
+
+        for expected in [
+            "add_gh_actions",
+            "remove_gh_actions",
+            // From the nested item's own `url` property, which is the half a flat-only schema would lose —
+            // this phrase appears nowhere else.
+            "actions/runs/<id>",
+        ] {
+            assert!(
+                schema.contains(expected),
+                "the schema does not mention {expected}: {schema}"
+            );
         }
     }
 }

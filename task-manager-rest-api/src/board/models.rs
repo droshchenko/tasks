@@ -250,6 +250,24 @@ pub struct SubtaskModel {
     pub done: bool,
 }
 
+/// One build that came out of a task — a GitHub Actions run.
+///
+/// **The url is the identity.** A run already has an id and it is in the url, so there is nothing to mint
+/// here and nothing to look one up by: adding a link that is already on the task does not duplicate it, and
+/// removing one names the url.
+///
+/// `title` is what the card draws and is never empty — one is worked out from the url when the caller gives
+/// none, because a naked run url is not something a reader can scan.
+///
+/// `moment` is when the link was attached, not when GitHub ran the build: nothing here talks to GitHub, and
+/// what this side knows is when the work recorded its build.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GhActionModel {
+    pub url: String,
+    pub title: String,
+    pub moment: DateTimeAsMicroseconds,
+}
+
 /// One comment on a task's thread.
 #[derive(Debug, Clone)]
 pub struct CommentModel {
@@ -302,6 +320,13 @@ pub struct TaskModel {
     // deletion is undoable and a reference silently dropped would not come back. A reader that cannot
     // resolve one says so.
     pub documents: Vec<String>,
+    // The builds this task produced, in the order they were attached — which is also oldest first, since the
+    // moment is stamped as each one arrives.
+    //
+    // The other direction of a document reference, and worth saying out loud because they sit next to each
+    // other on the screen: a document is what the work was done AGAINST, a build is what came OUT of it. This
+    // one is held whole rather than as an id — there is nothing to resolve, the entry is a link and its name.
+    pub gh_actions: Vec<GhActionModel>,
     pub comments: Vec<CommentModel>,
     pub created: DateTimeAsMicroseconds,
     // Moved by a change to the task itself. A comment does NOT move it: the thread is a separate

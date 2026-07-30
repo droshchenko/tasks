@@ -1,11 +1,15 @@
 use task_manager_shared::subtasks::SubtaskResponse;
-use task_manager_shared::tasks::{TaskCommentResponse, TaskLinkResponse, TaskResponse};
+use task_manager_shared::tasks::{
+    TaskCommentResponse, TaskGhActionResponse, TaskLinkResponse, TaskResponse,
+};
 
 use crate::board::{
-    BoardInner, CommentModel, ProjectModel, SubtaskModel, TaskModel, compose_task_handle,
-    parse_task_handle,
+    BoardInner, CommentModel, GhActionModel, ProjectModel, SubtaskModel, TaskModel,
+    compose_task_handle, parse_task_handle,
 };
-use crate::postgres::{TaskCommentJsonModel, TaskDto, TaskSubtaskJsonModel};
+use crate::postgres::{
+    TaskCommentJsonModel, TaskDto, TaskGhActionJsonModel, TaskSubtaskJsonModel,
+};
 
 impl From<&TaskCommentJsonModel> for CommentModel {
     fn from(src: &TaskCommentJsonModel) -> Self {
@@ -25,6 +29,28 @@ impl From<&CommentModel> for TaskCommentJsonModel {
             moment_unix_seconds: src.moment.unix_microseconds / 1_000_000,
             who: src.who.clone(),
             text: src.text.clone(),
+        }
+    }
+}
+
+impl From<&TaskGhActionJsonModel> for GhActionModel {
+    fn from(src: &TaskGhActionJsonModel) -> Self {
+        Self {
+            url: src.url.clone(),
+            title: src.title.clone(),
+            moment: rust_extensions::date_time::DateTimeAsMicroseconds::new(
+                src.moment_unix_seconds * 1_000_000,
+            ),
+        }
+    }
+}
+
+impl From<&GhActionModel> for TaskGhActionJsonModel {
+    fn from(src: &GhActionModel) -> Self {
+        Self {
+            url: src.url.clone(),
+            title: src.title.clone(),
+            moment_unix_seconds: src.moment.unix_microseconds / 1_000_000,
         }
     }
 }
@@ -91,6 +117,15 @@ impl From<&TaskDto> for TaskModel {
                 .collect(),
             // A NULL column is a task written before documents existed, and it reads as referencing none.
             documents: src.documents.clone().unwrap_or_default(),
+            // And a NULL here is a task written before builds were recorded — it reads as having produced
+            // none, which of a task that landed before the column existed is simply true.
+            gh_actions: src
+                .gh_actions
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|itm| itm.into())
+                .collect(),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -120,6 +155,7 @@ impl From<&TaskModel> for TaskDto {
             subtasks: Some(src.subtasks.iter().map(|itm| itm.into()).collect()),
             // Always a real array, for the same reason the checklist is.
             documents: Some(src.documents.clone()),
+            gh_actions: Some(src.gh_actions.iter().map(|itm| itm.into()).collect()),
             comments: src.comments.iter().map(|itm| itm.into()).collect(),
             created: src.created,
             updated: src.updated,
@@ -190,6 +226,17 @@ pub fn task_to_response(
         // read must not do — the browser asks for a document when somebody opens one, and draws the count
         // from this list in the meantime.
         documents: task.documents.clone(),
+        // Whole, unlike the documents above: there is nothing to resolve — the entry is the link and the
+        // name — so the dialog draws it straight out of the board snapshot.
+        gh_actions: task
+            .gh_actions
+            .iter()
+            .map(|itm| TaskGhActionResponse {
+                url: itm.url.clone(),
+                title: itm.title.clone(),
+                moment_unix_seconds: itm.moment.unix_microseconds / 1_000_000,
+            })
+            .collect(),
         comments: task
             .comments
             .iter()

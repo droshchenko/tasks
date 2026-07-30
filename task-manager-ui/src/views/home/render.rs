@@ -1208,6 +1208,7 @@ mod tests {
             blocked: false,
             documents: Vec::new(),
             subtasks: Vec::new(),
+            gh_actions: Vec::new(),
             comments: Vec::new(),
             created_unix_seconds: 0,
             updated_unix_seconds: 0,

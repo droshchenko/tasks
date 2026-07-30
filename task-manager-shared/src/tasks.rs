@@ -21,6 +21,22 @@ pub struct TaskCommentResponse {
     pub text: String,
 }
 
+// One build that came out of this task — a GitHub Actions run, as the card links to it.
+//
+// A bare URL was the other option and is not enough: `https://github.com/org/repo/actions/runs/1842…`
+// drawn on a card tells a reader nothing they can scan, so the entry carries what to call it. `title` is
+// never empty — one is worked out from the URL when the caller gives none.
+//
+// `moment` is when the link was ATTACHED, stamped by the server, not when GitHub ran the build. Nothing in
+// this service talks to GitHub, and the moment the work recorded its build is the fact this side actually
+// knows; a time read off a URL nobody fetched would be a guess dressed as a record.
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct TaskGhActionResponse {
+    pub url: String,
+    pub title: String,
+    pub moment_unix_seconds: i64,
+}
+
 // A task named by another task, and what it is doing.
 //
 // A handle on its own is not enough for a reader looking at a dependency: the question a dependency
@@ -96,6 +112,13 @@ pub struct TaskResponse {
     pub documents: Vec<String>,
     #[serde(default)]
     pub subtasks: Vec<crate::subtasks::SubtaskResponse>,
+    // The builds this work produced, oldest first — see `TaskGhActionResponse`. Empty for most tasks, which
+    // is why the card draws nothing at all rather than an empty heading.
+    //
+    // Carried whole in the board snapshot, unlike a document reference: there is nothing to resolve, the
+    // entry IS the link and its name, so the dialog can draw it without a request.
+    #[serde(default)]
+    pub gh_actions: Vec<TaskGhActionResponse>,
     #[serde(default)]
     pub comments: Vec<TaskCommentResponse>,
     pub created_unix_seconds: i64,
@@ -251,6 +274,7 @@ mod tests {
             blocked: false,
             documents: Vec::new(),
             subtasks: Vec::new(),
+            gh_actions: Vec::new(),
             comments: Vec::new(),
             created_unix_seconds: 0,
             updated_unix_seconds: 0,

@@ -95,6 +95,9 @@ fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> Task
         // themselves are not in memory at all.
         subtasks: Vec::new(),
         documents: Vec::new(),
+        // Nor a build link, for the third time and the same reason: nothing on the board derives anything
+        // from one — it is a record hung on the task, not a fact the board reads.
+        gh_actions: Vec::new(),
         comments: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
         updated: DateTimeAsMicroseconds::new(0),

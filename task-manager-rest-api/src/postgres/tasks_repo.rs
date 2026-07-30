@@ -43,6 +43,21 @@ pub struct TaskSubtaskJsonModel {
     pub done: bool,
 }
 
+// One build that came out of the task, inside the task row's `gh_actions` jsonb.
+//
+// Rides on the row for the same reason the thread and the checklist do: attaching a build link is then one
+// atomic upsert of one row, and the links travel in the board snapshot, so the dialog draws them without a
+// request.
+//
+// `url` is the identity — there is no id here, because the run already has one and it is IN the url.
+// Removing a link names the url, and adding one that is already there does not duplicate it.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TaskGhActionJsonModel {
+    pub url: String,
+    pub title: String,
+    pub moment_unix_seconds: i64,
+}
+
 // One task.
 //
 // The primary key is `(project_id, number)`, and there is deliberately **no** column for the human
@@ -114,6 +129,17 @@ pub struct TaskDto {
     #[sql_type("jsonb")]
     #[json]
     pub documents: Option<Vec<String>>,
+    // The GitHub Actions runs this task produced, oldest first — see `TaskGhActionJsonModel`.
+    //
+    // Written by whoever did the work, never fetched: this service does not talk to GitHub, so what is stored
+    // is what a caller said, and nothing here goes stale because nothing here is a copy of anything.
+    //
+    // NULLABLE for the same reason `subtasks` and `documents` are: the column arrives on a populated table,
+    // where Postgres refuses a NOT NULL addition. `None` reads as no builds, and every write puts a real
+    // array in.
+    #[sql_type("jsonb")]
+    #[json]
+    pub gh_actions: Option<Vec<TaskGhActionJsonModel>>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
     #[sql_type("timestamp")]
