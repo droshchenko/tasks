@@ -725,8 +725,10 @@ fn RenderColumn(
 ) -> Element {
     // The server has already folded an unknown status into `todo`, so a plain comparison is enough here —
     // the leniency lives in one place rather than being re-implemented per client.
-    let in_column: Vec<&TaskResponse> =
+    let mut in_column: Vec<&TaskResponse> =
         tasks.iter().filter(|itm| itm.status == column.id).collect();
+
+    goals_first(&mut in_column);
 
     rsx! {
         div { class: "board-column",
@@ -807,37 +809,14 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
                 });
             },
 
-            div { class: "sticker-top",
-                span { class: "sticker-id", "{task_id_display(&task.id)}" }
-                if let Some(kind) = kind {
-                    span {
-                        class: "sticker-kind",
-                        style: "background: {kind_color.hex()}",
-                        title: "{kind.description}",
-                        // Only when this build actually has the file: a name stored before an icon was
-                        // renamed away draws as no icon rather than as a broken image.
-                        if crate::web::icon_exists(&kind.icon) {
-                            img { class: "sticker-kind-icon", src: "{crate::web::icon_url(&kind.icon)}", alt: "" }
-                        }
-                        "{kind.name}"
-                    }
-                }
-                button {
-                    class: "sticker-view",
-                    title: "View the task",
-                    onclick: move |_| {
-                        crate::dialogs::open(crate::dialogs::DialogState::ViewTask {
-                            found: found.clone(),
-                        });
-                    },
-                    "👁"
-                }
-            }
-
-            // The goal's own band across the top of the card, in the goal's colour: a column of cards then
-            // says which epics the work belongs to before a single title has been read, which is the whole
-            // reason a goal has a colour at all. Id and title both — the title is what a person reads, the
-            // id is what they type back into the search box or into a conversation with an agent.
+            // The card's FIRST child and full width, which is what makes it read as a header of the card
+            // rather than as a chip inside it: a column of coloured bands says how the work divides between
+            // epics before a single title has been read. Id and title both — the title is what a person
+            // reads, the id is what they type back into the search box or to an agent.
+            //
+            // No negative margins. Reaching the card's edges used to be arithmetic against the card's own
+            // padding and its 3px left border, and it came out hanging over the right edge; the padding now
+            // lives on `.sticker-body` and there is nothing to calculate.
             if let Some(goal) = task.goal.as_ref() {
                 div {
                     class: "sticker-goal",
@@ -847,38 +826,90 @@ fn RenderSticker(task: TaskResponse, project: ProjectResponse) -> Element {
                 }
             }
 
-            div { class: "sticker-title", "{title}" }
-
-            // Under the title, because the title is what the card is FOR and who has it is the next question
-            // — and it is the same question on every card, so it belongs in the same place on every card.
-            //
-            // The counters say only HOW MANY. What they count is in the dialog, and a card that listed the ids
-            // it waits on was one of the things that made a column unreadable.
-            div { class: "sticker-bottom",
-                span {
-                    class: if task.assignee.is_some() { "sticker-assignee" } else { "sticker-assignee unassigned" },
-                    "{assignee}"
-                }
-                div { class: "sticker-counters",
-                    if !task.comments.is_empty() {
-                        span { title: "{task.comments.len()} comments", "💬 {task.comments.len()}" }
-                    }
-                    if !task.depends_on.is_empty() {
+            div { class: "sticker-body",
+                div { class: "sticker-top",
+                    span { class: "sticker-id", "{task_id_display(&task.id)}" }
+                    if let Some(kind) = kind {
                         span {
-                            title: "Waiting on {task.depends_on.len()} task(s): {handles(&task.depends_on)}",
-                            "⬇ {task.depends_on.len()}"
+                            class: "sticker-kind",
+                            style: "background: {kind_color.hex()}",
+                            title: "{kind.description}",
+                            // Only when this build actually has the file: a name stored before an icon was
+                            // renamed away draws as no icon rather than as a broken image.
+                            if crate::web::icon_exists(&kind.icon) {
+                                img {
+                                    class: "sticker-kind-icon",
+                                    src: "{crate::web::icon_url(&kind.icon)}",
+                                    alt: "",
+                                }
+                            }
+                            "{kind.name}"
                         }
                     }
-                    if !task.blocks.is_empty() {
-                        span {
-                            title: "{task.blocks.len()} task(s) waiting on this one: {handles(&task.blocks)}",
-                            "⬆ {task.blocks.len()}"
+                    button {
+                        class: "sticker-view",
+                        title: "View the task",
+                        onclick: move |_| {
+                            crate::dialogs::open(crate::dialogs::DialogState::ViewTask {
+                                found: found.clone(),
+                            });
+                        },
+                        "👁"
+                    }
+                }
+
+                div { class: "sticker-title", "{title}" }
+
+                // Under the title, because the title is what the card is FOR and who has it is the next
+                // question — and it is the same question on every card, so it belongs in the same place on
+                // every card.
+                //
+                // The counters say only HOW MANY. What they count is in the dialog, and a card that listed
+                // the ids it waits on was one of the things that made a column unreadable.
+                div { class: "sticker-bottom",
+                    span {
+                        class: if task.assignee.is_some() { "sticker-assignee" } else { "sticker-assignee unassigned" },
+                        "{assignee}"
+                    }
+                    div { class: "sticker-counters",
+                        if !task.comments.is_empty() {
+                            span { title: "{task.comments.len()} comments", "💬 {task.comments.len()}" }
+                        }
+                        if !task.depends_on.is_empty() {
+                            span {
+                                title: "Waiting on {task.depends_on.len()} task(s): {handles(&task.depends_on)}",
+                                "⬇ {task.depends_on.len()}"
+                            }
+                        }
+                        if !task.blocks.is_empty() {
+                            span {
+                                title: "{task.blocks.len()} task(s) waiting on this one: {handles(&task.blocks)}",
+                                "⬆ {task.blocks.len()}"
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/// Put the work that belongs to a goal at the top of a column, grouped by goal.
+///
+/// Two effects, and both are the point. Cards under a goal come first, so a column reads as "this is what
+/// the epics need" and then "and this is loose" — which is what the loose pile actually is. And cards of the
+/// same goal end up adjacent, without which a column of coloured bands is stripes rather than groups.
+///
+/// A STABLE sort, so inside each group the board's own oldest-first order survives. Which goal leads is
+/// whatever the handles compare to; it is arbitrary but it does not change between repaints, and a group
+/// that moved every time the board pushed would be worse than an arbitrary order.
+fn goals_first(tasks: &mut [&TaskResponse]) {
+    tasks.sort_by(|left, right| {
+        left.goal
+            .is_none()
+            .cmp(&right.goal.is_none())
+            .then_with(|| left.goal.cmp(&right.goal))
+    });
 }
 
 /// A list of handles as a tooltip reads them — shown short, like every other handle on the card.
@@ -1164,5 +1195,45 @@ mod tests {
 
         assert!(matches_text(&one, "login"));
         assert!(matches_text(&one, "auth"));
+    }
+
+    /// Goal-bearing cards rise, same-goal cards group, and the board's own order survives inside a group.
+    #[test]
+    fn a_column_puts_goals_first_and_keeps_them_together() {
+        let mut loose_one = task("RMS-000001", "loose", &[], None);
+        let mut under_a = task("RMS-000002", "a", &[], None);
+        let mut loose_two = task("RMS-000003", "loose", &[], None);
+        let mut under_b = task("RMS-000004", "b", &[], None);
+        let mut under_a_again = task("RMS-000005", "a again", &[], None);
+
+        under_a.goal = Some("RMS-G10".to_string());
+        under_b.goal = Some("RMS-G20".to_string());
+        under_a_again.goal = Some("RMS-G10".to_string());
+        loose_one.goal = None;
+        loose_two.goal = None;
+
+        let mut column = vec![
+            &loose_one,
+            &under_a,
+            &loose_two,
+            &under_b,
+            &under_a_again,
+        ];
+
+        goals_first(&mut column);
+
+        let ids: Vec<&str> = column.iter().map(|itm| itm.id.as_str()).collect();
+
+        assert_eq!(
+            ids,
+            vec![
+                "RMS-000002",
+                "RMS-000005",
+                "RMS-000004",
+                "RMS-000001",
+                "RMS-000003",
+            ],
+            "both cards of RMS-G10 first and in board order, then RMS-G20, then the loose pile in board order"
+        );
     }
 }

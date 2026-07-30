@@ -81,8 +81,11 @@
   background: var(--surface);
   border-radius: var(--radius);
   box-shadow: var(--shadow-card);
-  padding: 10px 11px;
+  /* No padding of its own: the goal band has to reach the card's edges, and the padding lives on
+     `.sticker-body` instead. Doing it with negative margins on the band was arithmetic against the card's
+     padding and its left border, and it hung over the right edge. */
   border-left: 3px solid transparent;
+  overflow: hidden;
   /* The card is a double-click target, and a double-click selects a word. Without this, opening a task
      leaves half its title highlighted behind the dialog. Nothing is lost — the text is selectable in the
      dialog, which is where it is read. */
@@ -256,19 +259,22 @@ input[type="text"].board-search {
   opacity: 1;
 }
 
+/* Everything on the card except the goal band. Carries the padding the card used to carry, which is what
+   lets the band above it sit flush against three edges. */
+.sticker-body {
+  padding: 10px 11px;
+}
+
 /* The goal a card belongs to: a band across the top of the card in the goal's own colour. Loud on purpose,
    unlike the rest of a sticker — a column of bands says how the work divides between epics before a single
    title has been read, which is the whole reason a goal has a colour.
 
-   Pulled out to the card's edges with negative margins that mirror `.sticker`'s padding, so it reads as a
-   header of the card rather than as a chip inside it. */
+   The card's first child and full width, with `overflow: hidden` on the card rounding its top corners. */
 .sticker-goal {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: -10px -11px 8px -11px;
-  padding: 3px 11px;
-  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 4px 11px;
   font-size: 11px;
   color: #fff;
   /* White on amber is unreadable; a dark shadow behind the glyphs costs nothing and works on all eight. */
