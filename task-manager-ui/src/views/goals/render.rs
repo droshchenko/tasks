@@ -409,6 +409,7 @@ fn RenderGoal(
     let project_id = project.id.clone();
     let already_loaded = tasks.is_some();
 
+    let for_dialog = goal.clone();
     let swatch_goal = goal.id.clone();
     let picker_project = project.id.clone();
     let picker_goal = goal.id.clone();
@@ -482,9 +483,6 @@ fn RenderGoal(
 
                 div { class: "goal-head-text",
                     div { class: "goal-name", "{goal.name}" }
-                    if !goal.description.trim().is_empty() {
-                        div { class: "goal-description", "{goal.description}" }
-                    }
                 }
 
                 div { class: "goal-meta",
@@ -500,6 +498,22 @@ fn RenderGoal(
                         span { class: "goal-comments", title: "{goal.comments.len()} notes on the thread",
                             "💬 {goal.comments.len()}"
                         }
+                    }
+
+                    // The description and the thread live behind this, not in the head: a head that carried
+                    // the text would either truncate it — which reads as a broken sentence — or make every
+                    // row a different height. `stop_propagation` for the same reason as the swatch: the head
+                    // itself folds the goal, and one click must do one thing.
+                    button {
+                        class: "sticker-view",
+                        title: "Read this goal and its comments",
+                        onclick: move |event| {
+                            event.stop_propagation();
+                            crate::dialogs::open(crate::dialogs::DialogState::ViewGoal {
+                                goal: for_dialog.clone(),
+                            });
+                        },
+                        "👁"
                     }
                 }
             }
@@ -585,7 +599,7 @@ fn RenderBacklog(
 
                 div { class: "goal-head-text",
                     div { class: "goal-name", "Backlog" }
-                    div { class: "goal-description", "Work that is not part of any goal" }
+                    div { class: "goal-note", "not part of any goal" }
                 }
 
                 div { class: "goal-meta",

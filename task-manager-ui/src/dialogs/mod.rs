@@ -3,6 +3,7 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 use task_manager_shared::column_templates::ColumnTemplateResponse;
 use task_manager_shared::kind_templates::KindTemplateResponse;
+use task_manager_shared::goals::GoalResponse;
 use task_manager_shared::projects::ProjectResponse;
 use task_manager_shared::tasks::FindTaskResponse;
 
@@ -16,6 +17,8 @@ mod edit_members;
 pub use edit_members::*;
 mod edit_project;
 pub use edit_project::*;
+mod view_goal;
+pub use view_goal::*;
 mod view_task;
 pub use view_task::*;
 
@@ -58,6 +61,11 @@ pub enum DialogState {
     ViewTask {
         found: FindTaskResponse,
     },
+    /// One goal, in full: its text and its thread. Handed the whole goal rather than an id, because the
+    /// screen that opens it is already holding one — a goal arrives with the board on every push.
+    ViewGoal {
+        goal: GoalResponse,
+    },
 }
 
 /// Mounted once, at the top of the signed-in shell, so a dialog overlays whatever screen opened it.
@@ -78,6 +86,9 @@ pub fn RenderDialog() -> Element {
         },
         DialogState::ViewTask { found } => rsx! {
             ViewTaskDialog { found }
+        },
+        DialogState::ViewGoal { goal } => rsx! {
+            ViewGoalDialog { goal }
         },
         DialogState::EditKindTemplate { template, on_saved } => rsx! {
             EditKindTemplateDialog {

@@ -1223,13 +1223,13 @@ input[type="text"].board-search {
   color: var(--text);
 }
 
-.goal-description {
+/* The Backlog group's one-line label. There is no `.goal-description` any more: a goal's text is behind the
+   eye, because a head that carried it would either truncate a sentence or give every row a different
+   height. */
+.goal-note {
   font-size: 12px;
-  color: var(--text-muted);
-  /* One line: the whole description is in the goal, not in a list of goals. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-style: italic;
 }
 
 .goal-meta {
