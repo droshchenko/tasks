@@ -59,6 +59,10 @@ web-sys = { version = "*", features = [
     # `HtmlDocument` rather than `Document` because `cookie()` lives on the html-specific interface.
     "Document",
     "HtmlDocument",
+    # Copying a link to a task off its card. `Navigator` only to reach `navigator.clipboard`, which is where
+    # `writeText` lives.
+    "Navigator",
+    "Clipboard",
 ] }
 js-sys = { version = "*" }
 # `JsValue::from_str` for the console helper, and the state argument of `History::replace_state_with_url`.

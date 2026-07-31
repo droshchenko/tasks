@@ -736,8 +736,10 @@ than it would in a normal admin panel: every change originates outside the UI, s
 would simply be lying.
 
 Sticker text renders as Markdown (the `markdown` crate, which escapes raw HTML rather than passing
-it through). A sticker links to itself as `?task=RMS-42`; the prefix is globally unique, so the
-project is not part of the link. An assignee email with no matching user row is shown as the raw
+it through). A sticker links to itself as `?search=RMS-42` — the one button on a card copies that link, and
+the board follows a handle found in the URL at mount to the task's own project and opens it. The link is the
+search box written down, which is why there is no second parameter to keep working; the prefix is globally
+unique, so the project is not part of it. An assignee email with no matching user row is shown as the raw
 email.
 
 ## Running it
@@ -774,9 +776,11 @@ Locally: `dx serve` in `task-manager-ui`, and `cargo run` in `task-manager-rest-
 
 ## Open
 
-- The **share link** shape assumes the board is at the root of the public host, which it is:
-  `https://task-manager.jetdev.eu/?task=RMS-42`.
+- The **share link** is built against the page's own origin, so it assumes the board is at the root of the
+  public host — which it is: `https://task-manager.jetdev.eu/?search=RMS-42`.
+- **Copying it needs a secure context.** `navigator.clipboard` exists on https and on localhost, which is
+  both of the ways the board is reached; served over plain http the button shows the link in a dialog to be
+  copied by hand instead.
 - **No WebSocket reconnect.** A dropped socket leaves Home static until the page is reloaded. The dot in
   the header goes grey so it is visible rather than silent, but a laptop waking from sleep currently needs
   a refresh.
-- The **share link** (`?task=RMS-42`) is described here and not implemented in the UI yet.

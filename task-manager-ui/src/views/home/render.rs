@@ -969,9 +969,12 @@ fn RenderColumn(
 
 /// One card, and deliberately almost nothing: its handle and its title.
 ///
-/// The whole task — the text, the thread, who has it, what it waits on — is behind the eye or a double-click
-/// on the card, and only there. A column of full cards is a wall of Markdown you have to read to scan, which
-/// is the opposite of what a board is for; a column of titles is a list you can take in at a glance.
+/// The whole task — the text, the thread, who has it, what it waits on — is behind a double-click on the
+/// card, and only there. A column of full cards is a wall of Markdown you have to read to scan, which is the
+/// opposite of what a board is for; a column of titles is a list you can take in at a glance.
+///
+/// The one button on a card copies a link to the task, which is the thing the card cannot do for itself: the
+/// task is a double-click away for whoever is looking at the board, and a paste away for whoever is not.
 #[component]
 fn RenderSticker(
     task: TaskResponse,
@@ -1019,8 +1022,17 @@ fn RenderSticker(
     // Built here rather than fetched: this side already holds the whole task and the project it is on, so
     // the card opens instantly and without a round trip. `archived` is false by definition — a card that is
     // drawn is on the board.
-    let found = crate::api::find_task_locally(&task, &project);
-    let found_on_the_card = found.clone();
+    let found_on_the_card = crate::api::find_task_locally(&task, &project);
+
+    // Composed at render, not on the click: the handler is `move` and cannot borrow the task, and a link is
+    // a `format!` of two strings — cheaper to build than to reason about.
+    let link = crate::web::task_link(&task.id);
+    let task_for_message = task.id.clone();
+
+    // Per card, because "copied" is a fact about the button that was clicked, not about the board. It is
+    // render state and lives nowhere else — a receipt has nothing to say to the server or to the next visit.
+    let mut copied = use_signal(|| false);
+    let just_copied = *copied.read();
 
     let dragged = task.id.clone();
     let being_dragged = cs.read().dragging.as_deref() == Some(task.id.as_str());
@@ -1051,9 +1063,10 @@ fn RenderSticker(
             // Fires wherever the drag ended, including nowhere — without it, a card abandoned outside the
             // board would stay dimmed and every column would keep offering to accept it.
             ondragend: move |_| cs.write().drag_ended(),
-            // The whole card, not only the eye. Double rather than single, because a single click on a card
-            // is how you select one and this board has no selection — a stray click must not throw a dialog
-            // in front of somebody who was only scrolling.
+            // The whole card, and now the only way in — the eye that used to open it is a copy-link button.
+            // Double rather than single, because a single click on a card is how you select one and this
+            // board has no selection: a stray click must not throw a dialog in front of somebody who was
+            // only scrolling.
             ondoubleclick: move |_| {
                 crate::dialogs::open(crate::dialogs::DialogState::ViewTask {
                     found: found_on_the_card.clone(),
@@ -1072,6 +1085,11 @@ fn RenderSticker(
                 div {
                     class: "sticker-goal",
                     style: "background: {goal_hex}",
+                    // The band is one line wide and the name is cut off with an ellipsis when it does not
+                    // fit, which on a narrow column is most of the time — so hovering the band says the
+                    // whole thing. The handle is in the tooltip too: it is what somebody types back, and a
+                    // reader who is hovering to find out which epic this is wants both halves of the answer.
+                    title: "{goal} · {goal_title}",
                     span { class: "sticker-goal-id", "{goal}" }
                     span { class: "sticker-goal-name", "{goal_title}" }
                 }
@@ -1108,15 +1126,43 @@ fn RenderSticker(
                             "{kind.name}"
                         }
                     }
+                    // Copying the link, not opening the task: a double-click on the card does the opening,
+                    // and it always did — the eye that used to sit here was a second way to do the one
+                    // thing the card already does. Handing a task to somebody else had no way at all.
                     button {
-                        class: "sticker-view",
-                        title: "View the task",
-                        onclick: move |_| {
-                            crate::dialogs::open(crate::dialogs::DialogState::ViewTask {
-                                found: found.clone(),
-                            });
+                        class: if just_copied { "sticker-link copied" } else { "sticker-link" },
+                        title: "Copy a link to {task.id}",
+                        onclick: move |event| {
+                            // The card is the drag handle and the card opens the task; neither should
+                            // happen because somebody reached for this button.
+                            event.stop_propagation();
+
+                            if crate::web::copy_to_clipboard(&link) {
+                                copied.set(true);
+
+                                // Back to the chain link on its own. The tick is the only answer there is
+                                // — nothing else on screen changes when a link goes to the clipboard — and
+                                // one that stayed would read as a state of the task rather than as a
+                                // receipt for a click.
+                                spawn(async move {
+                                    dioxus_utils::js::sleep(std::time::Duration::from_millis(1_200))
+                                        .await;
+                                    copied.set(false);
+                                });
+                            } else {
+                                // No clipboard means the page is not in a secure context. Showing the link
+                                // is not a consolation prize: it is still copyable, by hand, which is what
+                                // the reader wanted.
+                                crate::dialogs::open(crate::dialogs::DialogState::Message {
+                                    title: format!("Link to {task_for_message}"),
+                                    text: link.clone(),
+                                });
+                            }
                         },
-                        "👁"
+                        // A second click on a copy button is somebody making sure, and without this it
+                        // would reach the card as a double-click and throw the task dialog at them.
+                        ondoubleclick: move |event| event.stop_propagation(),
+                        if just_copied { "✓" } else { "🔗" }
                     }
                 }
 

@@ -116,8 +116,10 @@
   color: var(--text-faint);
 }
 
-/* The eye. Pushed to the far edge of the card's top row with `auto` rather than by ordering, so it stays
-   there whatever else the row ends up holding. */
+/* Two buttons of the same kind, in the same place, drawn the same way: the copy-link on a card's top row and
+   the eye in a goal's head. Pushed to the far edge with `auto` rather than by ordering, so either stays there
+   whatever else the row ends up holding. */
+.sticker-link,
 .sticker-view {
   margin-left: auto;
   border: none;
@@ -126,13 +128,27 @@
   padding: 0 2px;
   font-size: 13px;
   line-height: 1;
-  /* Dimmed until wanted: one per card down a full column is a row of eyes staring back otherwise. */
+  /* Dimmed until wanted: one per card down a full column is a row of icons competing with the titles. */
   opacity: 0.45;
 }
 
-.sticker:hover .sticker-view,
+/* Held to a width, so swapping the chain link for the tick does not shuffle the row it sits in. */
+.sticker-link {
+  min-width: 18px;
+  text-align: center;
+}
+
+.sticker:hover .sticker-link,
+.sticker-link:focus-visible,
 .sticker-view:focus-visible {
   opacity: 1;
+}
+
+/* Full strength whether or not the pointer is still on the card: the tick IS the answer to the click, so it
+   cannot be the one state that needs hovering to be seen. */
+.sticker-link.copied {
+  opacity: 1;
+  color: #1a7f37;
 }
 
 /* The whole face of the card. Clamped to three lines rather than left to grow: a card is a handle for a

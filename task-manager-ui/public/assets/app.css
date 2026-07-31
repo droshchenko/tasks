@@ -572,8 +572,10 @@ input[readonly] {
   color: var(--text-faint);
 }
 
-/* The eye. Pushed to the far edge of the card's top row with `auto` rather than by ordering, so it stays
-   there whatever else the row ends up holding. */
+/* Two buttons of the same kind, in the same place, drawn the same way: the copy-link on a card's top row and
+   the eye in a goal's head. Pushed to the far edge with `auto` rather than by ordering, so either stays there
+   whatever else the row ends up holding. */
+.sticker-link,
 .sticker-view {
   margin-left: auto;
   border: none;
@@ -582,13 +584,27 @@ input[readonly] {
   padding: 0 2px;
   font-size: 13px;
   line-height: 1;
-  /* Dimmed until wanted: one per card down a full column is a row of eyes staring back otherwise. */
+  /* Dimmed until wanted: one per card down a full column is a row of icons competing with the titles. */
   opacity: 0.45;
 }
 
-.sticker:hover .sticker-view,
+/* Held to a width, so swapping the chain link for the tick does not shuffle the row it sits in. */
+.sticker-link {
+  min-width: 18px;
+  text-align: center;
+}
+
+.sticker:hover .sticker-link,
+.sticker-link:focus-visible,
 .sticker-view:focus-visible {
   opacity: 1;
+}
+
+/* Full strength whether or not the pointer is still on the card: the tick IS the answer to the click, so it
+   cannot be the one state that needs hovering to be seen. */
+.sticker-link.copied {
+  opacity: 1;
+  color: #1a7f37;
 }
 
 /* The whole face of the card. Clamped to three lines rather than left to grow: a card is a handle for a
@@ -1273,6 +1289,49 @@ button.task-view-check-row:hover {
 .task-view-link-status.done {
   color: #1a7f37;
   font-weight: 600;
+}
+
+/* What came out of the work: one build per line, drawn like the document references above it, because they
+   are the same kind of thing pointing in opposite directions. */
+.gh-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* An anchor rather than a button — it leaves the product, so it has to behave like a link does: middle-click,
+   copy address, open in a new tab. The name and the date sit on one row with the date pushed to the end. */
+.gh-action {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.gh-action:hover {
+  background: var(--surface-2);
+}
+
+/* Truncated rather than wrapped, so the rows stay one line each in a 200px column. */
+.gh-action-title {
+  flex: 1 1 auto;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* When, quietly. It is the thing you read after you have found the build you meant, never before. */
+.gh-action-moment {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The lower half. The header stays put and only the thread under it moves, so which list you are scrolling
