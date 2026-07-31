@@ -163,6 +163,10 @@ pub fn RenderDocuments(selected: String) -> Element {
                         move |_| {
                             crate::dialogs::open(crate::dialogs::DialogState::UploadDocument {
                                 project: project.clone(),
+                                // Where the reader is in the tree, read at the moment the button is pressed
+                                // rather than captured with the closure — the folder they were last in is the
+                                // folder they mean, and it can change between renders of this button.
+                                initial_folder: cs.read().current_folder().to_string(),
                                 folders: folders.clone(),
                                 // The index is read again rather than patched: the upload may have written a
                                 // NEW VERSION of a document already there, which changes a size and a version

@@ -97,7 +97,18 @@ pub fn get_content<'s>(
             cs.write().begin_content_load(&id);
 
             match crate::api::get_document(&project, &id).await {
-                Ok(found) => cs.write().content.set_loaded(found),
+                Ok(found) => {
+                    let mut write = cs.write();
+
+                    // Opening a document is how a reader says where they are — and this is the one place that
+                    // knows the PATH, since the tree row navigates by id and a link carries nothing else. It
+                    // is what an upload started from here is offered as its folder.
+                    if let Some(document) = found.document.as_ref() {
+                        write.enter_folder_of(&document.path);
+                    }
+
+                    write.content.set_loaded(found);
+                }
                 Err(err) => cs.write().content.set_error(err.message),
             }
         });

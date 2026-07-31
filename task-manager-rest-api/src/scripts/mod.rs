@@ -1,3 +1,4 @@
+mod archives;
 mod column_templates;
 mod documents;
 mod gh_actions;
@@ -11,6 +12,7 @@ mod subtasks;
 mod tasks;
 mod users;
 
+pub use archives::*;
 pub use column_templates::*;
 pub use documents::*;
 pub use gh_actions::*;

@@ -27,6 +27,13 @@ pub struct DocumentsState {
     pub index: DataState<Vec<DocumentIndexEntryResponse>>,
     /// Which folders are drawn open, by full path. Mirrored into storage on every change.
     expanded: HashSet<String>,
+    /// The folder the reader is WORKING IN — the last one they clicked, or the one holding the document they
+    /// opened. Empty is the top level, which is also where somebody who has clicked nothing is.
+    ///
+    /// It exists for exactly one thing: an upload starts here rather than at the root. Nothing is drawn from
+    /// it — a folder is not selectable, it opens and closes — so it is a memory of a gesture rather than a
+    /// second selection competing with the one in the url.
+    current_folder: String,
     /// The document being read. Only ever a text one — a file's bytes are fetched by the browser itself from
     /// the raw endpoint, and never pass through here.
     pub content: DataState<FindDocumentResponse>,
@@ -44,16 +51,35 @@ impl DocumentsState {
         self.expanded.contains(path)
     }
 
-    /// Open or close one folder.
+    /// Open or close one folder, and remember that this is where the reader is.
     ///
     /// Unlike the file browser this is modelled on, closing drops nothing: the whole index arrived in one
     /// response, so re-opening a folder costs no request and there is nothing to re-fetch.
+    ///
+    /// Closing marks the folder as current just as opening does — clicking a folder at all is the gesture
+    /// that says "this one", and a reader who folds a tree back up to see it whole has not left it.
     pub fn toggle(&mut self, path: &str) {
         if !self.expanded.remove(path) {
             self.expanded.insert(path.to_string());
         }
 
+        self.current_folder = path.to_string();
         self.persist_expanded();
+    }
+
+    /// Where an upload should start. See [`Self::current_folder`].
+    pub fn current_folder(&self) -> &str {
+        &self.current_folder
+    }
+
+    /// Adopt the folder of a document that was opened — including one arrived at by a link, which is the case
+    /// no click can cover.
+    pub fn enter_folder_of(&mut self, document_path: &str) {
+        self.current_folder = match document_path.rsplit_once('/') {
+            Some((folder, _)) => folder.to_string(),
+            // A document at the top level. Not "leave it alone": the reader IS at the top level.
+            None => String::new(),
+        };
     }
 
     /// Switch projects, dropping everything that belonged to the old one — a path from one project names
@@ -66,6 +92,8 @@ impl DocumentsState {
 
         self.expanded = crate::web::storage::get_expanded_folders(&prefix);
         self.selected_project = prefix;
+        // A folder from the old board names nothing on the new one.
+        self.current_folder = String::new();
         self.index.reset();
         self.content.reset();
         self.content_id = None;
@@ -142,6 +170,32 @@ mod tests {
             ancestors_of("docs/design/system.md"),
             vec!["docs", "docs/design"]
         );
+    }
+
+    /// Where an upload starts. Clicking a folder is the gesture that says "this one", and folding it back up
+    /// is not leaving it.
+    #[test]
+    fn clicking_a_folder_is_being_in_it() {
+        let mut state = DocumentsState::default();
+
+        state.toggle("docs/design");
+        assert_eq!(state.current_folder(), "docs/design");
+
+        state.toggle("docs/design");
+        assert_eq!(state.current_folder(), "docs/design");
+    }
+
+    /// The other half: a document that was opened — by a click or by a link — puts the reader in ITS folder.
+    #[test]
+    fn opening_a_document_is_being_in_its_folder() {
+        let mut state = DocumentsState::default();
+
+        state.enter_folder_of("docs/design/system.md");
+        assert_eq!(state.current_folder(), "docs/design");
+
+        // A document at the top level says the top level, rather than leaving the previous folder standing.
+        state.enter_folder_of("readme.md");
+        assert_eq!(state.current_folder(), "");
     }
 
     #[test]

@@ -129,6 +129,73 @@ pub struct UploadDocumentResponse {
     pub path: String,
 }
 
+// Upload a ZIP and unpack it, one document per file inside.
+//
+// The sibling of `UploadDocumentInputModel`, and it exists because the one-file-at-a-time dialog is the wrong
+// shape for what people actually have: a folder of documents. Zipping it and dropping the archive in is one
+// gesture; forty uploads is not.
+//
+// **The archive is never stored.** It is a transport, not a document — what lands is the files inside it, at
+// paths built from the folder plus each entry's own path, so the tree inside the zip becomes the tree in the
+// project. Which is also why there is no `path` here and a `folder` instead: the caller says WHERE, and the
+// archive says what each thing is called.
+#[derive(MyHttpInput)]
+pub struct UploadArchiveInputModel {
+    #[http_body(name: "project", description: "Which project to put it on, by prefix")]
+    pub project: String,
+    #[http_body(
+        name: "folder",
+        description: "Which folder to unpack into — `docs/design`, or omitted/empty for the top level. Every path inside the archive is hung under it, so a zip holding `a/b.md` unpacked into `docs` writes `docs/a/b.md`"
+    )]
+    pub folder: Option<String>,
+    #[http_body(name: "contentBase64", description: "The zip itself, base64-encoded")]
+    pub content_base64: String,
+}
+
+// What came out of an archive: what was written, and what was not.
+//
+// The skips are a FIRST-CLASS half of this answer rather than an error. A zip out of a real folder carries
+// things that are not documents — `__MACOSX`, `.DS_Store`, empty files, something over the size limit — and
+// refusing the whole upload because of one of them would be useless. So the entries that could be written are
+// written, and the rest are reported with the reason, one line each.
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct UploadArchiveResponse {
+    pub documents: Vec<UploadDocumentResponse>,
+    pub skipped: Vec<SkippedArchiveEntryResponse>,
+}
+
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct SkippedArchiveEntryResponse {
+    // The entry's name AS IT IS INSIDE THE ARCHIVE, not the path it would have been written to — the path it
+    // would have had is exactly what does not exist.
+    pub name: String,
+    pub reason: String,
+}
+
+/// Whether a picked file is a ZIP — the thing to unpack rather than to store.
+///
+/// The name decides, and the browser's content type is only a fallback: a zip is `application/zip` in Chrome,
+/// `application/x-zip-compressed` in others and nothing at all in a few, while `.zip` on the end of a name is
+/// the same everywhere. Here in `shared` because both sides ask — the dialog to change what it offers, the
+/// server to refuse an archive that is not one.
+pub fn is_zip_upload(file_name: &str, content_type: Option<&str>) -> bool {
+    if document_file_name(file_name)
+        .to_lowercase()
+        .ends_with(".zip")
+    {
+        return true;
+    }
+
+    let Some(content_type) = content_type else {
+        return false;
+    };
+
+    matches!(
+        content_type.trim().to_lowercase().as_str(),
+        "application/zip" | "application/x-zip-compressed" | "multipart/x-zip"
+    )
+}
+
 #[derive(MyHttpInput)]
 pub struct GetDocumentInputModel {
     #[http_body(name: "project", description: "Which project the document belongs to, by prefix")]
@@ -598,6 +665,24 @@ mod tests {
         assert!(!is_html_content_type("text/plain"));
         // Not a prefix match on `text/htm`: a type has to BE html to be treated as html.
         assert!(!is_html_content_type("text/htmlish"));
+    }
+
+    /// The name is what decides, because the content type a browser reports for a zip is three different
+    /// strings depending on which browser it is — and sometimes nothing at all.
+    #[test]
+    fn a_zip_is_recognised_by_its_name_first() {
+        assert!(is_zip_upload("docs.zip", None));
+        assert!(is_zip_upload("docs.ZIP", None));
+        assert!(is_zip_upload("a/b/docs.zip", Some("application/octet-stream")));
+
+        // No name to go on: the reported type is the fallback.
+        assert!(is_zip_upload("archive", Some("application/zip")));
+        assert!(is_zip_upload("archive", Some("application/x-zip-compressed")));
+
+        assert!(!is_zip_upload("notes.md", Some("text/markdown")));
+        assert!(!is_zip_upload("zipped", None));
+        // `.zip` has to be the extension, not a piece of the name.
+        assert!(!is_zip_upload("docs.zip.md", None));
     }
 
     #[test]

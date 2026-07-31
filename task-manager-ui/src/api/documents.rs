@@ -1,7 +1,8 @@
 use flurl::HttpVerb;
 use task_manager_shared::documents::{
     DocumentsResponse, FindDocumentResponse, GetDocumentInputModel, GetDocumentsInputModel,
-    UploadDocumentInputModel, UploadDocumentResponse,
+    UploadArchiveInputModel, UploadArchiveResponse, UploadDocumentInputModel,
+    UploadDocumentResponse,
 };
 
 use crate::models::RequestError;
@@ -62,4 +63,36 @@ pub async fn upload_document(
     };
 
     handle_http_response(authed("/api/documents/v1/upload", HttpVerb::Post, request).await).await
+}
+
+/// Upload a ZIP and have it unpacked — one document per file inside it.
+///
+/// The same write as [`upload_document`], done once per entry on the server rather than once per request from
+/// here. Unpacking in the browser was the other option and is the wrong one: it would put a zip decoder in the
+/// wasm bundle every reader downloads, and turn one upload into forty requests that can half-fail with nothing
+/// to show for it.
+///
+/// The archive itself is never stored — it is a transport. What comes back is what landed, plus the entries
+/// that did not and why.
+pub async fn upload_archive(
+    project: &str,
+    folder: &str,
+    bytes: &[u8],
+) -> Result<UploadArchiveResponse, RequestError> {
+    use rust_extensions::base64::IntoBase64;
+
+    let folder = folder.trim();
+
+    let request = UploadArchiveInputModel {
+        project: project.to_string(),
+        folder: if folder.is_empty() {
+            None
+        } else {
+            Some(folder.to_string())
+        },
+        content_base64: bytes.into_base64(),
+    };
+
+    handle_http_response(authed("/api/documents/v1/upload-zip", HttpVerb::Post, request).await)
+        .await
 }

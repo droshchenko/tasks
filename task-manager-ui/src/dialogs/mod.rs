@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 use task_manager_shared::column_templates::ColumnTemplateResponse;
+use task_manager_shared::documents::UploadArchiveResponse;
 use task_manager_shared::kind_templates::KindTemplateResponse;
 use task_manager_shared::goals::GoalResponse;
 use task_manager_shared::projects::ProjectResponse;
@@ -76,8 +77,13 @@ pub enum DialogState {
     /// Upload a file into a project's documents — the one dialog here that writes anything but a colour. It
     /// is handed the folders that already exist so it can offer them; creating one is typing a path, because
     /// a folder is not a thing that exists until a document is in it.
+    ///
+    /// `initial_folder` is where the reader currently is in the tree, so an upload starts there instead of at
+    /// the root — the folder they were looking at is overwhelmingly the folder they mean, and it stays fully
+    /// editable.
     UploadDocument {
         project: String,
+        initial_folder: String,
         folders: Vec<String>,
         on_uploaded: EventHandler<()>,
     },
@@ -126,28 +132,51 @@ pub fn RenderDialog() -> Element {
         },
         DialogState::UploadDocument {
             project,
+            initial_folder,
             folders,
             on_uploaded,
         } => rsx! {
             UploadDocumentDialog {
                 project,
+                initial_folder,
                 folders,
                 on_submit: move |submit: UploadSubmit| {
                     begin_submit();
                     spawn(async move {
-                        match crate::api::upload_document(
-                                &submit.project,
-                                &submit.path,
-                                &submit.bytes,
-                                submit.content_type.clone(),
-                            )
-                            .await
-                        {
-                            Ok(_) => {
-                                on_uploaded.call(());
-                                close();
+                        match submit {
+                            UploadSubmit::Document { project, path, bytes, content_type } => {
+                                match crate::api::upload_document(&project, &path, &bytes, content_type)
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        on_uploaded.call(());
+                                        close();
+                                    }
+                                    Err(err) => submit_failed(err.message),
+                                }
                             }
-                            Err(err) => submit_failed(err.message),
+                            UploadSubmit::Archive { project, folder, bytes } => {
+                                match crate::api::upload_archive(&project, &folder, &bytes).await {
+                                    Ok(response) => {
+                                        on_uploaded.call(());
+
+                                        // An archive can half-succeed — a `.DS_Store`, an entry over the size
+                                        // limit — and a dialog that just closed would say every file arrived.
+                                        // So the skips replace it with a report; a clean unpack closes as any
+                                        // other save does.
+                                        match archive_report(&response) {
+                                            Some(text) => {
+                                                open(DialogState::Message {
+                                                    title: "Unpacked".to_string(),
+                                                    text,
+                                                });
+                                            }
+                                            None => close(),
+                                        }
+                                    }
+                                    Err(err) => submit_failed(err.message),
+                                }
+                            }
                         }
                     });
                 },
@@ -222,6 +251,43 @@ pub fn RenderDialog() -> Element {
                 },
             }
         },
+    }
+}
+
+/// What to tell the reader after an archive was unpacked, or `None` when everything in it landed.
+///
+/// **Silence on a clean unpack, a sentence otherwise.** An upload that half-worked is the one outcome this
+/// surface could get wrong without anybody noticing: the tree refreshes either way, and a file that was never
+/// written looks exactly like a file nobody put in the zip. So a skip is said out loud, with the reason the
+/// server gave, and named by what the entry was called INSIDE the archive — the path it would have had is
+/// precisely what does not exist.
+///
+/// One paragraph rather than lines: the dialog that shows it renders text as text, and a newline there is a
+/// space.
+fn archive_report(response: &UploadArchiveResponse) -> Option<String> {
+    if response.skipped.is_empty() {
+        return None;
+    }
+
+    let skipped: Vec<String> = response
+        .skipped
+        .iter()
+        .map(|itm| format!("{} — {}", itm.name, itm.reason))
+        .collect();
+
+    Some(format!(
+        "{} written. {} skipped: {}.",
+        count_of(response.documents.len(), "document"),
+        skipped.len(),
+        skipped.join("; ")
+    ))
+}
+
+fn count_of(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
     }
 }
 

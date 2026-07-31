@@ -55,6 +55,11 @@ prost = "*"
 # The nonce inside a login `state`, so two sign-ins started in the same second differ.
 uuid = { version = "*", features = ["v4"] }
 
+# Unpacking an uploaded zip into one document per file. `deflate` and nothing else: those are the two
+# methods a zip made by Finder, Explorer or `zip` uses (stored and deflated), and the default feature set
+# drags in bzip2, lzma, zstd and aes for archives nobody uploads here.
+zip = { version = "*", default-features = false, features = ["deflate"] }
+
 tokio = { version = "*", features = ["full"] }
 async-trait = "*"
 serde = { version = "*", features = ["derive"] }
