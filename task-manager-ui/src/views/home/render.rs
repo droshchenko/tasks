@@ -718,24 +718,6 @@ fn RenderHeader(
                         }
                     }
                 }
-                // Between the type and the assignee, because it is the same kind of question — which slice of
-                // this board — and because a goal is the frame the other two are read inside.
-                select {
-                    onchange: move |event| cs.write().goal_filter = event.value(),
-                    option { value: "", selected: goal_wanted.is_empty(), "Any goal" }
-                    option {
-                        value: "{NO_GOAL}",
-                        selected: goal_wanted == NO_GOAL,
-                        "No goal"
-                    }
-                    for goal in goals.iter() {
-                        option {
-                            value: "{goal.0}",
-                            selected: goal.0 == goal_wanted,
-                            "{goal.1}"
-                        }
-                    }
-                }
                 select {
                     onchange: move |event| cs.write().assignee_filter = event.value(),
                     option { value: "", selected: assignee_wanted.is_empty(), "Anyone" }
@@ -749,6 +731,25 @@ fn RenderHeader(
                             value: "{who.0}",
                             selected: who.0 == assignee_wanted,
                             "{who.1}"
+                        }
+                    }
+                }
+                // Last of the four, after the assignee. The three before it are one word each and hold their
+                // width; a goal is a sentence somebody wrote, so this is the box that grows — and a box that
+                // grows must not be able to shove the ones after it around.
+                select {
+                    onchange: move |event| cs.write().goal_filter = event.value(),
+                    option { value: "", selected: goal_wanted.is_empty(), "Any goal" }
+                    option {
+                        value: "{NO_GOAL}",
+                        selected: goal_wanted == NO_GOAL,
+                        "No goal"
+                    }
+                    for goal in goals.iter() {
+                        option {
+                            value: "{goal.0}",
+                            selected: goal.0 == goal_wanted,
+                            "{goal.1}"
                         }
                     }
                 }
@@ -1098,17 +1099,6 @@ fn RenderSticker(
             div { class: "sticker-body",
                 div { class: "sticker-top",
                     span { class: "sticker-id", "{task.id}" }
-                    // Only when somebody actually ranked it. Normal is what most work is, so a badge on every
-                    // card would be a badge nobody reads — and the position in the column already says as
-                    // much as the badge does. This is here to answer "why is that at the top".
-                    if priority.is_worth_showing() {
-                        span {
-                            class: "sticker-priority",
-                            style: "background: {priority.hex()}",
-                            title: "Priority: {priority.title()}",
-                            "{priority.title()}"
-                        }
-                    }
                     if let Some(kind) = kind {
                         span {
                             class: "sticker-kind",
@@ -1172,6 +1162,10 @@ fn RenderSticker(
                 // question — and it is the same question on every card, so it belongs in the same place on
                 // every card.
                 //
+                // Who has it on the left, how it is ranked on the far right, the counters between. Everything
+                // here is a fact ABOUT the task rather than part of it, which is why they share a row, and
+                // the two ends are the two questions asked most: who, and how urgent.
+                //
                 // The counters say only HOW MANY. What they count is in the dialog, and a card that listed
                 // the ids it waits on was one of the things that made a column unreadable.
                 div { class: "sticker-bottom",
@@ -1194,6 +1188,23 @@ fn RenderSticker(
                                 title: "{task.blocks.len()} task(s) waiting on this one: {handles(&task.blocks)}",
                                 "⬆ {task.blocks.len()}"
                             }
+                        }
+                    }
+                    // Last, so it sits against the card's right edge whether or not there are counters to
+                    // its left — a badge that moved with the number of comments would be a badge you have
+                    // to look for.
+                    //
+                    // Only when somebody actually ranked it. Normal is what most work is, so a badge on
+                    // every card would be a badge nobody reads, and the position in the column already says
+                    // as much: this is here to answer "why is THAT at the top". It used to be in the top
+                    // row, where it fought the type chip and the handle for a line that has no room for
+                    // three things.
+                    if priority.is_worth_showing() {
+                        span {
+                            class: "sticker-priority",
+                            style: "background: {priority.hex()}",
+                            title: "Priority: {priority.title()}",
+                            "{priority.title()}"
                         }
                     }
                 }

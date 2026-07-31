@@ -676,6 +676,8 @@ input[readonly] {
   font-weight: 400;
 }
 
+/* The auto margin eats the free space in the bottom row, which is what holds the assignee at the left edge
+   and everything after this — the counters, then the priority badge — against the right one. */
 .sticker-counters {
   margin-left: auto;
   display: flex;
@@ -699,7 +701,8 @@ input[readonly] {
 
    Drawn only for a priority somebody chose: `Normal` has no badge, because the card's position in the column
    already says it and a tag repeated on every card is a tag nobody reads. `white-space: nowrap` because
-   "Super High" wrapping mid-badge is how a card grows a line for two words. */
+   "Super High" wrapping mid-badge is how a card grows a line for two words, and `flex-shrink: 0` because on a
+   card it now shares a row with an assignee that can be any length — the name gives way, not the badge. */
 .sticker-priority {
   font-size: 11px;
   font-weight: 600;
@@ -709,6 +712,7 @@ input[readonly] {
   border-radius: 3px;
   padding: 1px 6px;
   white-space: nowrap;
+  flex-shrink: 0;
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
 }
 
