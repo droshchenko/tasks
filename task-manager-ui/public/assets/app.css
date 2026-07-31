@@ -1098,8 +1098,13 @@ input[type="text"].board-search {
 .task-view-top {
   display: grid;
   /* `minmax(0, 1fr)` and not `1fr`: a grid item's automatic minimum is its content, so one long word in the
-     text would push the attribute column off the dialog. */
-  grid-template-columns: minmax(0, 1fr) 200px;
+     text would push the attribute column off the dialog.
+
+     The attributes take a SHARE rather than 200px. The dialog is 95vw, so its width is the window's — and a
+     column fixed in pixels was a fifth of a laptop and a tenth of a desktop, which is why a build's name was
+     clipped to `dashboards-re…` on the screen with the most room to spare. `minmax(0, …)` on this one too,
+     for the same reason as the first: a name with no space in it must not be able to widen the track. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 20%);
   gap: 16px;
   min-height: 0;
 }
