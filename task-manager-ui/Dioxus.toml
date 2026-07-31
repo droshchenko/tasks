@@ -12,7 +12,10 @@ index_on_404 = true
 
 [web.resource]
 style = ["/assets/app.css"]
-script = []
+# The mermaid bootstrap — a kilobyte that watches for `<pre class="mermaid">` and fetches the 3.5Mb library
+# only when one appears. Loading it here rather than the library itself is the whole point: most sessions
+# never open a diagram.
+script = ["/assets/mermaid-boot.js"]
 
 [web.resource.dev]
 script = []

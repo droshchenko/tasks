@@ -145,3 +145,23 @@
 .md {
   overflow-x: auto;
 }
+
+/* A mermaid diagram: the fence's source until the script draws it, an SVG after.
+
+   It is a `<pre>` because that is what a fence renders as and what mermaid expects to find — but none of the
+   code-block chrome belongs on it. Before it is drawn a reader sees the diagram's source, which is the
+   fallback when the library cannot load, and is what a fence looked like before any of this existed. */
+.md pre.mermaid {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: center;
+  overflow-x: auto;
+}
+
+/* Drawn at the size mermaid decided, down to the width of the pane it is in — a diagram wider than the
+   viewer scrolls with the block rather than stretching the layout. */
+.md pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
