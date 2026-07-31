@@ -1095,6 +1095,36 @@ input[type="text"].board-search {
   gap: 14px;
 }
 
+/* A goal adds a third row above the other two, sized to the band rather than to a share — and ONLY when there
+   is one. A task with no goal has two children and keeps the two-row split it always had; without `:has` the
+   band's row would still be there, taking a gap and a line from the halves for nothing. */
+.task-view:has(.task-view-goal-band) {
+  grid-template-rows: auto minmax(0, 3fr) minmax(0, 2fr);
+}
+
+/* The band the card has, drawn the same way at the top of the dialog: same colour, same shape, same order —
+   handle, then name — so opening a card does not move the one thing the reader clicked.
+
+   Full width rather than inline, unlike the tag this replaced: across the top it is the frame the text and
+   the attributes below are read inside, which is what a goal is. */
+.task-view-goal-band {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius);
+  padding: 5px 12px;
+  font-size: 13px;
+  color: #fff;
+  /* White on amber is unreadable; a dark shadow behind the glyphs costs nothing and works on all eight. */
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+
+.task-view-goal-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .task-view-top {
   display: grid;
   /* `minmax(0, 1fr)` and not `1fr`: a grid item's automatic minimum is its content, so one long word in the

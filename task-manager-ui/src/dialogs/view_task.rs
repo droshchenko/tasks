@@ -75,6 +75,7 @@ fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
 
     rsx! {
         div { class: "task-view",
+            {render_goal_band(task)}
             div { class: "task-view-top",
                 // The text and the checklist are one scrolling column, and the attribute column is the
                 // other: the checklist is the breakdown OF the text, so it belongs under it and moves with
@@ -102,6 +103,42 @@ fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
     }
 }
 
+/// Which epic this task belongs to, as the BAND ACROSS THE TOP — the same band the card has, in the same
+/// colour, in the same place.
+///
+/// It was a row in the attribute column, which made it one labelled value among nine. That is the wrong shape
+/// for it: a goal is not a property of the task like its type or its assignee, it is the FRAME the rest is
+/// read inside — "todo" means one thing under "Crypto payments" and another on a task that stands alone. So it
+/// arrives before the details rather than beside them, and a reader who opened the card off the board sees the
+/// band they clicked, unmoved.
+///
+/// Nothing at all for a task with no goal: no band, no empty strip, and the layout below closes up — the two
+/// halves are proportions of the dialog, and a row that is always there would take from them for nothing.
+///
+/// The handle beside the name: the name is what a person reads, the handle is what they type back into the
+/// search box or hand to an agent.
+fn render_goal_band(task: &TaskResponse) -> Element {
+    let Some(goal) = task.goal.as_ref() else {
+        return rsx! {};
+    };
+
+    // The goal's colour travels with the task, unlike the type's — so this band is right wherever the task was
+    // looked up from, including a project that is not the one on screen.
+    let goal_hex = task_manager_shared::kind_color::KindColor::parse_or_default(
+        task.goal_color.as_deref().unwrap_or_default(),
+    )
+    .hex();
+
+    let goal_title = task.goal_name.clone().unwrap_or_else(|| "Goal".to_string());
+
+    rsx! {
+        div { class: "task-view-goal-band", style: "background: {goal_hex}",
+            span { class: "task-view-goal-id", "{goal}" }
+            span { class: "task-view-goal-name", "{goal_title}" }
+        }
+    }
+}
+
 /// Everything about the task that is not its text, in one narrow column.
 ///
 /// A column rather than a row of tags across the top: these are labelled values and there are eight of them
@@ -122,38 +159,10 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
         .or_else(|| task.assignee.clone())
         .unwrap_or_else(|| "Unassigned".to_string());
 
-    // The goal's colour travels with the task, unlike the type's — so this band is right wherever the task
-    // was looked up from, including a project that is not the one on screen.
-    let goal_hex =
-        task_manager_shared::kind_color::KindColor::parse_or_default(
-            task.goal_color.as_deref().unwrap_or_default(),
-        )
-        .hex();
-
-    let goal_title = task
-        .goal_name
-        .clone()
-        .unwrap_or_else(|| "Goal".to_string());
-
     rsx! {
         div { class: "task-view-attrs",
-            // FIRST, above the status: which epic this belongs to is the frame everything else is read in.
-            // "todo" means one thing under "Crypto payments" and another on a task that stands alone, so the
-            // frame has to arrive before the details rather than under them.
-            //
-            // Drawn as the band the board draws, in the goal's own colour, so the question is answered the
-            // same way on both screens. The handle beside the name: the name is what a person reads, the
-            // handle is what they type back into the search box or to an agent.
-            if let Some(goal) = task.goal.as_ref() {
-                div { class: "task-view-attr",
-                    div { class: "task-view-attr-label", "Goal" }
-                    div { class: "task-view-goal", style: "background: {goal_hex}",
-                        span { class: "task-view-goal-id", "{goal}" }
-                        span { "{goal_title}" }
-                    }
-                }
-            }
-
+            // No Goal row here: the goal is the band across the top — see `render_goal_band`. It is the frame
+            // the rest of these are read inside, not a tenth value in the list.
             div { class: "task-view-attr",
                 div { class: "task-view-attr-label", "Status" }
                 span { class: "tag", "{status}" }
