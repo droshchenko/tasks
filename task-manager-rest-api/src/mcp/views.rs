@@ -501,10 +501,28 @@ pub struct DocumentContentView {
         description = "True when this document is a FILE rather than text. Then `content` is absent and `content_base64` carries it"
     )]
     pub is_binary: bool,
-    #[property(description = "How big it is, in bytes")]
+    #[property(
+        description = "How big the WHOLE document is, in bytes — not how much of it is in `content`. When you asked for a slice those two differ, and this is the one to compare a byte budget against"
+    )]
     pub size: i64,
     #[property(
-        description = "The document as text, when it IS text — Markdown usually. Absent for a file, which arrives in `content_base64` instead"
+        description = "How many lines the whole document has. Absent for a file. This is the number `from_line` and `to_line` are bounded by, and the cheapest way to tell whether a document is worth an outline before reading it"
+    )]
+    pub lines_total: Option<i64>,
+    #[property(
+        description = "The first line `content` holds, 1-based — present only when you asked for a slice. Together with `to_line` it says exactly which part of the document you are looking at, so a quote from it can be cited by line"
+    )]
+    pub from_line: Option<i64>,
+    #[property(
+        description = "The last line `content` holds, 1-based and inclusive. Present only for a slice. It may be BEFORE the `to_line` you asked for, when `max_bytes` ran out first — read on from `to_line + 1`"
+    )]
+    pub to_line: Option<i64>,
+    #[property(
+        description = "True when `content` is NOT the whole document — a line range, a byte budget, or both. Never edit from a truncated read and never conclude a document does not mention something from one: what you did not see is exactly what you cannot reason about"
+    )]
+    pub truncated: bool,
+    #[property(
+        description = "The document as text, when it IS text — Markdown usually. Absent for a file, which arrives in `content_base64` instead. Holds only the requested slice when you asked for one — `from_line`, `to_line` and `truncated` say what you got"
     )]
     pub content: Option<String>,
     #[property(
@@ -528,6 +546,10 @@ impl DocumentContentView {
             content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             is_binary,
             size,
+            lines_total: content.as_deref().map(count_lines),
+            from_line: None,
+            to_line: None,
+            truncated: false,
             version: src.version,
             content,
             content_base64,
@@ -556,6 +578,10 @@ impl DocumentContentView {
             content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             is_binary,
             size,
+            lines_total: content.as_deref().map(count_lines),
+            from_line: None,
+            to_line: None,
+            truncated: false,
             version: src.version,
             content,
             content_base64,
@@ -563,6 +589,50 @@ impl DocumentContentView {
             updated_by: src.who.clone(),
         }
     }
+
+    /// Narrow the text to the slice that was asked for.
+    ///
+    /// Applied to a built view rather than threaded through both constructors above: they differ in where
+    /// every OTHER field comes from, and slicing is the one step that depends on none of it. `size` is left
+    /// alone on purpose — it is how big the document is, which is exactly what a caller deciding whether to
+    /// read the rest of it needs, and it would be useless as a measure of what came back.
+    ///
+    /// **A file is refused rather than sliced.** Lines are a property of text; the bytes of a PDF have none,
+    /// and half a PDF is not a smaller PDF. Cutting one by `max_bytes` would hand back base64 that decodes
+    /// to a corrupt file, which is worse than a refusal because it looks like it worked.
+    pub fn into_slice(
+        mut self,
+        from_line: Option<i64>,
+        to_line: Option<i64>,
+        max_bytes: Option<i64>,
+    ) -> Result<Self, String> {
+        if from_line.is_none() && to_line.is_none() && max_bytes.is_none() {
+            return Ok(self);
+        }
+
+        let Some(text) = self.content.as_deref() else {
+            return Err(format!(
+                "document {} is a file ({}), and a file has no lines to slice — `from_line`, `to_line` and \
+                 `max_bytes` only apply to text. Read `size` and fetch it whole, or open it in the browser",
+                self.id, self.content_type
+            ));
+        };
+
+        let slice = crate::scripts::slice_text(text, from_line, to_line, max_bytes)?;
+
+        self.content = Some(slice.text);
+        self.lines_total = Some(slice.lines_total);
+        self.from_line = Some(slice.from_line);
+        self.to_line = Some(slice.to_line);
+        self.truncated = slice.truncated;
+
+        Ok(self)
+    }
+}
+
+/// How many lines a text has, counted the same way everything else here counts them.
+fn count_lines(text: &str) -> i64 {
+    text.lines().count() as i64
 }
 
 /// A payload as the two optional wire fields: `(content, content_base64, is_binary, size)`.
@@ -581,6 +651,82 @@ fn split_body(
             (None, Some(bytes.into_base64()), true, size)
         }
     }
+}
+
+/// One line of a document that matched a search, with the lines around it.
+///
+/// The unit of a search result is a LINE and not a document, which is the whole difference between this and
+/// reading the document: a caller learns where the thing is said without paying for everything else it says.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DocumentMatchView {
+    #[property(
+        description = "Which line, 1-based. Hand it straight back to documents_get as `from_line` to read around it — the numbering is the same one documents_outline reports"
+    )]
+    pub line_number: i64,
+    #[property(
+        description = "The line itself. Clipped with a `…` when it is very long, so one minified line cannot become most of the answer"
+    )]
+    pub line: String,
+    #[property(
+        description = "The lines immediately before it, oldest first — as many as `context_lines` asked for, fewer at the top of a document"
+    )]
+    pub context_before: Vec<String>,
+    #[property(description = "The lines immediately after it, in order")]
+    pub context_after: Vec<String>,
+}
+
+/// One document a search found something in.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DocumentSearchHitView {
+    #[property(description = "The document's id — what documents_get, documents_edit and documents_outline take")]
+    pub id: String,
+    #[property(description = "Where it lives")]
+    pub path: String,
+    #[property(
+        description = "How many LINES of this document matched in total. May be more than `matches` holds — that is what `max_matches_per_document` did, and it is the number that tells a passing mention from the document the subject actually lives in"
+    )]
+    pub matches_total: i32,
+    #[property(description = "The matching lines, in the order they appear in the document")]
+    pub matches: Vec<DocumentMatchView>,
+}
+
+impl DocumentSearchHitView {
+    pub fn from_hit(src: crate::scripts::DocumentSearchHit) -> Self {
+        Self {
+            id: src.id,
+            path: src.path,
+            matches_total: src.matches_total,
+            matches: src
+                .matches
+                .into_iter()
+                .map(|itm| DocumentMatchView {
+                    line_number: itm.line_number,
+                    line: itm.line,
+                    context_before: itm.context_before,
+                    context_after: itm.context_after,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One heading of a document, and the span it opens.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DocumentHeadingView {
+    #[property(description = "1 for `#`, 2 for `##`, and so on down to 6")]
+    pub level: i32,
+    #[property(description = "The heading text, with the hashes and any closing hashes stripped")]
+    pub title: String,
+    #[property(description = "The line the heading itself is on, 1-based")]
+    pub line: i64,
+    #[property(
+        description = "The last line of this section, inclusive. READ THE SECTION with documents_get and `from_line: line`, `to_line: end_line` — that pairing is what this tool exists for"
+    )]
+    pub end_line: i64,
+    #[property(
+        description = "How big the section is in bytes, INCLUDING its subsections — a section runs to the next heading at its level or above, so the spans of nested headings overlap on purpose. Check it before slicing: a section can be most of the document"
+    )]
+    pub size: i64,
 }
 
 /// One entry of a document's history: what was done to it, by whom, and where it was at the time.
@@ -654,6 +800,100 @@ impl TrashedDocumentView {
             content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             deleted_unix_seconds: src.deleted.unix_microseconds / 1_000_000,
             deleted_by: src.deleted_by.clone(),
+        }
+    }
+}
+
+/// One line of a card that matched a board search, and which part of the card it was on.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct BoardMatchView {
+    #[property(
+        description = "Where on the card this line is: `text` (the task's own text, or a goal's name and description — what the work IS), `comment` (a note on the thread — what somebody SAID about it, usually the more useful of the two), or `subtask` (a checklist item)"
+    )]
+    pub part: String,
+    #[property(
+        description = "Who wrote the comment — an email, or `AI`. Present only for a `comment`; the other parts belong to the card rather than to a person"
+    )]
+    pub who: Option<String>,
+    #[property(description = "When the comment was left, unix seconds (UTC). Present only for a `comment`")]
+    pub moment_unix_seconds: Option<i64>,
+    #[property(description = "The matching line itself, clipped when very long")]
+    pub line: String,
+}
+
+/// One task or goal a board search found something on.
+///
+/// Deliberately NOT a `TaskView`: a search returning whole tasks would cost what listing the board costs,
+/// which is the thing this tool exists to avoid. Enough to decide which card to open, and then `tasks_list`
+/// or `tasks_get_comments` opens it.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct BoardSearchHitView {
+    #[property(
+        description = "The handle — `RMS-42` for a task, `RMS-G7` for a goal. This is what every other tool takes"
+    )]
+    pub id: String,
+    #[property(
+        description = "True when this is a GOAL rather than a task. Worth reading first when both matched: a goal is the container the work was organised under, so its thread is usually where the decision was made"
+    )]
+    pub is_goal: bool,
+    #[property(
+        description = "The first line of the text — what the card reads as at a glance, so you can pick without a second call"
+    )]
+    pub headline: String,
+    #[property(description = "Which column the task is in, or `todo` / `done` for a goal")]
+    pub status: String,
+    #[property(description = "How urgent it is: `super-high`, `high`, `normal`, `low` or `super-low`")]
+    pub priority: String,
+    #[property(description = "The goal this task belongs to, by goal id. Absent on a goal and on a standalone task")]
+    pub goal: Option<String>,
+    #[property(description = "Who is on it — an email or `AI`. Absent for a goal and for unassigned work")]
+    pub assignee: Option<String>,
+    #[property(
+        description = "How many lines matched on this card in total, across its text, its checklist and its whole thread. What the results are SORTED BY, and the number that tells the card where something was decided from the card that mentions it once"
+    )]
+    pub matches_total: i32,
+    #[property(
+        description = "The matching lines — at most a handful per card. When `matches_total` is bigger, read the thread with tasks_get_comments or goals_get_comments rather than searching again"
+    )]
+    pub matches: Vec<BoardMatchView>,
+    #[property(
+        description = "How many comments are on the thread altogether, matching or not. The thread is where the reasoning lives"
+    )]
+    pub comments_amount: i32,
+    #[property(
+        description = "True when this is closed longer ago than the project's archive window, so the board does not draw it. You are only seeing it because `include_archived` was asked for"
+    )]
+    pub is_archived: bool,
+    #[property(
+        description = "True when it has been deleted. Only ever present when `include_deleted` was asked for — a deleted card is off every board and every count"
+    )]
+    pub is_deleted: bool,
+}
+
+impl BoardSearchHitView {
+    pub fn from_hit(src: crate::scripts::BoardHit) -> Self {
+        Self {
+            id: src.id,
+            is_goal: src.is_goal,
+            headline: src.headline,
+            status: src.status,
+            priority: src.priority,
+            goal: src.goal,
+            assignee: src.assignee,
+            matches_total: src.matches_total,
+            matches: src
+                .matches
+                .into_iter()
+                .map(|itm| BoardMatchView {
+                    part: itm.part.as_str().to_string(),
+                    who: itm.who,
+                    moment_unix_seconds: itm.moment_unix_seconds,
+                    line: itm.line,
+                })
+                .collect(),
+            comments_amount: src.comments_amount,
+            is_archived: src.is_archived,
+            is_deleted: src.is_deleted,
         }
     }
 }

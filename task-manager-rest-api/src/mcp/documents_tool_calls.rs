@@ -12,7 +12,7 @@ use crate::mcp::{DocumentContentView, DocumentVersionView, DocumentView, Trashed
 /// translation happens once, here. A project that has vanished between the read and this call falls back to
 /// the raw id rather than failing: the document is what was asked for, and naming its board oddly is better
 /// than refusing to hand it over.
-fn project_prefix_of(app: &AppContext, project_id: &str) -> String {
+pub(super) fn project_prefix_of(app: &AppContext, project_id: &str) -> String {
     app.board
         .read()
         .get_project(project_id)
@@ -144,6 +144,18 @@ pub struct DocumentsGetInput {
         description = "Read an OLD version instead of the current one, by its version number from documents_history. Requires `id` — a path is where a document lives now, and says nothing about where it lived then. Omit for the current text"
     )]
     pub version: Option<i64>,
+    #[property(
+        description = "Start reading at this line, 1-based. Use it with `to_line` to read ONE SECTION of a large document — documents_outline reports exactly those two numbers per heading. Text only; a file has no lines"
+    )]
+    pub from_line: Option<i64>,
+    #[property(
+        description = "Stop after this line, 1-based and INCLUSIVE. Asking past the end of the document is fine and gives you the rest of it, which is how 'from here on' is written when you do not know the length"
+    )]
+    pub to_line: Option<i64>,
+    #[property(
+        description = "Return at most this many bytes of text, cut at a line boundary. A safety net rather than a way to navigate — reach for `from_line` / `to_line` when you know what you want. The response says `truncated` and where it stopped, so you can read on from `to_line + 1`"
+    )]
+    pub max_bytes: Option<i64>,
 }
 
 pub struct DocumentsGetHandler {
@@ -162,9 +174,19 @@ impl ToolDefinition for DocumentsGetHandler {
 never changes — or by `project` and `path`, which is what to use when a person named the document \
 rather than handing you an id.\
 \
+A LARGE DOCUMENT IS READ IN PIECES, NOT WHOLE. Pass `from_line` and `to_line` for one section, or \
+`max_bytes` as a ceiling. documents_outline gives you exactly those line numbers per heading, so the \
+pair is the way to work: outline once for a kilobyte of structure, then read the one section you need. \
+Reading a whole specification to change a sentence spends the context the work needed — and a document \
+big enough not to fit in a tool result is one you cannot read at all without this.\
+\
+Check `truncated` on the way out. It is true whenever what you got is not the whole document, and \
+neither an edit nor a conclusion of the form \"it does not mention X\" is safe from a truncated read.\
+\
 Pass `version` to read an older text: every version a document has ever had is kept, and \
 documents_history lists them. That is what the stable id is FOR — a document that was rewritten and \
-moved three times is still one document, and its whole past is reachable through it.";
+moved three times is still one document, and its whole past is reachable through it. To see what \
+CHANGED between two versions, documents_diff answers without either text.";
 }
 
 #[async_trait::async_trait]
@@ -174,7 +196,6 @@ impl McpToolCall<DocumentsGetInput, DocumentContentView> for DocumentsGetHandler
         model: DocumentsGetInput,
     ) -> Result<DocumentContentView, String> {
         let id = model.id.as_deref().map(str::trim).filter(|itm| !itm.is_empty());
-        let path = model.path.as_deref().map(str::trim).filter(|itm| !itm.is_empty());
 
         // Asked for an old version but named the document by where it lives. Refused rather than guessed at:
         // a path says where a document is NOW, and version 3 may well have been somewhere else — reading
@@ -186,38 +207,32 @@ impl McpToolCall<DocumentsGetInput, DocumentContentView> for DocumentsGetHandler
             );
         }
 
-        if let Some(version) = model.version {
+        let view = if let Some(version) = model.version {
             let id = id.expect("checked just above");
             let row = crate::scripts::document_version(&self.app, id, version).await?;
 
-            return Ok(DocumentContentView::from_history(
+            DocumentContentView::from_history(
                 &row,
                 &project_prefix_of(&self.app, &row.project_id),
-            ));
-        }
+            )
+        } else {
+            let row = crate::scripts::resolve_document(
+                &self.app,
+                model.id.as_deref(),
+                model.project.as_deref(),
+                model.path.as_deref(),
+            )
+            .await?;
 
-        let row = match (id, path) {
-            (Some(id), _) => crate::scripts::read_document(&self.app, id).await?,
-            (None, Some(path)) => {
-                let project = model.project.as_deref().map(str::trim).filter(|itm| !itm.is_empty()).ok_or_else(|| {
-                    "reading by `path` needs `project` beside it — a path is only unique within one board"
-                        .to_string()
-                })?;
-
-                crate::scripts::read_document_by_path(&self.app, project, path).await?
-            }
-            (None, None) => {
-                return Err(
-                    "pass `id`, or `project` and `path` — documents_list reports both for every document"
-                        .to_string(),
-                );
-            }
+            DocumentContentView::from_dto(
+                &row,
+                &project_prefix_of(&self.app, &row.project_id),
+            )
         };
 
-        Ok(DocumentContentView::from_dto(
-            &row,
-            &project_prefix_of(&self.app, &row.project_id),
-        ))
+        // Last, and applied to the built view rather than to the row: an old version and the current one
+        // are sliced identically, which is the whole reason they share a shape.
+        view.into_slice(model.from_line, model.to_line, model.max_bytes)
     }
 }
 

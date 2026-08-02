@@ -203,6 +203,25 @@ pub struct DocumentVersionDto {
     pub moment: DateTimeAsMicroseconds,
 }
 
+// One document's TEXT and nothing else — the shape a project-wide search reads.
+//
+// **`binary_content` is deliberately absent from this struct, which is what makes the query safe to run over
+// a whole project.** `SelectDbEntity` builds its column list from the fields, so a search never touches a
+// single blob: a project holding forty PDFs costs the same as one holding none. A binary document comes back
+// with `content: None` and is skipped by the caller, which is the honest answer — there is no text in it to
+// search.
+//
+// This is the one read in the feature that pulls payloads in bulk, and it is bounded by the same thing that
+// bounds a document: `MAX_CONTENT_LEN` per row, one project at a time. The alternative — pushing the match
+// into SQL with `ILIKE` — would return less over the wire and cannot express what the tool offers (a regex,
+// a line number, the lines around a hit), so the text has to come here either way.
+#[derive(SelectDbEntity, Debug)]
+pub struct DocumentTextDto {
+    pub id: String,
+    pub doc_path: String,
+    pub content: Option<String>,
+}
+
 // One trashed document WITHOUT its payload. Restoring needs the payload and reads the full row; LISTING the
 // trash does not.
 #[derive(SelectDbEntity, Debug)]
@@ -320,6 +339,26 @@ impl DocumentsRepo {
             )
             .await
             .expect("documents: query_single_row get_by_path failed")
+    }
+
+    /// The TEXT of every live document of one project, and nothing else — what a search reads.
+    ///
+    /// See [`DocumentTextDto`] for why this is safe to run over a whole project: the blob column is not in
+    /// the select list at all.
+    pub async fn get_texts_of_project(
+        &self,
+        project_id: &str,
+        ctx: &MyTelemetryContext,
+    ) -> Vec<DocumentTextDto> {
+        self.postgres
+            .with_retries(3, Duration::from_secs(1))
+            .query_rows(
+                TABLE_NAME,
+                Some(&ByProjectWhereModel { project_id }),
+                Some(ctx),
+            )
+            .await
+            .expect("documents: query_rows get_texts_of_project failed")
     }
 
     /// Write the current state of a document.

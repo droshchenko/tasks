@@ -1,5 +1,7 @@
 mod archives;
+mod board_search;
 mod column_templates;
+mod document_text;
 mod documents;
 mod gh_actions;
 mod goals;
@@ -13,7 +15,9 @@ mod tasks;
 mod users;
 
 pub use archives::*;
+pub use board_search::*;
 pub use column_templates::*;
+pub use document_text::*;
 pub use documents::*;
 pub use gh_actions::*;
 pub use goals::*;

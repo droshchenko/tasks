@@ -5,12 +5,14 @@ use mcp_server_middleware::McpMiddleware;
 use crate::app::AppContext;
 
 mod comment_tool_calls;
+mod documents_text_tool_calls;
 mod documents_tool_calls;
 mod goals_tool_calls;
 mod labels_list_tool_call;
 mod projects_list_tool_call;
 mod resolve_id_tool_call;
 mod tasks_list_tool_call;
+mod tasks_search_tool_call;
 mod tasks_write_tool_calls;
 mod users_list_tool_call;
 mod views;
@@ -18,6 +20,9 @@ mod views;
 pub use views::*;
 
 use comment_tool_calls::{AddCommentHandler, GetCommentsHandler};
+use documents_text_tool_calls::{
+    DocumentsDiffHandler, DocumentsEditHandler, DocumentsOutlineHandler, DocumentsSearchHandler,
+};
 use documents_tool_calls::{
     DocumentsDeleteHandler, DocumentsGetHandler, DocumentsHistoryHandler, DocumentsListHandler,
     DocumentsRestoreHandler, DocumentsTrashHandler, DocumentsUpdatePathHandler,
@@ -31,6 +36,7 @@ use labels_list_tool_call::LabelsListHandler;
 use projects_list_tool_call::ProjectsListHandler;
 use resolve_id_tool_call::ResolveIdHandler;
 use tasks_list_tool_call::TasksListHandler;
+use tasks_search_tool_call::TasksSearchHandler;
 use tasks_write_tool_calls::{TasksCreateHandler, TasksDeleteHandler, TasksUpdateHandler};
 use users_list_tool_call::UsersListHandler;
 
@@ -169,6 +175,31 @@ it into their own text. That is the point: one place that is edited, rather than
 apart in silence. Write one with documents_upload, find one with documents_list, read one with \
 documents_get, and attach it with add_documents on a task or a goal.\
 \
+A LARGE DOCUMENT IS WORKED ON IN PIECES, AND FOUR TOOLS EXIST FOR NOTHING ELSE. A specification can be \
+tens of kilobytes; reading one whole to change a line, or reading five to find which mentions a thing, \
+spends the context the work needed. So:\
+\
+* documents_search finds WHICH document, and on which line;\
+* documents_outline turns one document into a kilobyte of headings, each with the line range of its \
+section;\
+* documents_get takes `from_line` / `to_line` — the outline's numbers, verbatim — and reads that \
+section alone. It reports `truncated`, and a truncated read supports neither an edit nor a conclusion \
+that something is not mentioned;\
+* documents_edit changes the parts that change and leaves the rest untouched. Prefer it over \
+documents_upload for anything you did not write in this conversation.\
+\
+DOCUMENTS_EDIT REFUSES RATHER THAN GUESSES, AND BOTH REFUSALS ARE THE POINT. Text that appears more \
+than once is ambiguous and the whole batch fails, naming the count — quietly changing all seven \
+occurrences of a word in an architecture document is how one goes wrong in a place nobody reads again. \
+And `expected_version` refuses when the document moved since you read it: pass it whenever you read the \
+document earlier in the conversation, because a person can upload over one from the browser at any \
+moment and your edits would otherwise be spliced into a text you have never seen. Either way NOTHING is \
+written — an edit batch is all of it or none of it, one new version per call.\
+\
+AFTER A WRITE, DIFF IT. documents_diff compares two versions and returns neither, so checking that a \
+write did what you meant costs a few hundred bytes rather than two full texts. It is also what tells \
+you what somebody else changed when an edit was refused on its version.\
+\
 THE PATH IS THE KEY; THE ID IS THE IDENTITY. Uploading to a path that is taken does not create a second \
 document — it writes a new version of the one that lives there, keeping its id, its history and every \
 reference to it. So documents_list BEFORE uploading: an upload to a path you did not mean to touch \
@@ -225,8 +256,25 @@ still reachable by its id, and `include_archived` on tasks_list brings the histo
 deliberately looking backwards. Practical consequence: \"this board has 12 tasks\" means twelve live ones, \
 and a task you cannot find by listing may still exist.\
 \
-LIST BEFORE YOU CREATE. tasks_create adds a task unconditionally, so calling it twice for the same \
-work leaves two of them on a board a person reads by eye. Check what is already there first.\
+LIST BEFORE YOU CREATE, AND SEARCH BEFORE YOU LIST. tasks_create adds a task unconditionally, so \
+calling it twice for the same work leaves two of them on a board a person reads by eye. tasks_search \
+finds a near-duplicate filed under a wording you would not have guessed, and finds it across archived \
+work too — \"how did we solve this last time\" is a question about work that has already landed.\
+\
+THIS BOARD IS A PLACE TO LOOK THINGS UP, NOT ONLY A PLACE TO FILE THEM. Two tools search, and reaching \
+for them first is what stops a conversation being reconstructed from scratch every time:\
+\
+* tasks_search — over tasks, goals AND their comment threads. IT IS THE ONLY WAY TO SEE INSIDE A \
+THREAD without already knowing which card to open: every listing reports `comments_amount` and not one \
+comment, so without this the reasoning behind every decision here is reachable only by opening threads \
+one at a time. The card says what is to be done; the thread says what was learned, what was tried and \
+why the work is shaped this way — and that is usually the thing you came for.\
+* documents_search — over the texts of a project's documents, returning matching lines and never a \
+whole document. \"Which of these twenty-three documents mentions X\" is one call; reading them to find \
+out spends the context the work needed on the twenty-one that do not.\
+\
+Both return LINES rather than objects, on purpose: a search you can afford is a search you make before \
+guessing, and one that returned whole tasks or whole documents would cost what it was meant to save.\
 \
 ERRORS ARE TEXT, AND THEY ARE NEVER AN EMPTY RESULT. An unknown prefix, a column that does not exist \
 on this board, an id that is not there — each comes back as a message that names the real options. An \
@@ -254,6 +302,9 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
 
     mcp.register_tool_call(Arc::new(GoalsListHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(TasksListHandler::new(app.clone())));
+    // Beside the listing, because it is the other half of the same act: a listing answers "what is in this
+    // state", a search answers "where was this discussed", and an agent arriving at a board needs both.
+    mcp.register_tool_call(Arc::new(TasksSearchHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(ResolveIdHandler::new(app.clone())));
 
     mcp.register_tool_call(Arc::new(GoalsCreateHandler::new(app.clone())));
@@ -265,11 +316,18 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(GoalsDeleteHandler::new(app.clone())));
 
     // Documents. After the board tools, because a document is read in the course of doing work rather than
-    // to find out what the work is: the index first, then one text, then the writes.
+    // to find out what the work is — and in the order a large one is actually approached: find which
+    // document, see its shape, read the part that matters, then write.
     mcp.register_tool_call(Arc::new(DocumentsListHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsSearchHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsOutlineHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsGetHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsHistoryHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsDiffHandler::new(app.clone())));
 
+    // The edit before the upload, which is the order they should be reached for: an upload replaces a whole
+    // text, and on anything large that is the expensive way to change a sentence.
+    mcp.register_tool_call(Arc::new(DocumentsEditHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsUploadHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsUpdatePathHandler::new(app.clone())));
 
@@ -317,6 +375,31 @@ mod tests {
                     "the schema does not mention {expected}: {schema}"
                 );
             }
+        }
+    }
+
+    /// `edits` is the third nested object on this surface, and the one where a schema the derive cannot
+    /// describe would be worst: a client that could not see `old_string` and `new_string` would send
+    /// something shaped differently, and the tool would refuse every call for a reason nobody could read
+    /// from the tool list. Same failure mode as the two above, one tool.
+    #[tokio::test]
+    async fn documents_edit_describes_its_edit_objects() {
+        let schema = super::documents_text_tool_calls::DocumentsEditInput::get_json_schema(false)
+            .await
+            .build();
+
+        for expected in [
+            "edits",
+            "expected_version",
+            // From the nested item itself, which is the half a flat-only schema would lose.
+            "old_string",
+            "new_string",
+            "replace_all",
+        ] {
+            assert!(
+                schema.contains(expected),
+                "the schema does not mention {expected}: {schema}"
+            );
         }
     }
 

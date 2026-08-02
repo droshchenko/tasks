@@ -513,6 +513,408 @@ pub async fn read_document_by_path(
         .ok_or_else(|| format!("no document at '{path}' on {}", project_prefix.to_uppercase()))
 }
 
+/// One live document, named whichever of the two ways a caller happens to hold it.
+///
+/// Every read-and-then-act tool takes both — an id, or a project and a path — because those are the two
+/// things a caller actually has: an id when it came out of a previous call, a path when a person said the
+/// name of a document out loud. Resolving that here rather than in each tool is what keeps the refusals
+/// identical, and the refusals are the useful part: "a path is only unique within one board" is the whole
+/// reason `project` is not optional beside one.
+pub async fn resolve_document(
+    app: &AppContext,
+    id: Option<&str>,
+    project_prefix: Option<&str>,
+    path: Option<&str>,
+) -> Result<DocumentDto, String> {
+    let id = id.map(str::trim).filter(|itm| !itm.is_empty());
+    let path = path.map(str::trim).filter(|itm| !itm.is_empty());
+
+    match (id, path) {
+        // An id wins when both arrive: it is the identity, where a path is only where the document is
+        // sitting today.
+        (Some(id), _) => read_document(app, id).await,
+        (None, Some(path)) => {
+            let project = project_prefix
+                .map(str::trim)
+                .filter(|itm| !itm.is_empty())
+                .ok_or_else(|| {
+                    "reading by `path` needs `project` beside it — a path is only unique within one board"
+                        .to_string()
+                })?;
+
+            read_document_by_path(app, project, path).await
+        }
+        (None, None) => Err(
+            "pass `id`, or `project` and `path` — documents_list reports both for every document"
+                .to_string(),
+        ),
+    }
+}
+
+/// Rewrite pieces of a document's text in place, as one new version.
+///
+/// **This is the same write as an upload, reached differently, and that is the point.** A document is
+/// edited by sending its whole text back, which for a large specification means reproducing tens of
+/// kilobytes verbatim to change a sentence — and every one of those reproductions is a chance to drop a
+/// section nobody notices is gone. Here the caller sends only what changes, the server does the splice
+/// against the text it already holds, and the version that lands is the old text with exactly those pieces
+/// different.
+///
+/// **One version per CALL, not per edit.** A batch of seven edits is one entry in the history, because
+/// seven entries would describe seven documents that never existed as anybody's intention. It is also what
+/// makes the batch meaningfully atomic from a reader's point of view: there is no moment at which the
+/// document is half-edited.
+///
+/// **`expected_version` is an optimistic lock, and the only concurrency control in this feature.** A
+/// caller that read version 4, thought about it, and now edits had better still be editing version 4: if a
+/// person uploaded in between, the edits are being spliced into text the caller has never seen. Refusing is
+/// the whole value — the edits themselves would very likely still *apply*, and land a document that mixes
+/// two intentions.
+///
+/// A binary document is refused. There is no text in a PDF to match against, and the only honest way to
+/// change one is to upload another.
+pub async fn edit_document(
+    app: &AppContext,
+    id: Option<&str>,
+    project_prefix: Option<&str>,
+    path: Option<&str>,
+    edits: &[super::DocumentEdit],
+    expected_version: Option<i64>,
+    who: &str,
+) -> Result<(DocumentDto, Vec<i32>), String> {
+    let who = require_author(who)?;
+
+    // Before the read, so an empty batch does not cost a database round trip to be told it is empty.
+    if edits.is_empty() {
+        return Err(
+            "no edits to make — pass at least one `{ old_string, new_string }` in `edits`".to_string(),
+        );
+    }
+
+    let existing = resolve_document(app, id, project_prefix, path).await?;
+
+    if let Some(expected) = expected_version {
+        if existing.version != expected {
+            return Err(format!(
+                "document {} is at version {}, not the {expected} you read — somebody wrote to it in \
+                 between. NOTHING WAS WRITTEN. Read it again and rebase the edits onto the new text: \
+                 retrying this call as it stands would splice your changes into a document you have not \
+                 seen. documents_diff {} {expected} {} says what they changed",
+                existing.id, existing.version, existing.id, existing.version
+            ));
+        }
+    }
+
+    let body = body_of(&existing);
+
+    let Some(text) = body.as_text() else {
+        return Err(format!(
+            "document {} is a file ({}), so there is no text in it to match against — replace it with \
+             documents_upload",
+            existing.id,
+            content_type_of(existing.content_type.as_deref(), &existing.doc_path)
+        ));
+    };
+
+    let (edited, replacements) = super::apply_edits(text, edits)?;
+
+    let body = DocumentBody::Text(edited);
+    body.validate()?;
+
+    let size = body.size_bytes();
+    let (content, binary_content) = body.into_columns();
+
+    let row = DocumentDto {
+        id: existing.id,
+        project_id: existing.project_id,
+        doc_path: existing.doc_path,
+        // Left exactly as it was. An edit changes what a document SAYS, never what it is, and re-deriving
+        // the type from the path here would quietly overwrite one somebody declared on purpose.
+        content_type: existing.content_type,
+        content,
+        binary_content,
+        content_size: Some(size),
+        version: existing.version + 1,
+        created: existing.created,
+        updated: DateTimeAsMicroseconds::now(),
+        updated_by: who.clone(),
+    };
+
+    let ctx = MyTelemetryContext::create_empty();
+
+    // `Updated`, indistinguishable in the history from an upload of the same text — because it IS the same
+    // thing. How a version was produced is a property of the call, not of the document.
+    write_version(app, &row, &who, DocumentEvent::Updated, &ctx).await;
+    app.documents_index.upsert(&row);
+
+    Ok((row, replacements))
+}
+
+/// What a caller is looking for across a project's documents.
+pub struct DocumentSearchQuery {
+    pub query: String,
+    pub is_regex: bool,
+    pub case_sensitive: bool,
+    /// Only documents whose path starts with this — `docs/design`. Folder-shaped rather than glob-shaped,
+    /// because folders here are prefixes of paths and nothing else.
+    pub path_prefix: Option<String>,
+    pub context_lines: i64,
+    pub max_matches_per_document: i64,
+}
+
+/// One document that matched.
+pub struct DocumentSearchHit {
+    pub id: String,
+    pub path: String,
+    pub matches: Vec<super::TextMatch>,
+    /// How many lines matched in total, which may be more than were returned.
+    pub matches_total: i32,
+}
+
+/// What a search found, and what it did not look at.
+pub struct DocumentSearchOutcome {
+    pub hits: Vec<DocumentSearchHit>,
+    pub searched: i32,
+    /// Documents with no text in them — files, mostly. Reported rather than hidden: "nothing matched" and
+    /// "nothing was searched" are different answers, and a project of PDFs gives the second one.
+    pub skipped: i32,
+    pub matches_total: i32,
+    /// True when a cap cut the answer short, at either level.
+    pub truncated: bool,
+}
+
+/// Search every text document of one project, without returning any of them whole.
+///
+/// **The tool that stops "which documents mention X" costing the whole project.** Answering it by reading
+/// documents one at a time spends the context on the ones that turn out to be irrelevant — and those are
+/// most of them, so most of what is spent is spent learning nothing.
+///
+/// Texts are pulled from Postgres rather than from the index, because the index deliberately holds no
+/// payloads; see [`crate::documents::DocumentsIndex`]. Blobs are never touched — see
+/// [`crate::postgres::DocumentTextDto`].
+pub async fn search_documents(
+    app: &AppContext,
+    project_prefix: &str,
+    query: &DocumentSearchQuery,
+) -> Result<DocumentSearchOutcome, String> {
+    let project_id = {
+        let board = app.board.read();
+        resolve_project_by_prefix(&board, project_prefix)?.id.clone()
+    };
+
+    // Compiled before anything is read: a broken pattern must cost nothing, and it must be reported as a
+    // broken pattern rather than as a project with no matches in it.
+    let matcher = super::Matcher::new(&query.query, query.is_regex, query.case_sensitive)?;
+
+    let context_lines = query
+        .context_lines
+        .clamp(0, super::MAX_CONTEXT_LINES) as usize;
+
+    let max_per_document = query
+        .max_matches_per_document
+        .clamp(1, super::MAX_MATCHES_PER_DOCUMENT) as usize;
+
+    // Folder-shaped, so a trailing slash is meaningless either way and both spellings mean the folder.
+    let path_prefix = query
+        .path_prefix
+        .as_deref()
+        .map(|itm| itm.trim().replace('\\', "/"))
+        .map(|itm| itm.trim_start_matches('/').trim_end_matches('/').to_string())
+        .filter(|itm| !itm.is_empty());
+
+    let ctx = MyTelemetryContext::create_empty();
+
+    let mut rows = app.documents_repo.get_texts_of_project(&project_id, &ctx).await;
+
+    // By path, which is the order the tree is drawn in — and, because the total cap cuts the tail, the
+    // order is also what makes the cut deterministic rather than whatever Postgres returned this time.
+    rows.sort_by(|left, right| left.doc_path.cmp(&right.doc_path));
+
+    let mut outcome = DocumentSearchOutcome {
+        hits: Vec::new(),
+        searched: 0,
+        skipped: 0,
+        matches_total: 0,
+        truncated: false,
+    };
+
+    let mut reported = 0;
+
+    for row in &rows {
+        if let Some(prefix) = &path_prefix {
+            if !row.doc_path.starts_with(prefix.as_str()) {
+                continue;
+            }
+        }
+
+        let Some(text) = row.content.as_deref() else {
+            outcome.skipped += 1;
+            continue;
+        };
+
+        // Stopped rather than carried on with the counters running. `searched` must mean "the matcher was
+        // run over this", so a document past the cap is not one — and the difference between `searched` and
+        // what documents_list reports is then the honest measure of how much of the project this answer
+        // does not cover. `truncated` is what says to narrow the query.
+        if reported >= super::MAX_MATCHES_TOTAL {
+            outcome.truncated = true;
+            break;
+        }
+
+        outcome.searched += 1;
+
+        let room = max_per_document.min(super::MAX_MATCHES_TOTAL - reported);
+        let (matches, matches_total) = super::search_text(&matcher, text, context_lines, room);
+
+        if matches_total == 0 {
+            continue;
+        }
+
+        outcome.matches_total += matches_total;
+
+        if matches.len() < matches_total as usize {
+            outcome.truncated = true;
+        }
+
+        reported += matches.len();
+
+        outcome.hits.push(DocumentSearchHit {
+            id: row.id.clone(),
+            path: row.doc_path.clone(),
+            matches,
+            matches_total,
+        });
+    }
+
+    Ok(outcome)
+}
+
+/// The headings of one document, with the span each one opens.
+///
+/// A 76 KB specification becomes a kilobyte of structure, and every entry carries the line range that reads
+/// it back — which is what makes a large document navigable rather than merely retrievable. Pairs with
+/// `from_line` / `to_line` on the read.
+pub async fn document_outline(
+    app: &AppContext,
+    id: Option<&str>,
+    project_prefix: Option<&str>,
+    path: Option<&str>,
+) -> Result<(DocumentDto, Vec<super::DocumentHeading>, i64), String> {
+    let row = resolve_document(app, id, project_prefix, path).await?;
+    let body = body_of(&row);
+
+    let Some(text) = body.as_text() else {
+        return Err(format!(
+            "document {} is a file ({}), and a file has no headings to read",
+            row.id,
+            content_type_of(row.content_type.as_deref(), &row.doc_path)
+        ));
+    };
+
+    let lines_total = text.lines().count() as i64;
+
+    Ok((row, super::outline_of(text), lines_total))
+}
+
+/// A diff between two versions of one document.
+pub struct DocumentDiff {
+    pub id: String,
+    pub project_id: String,
+    pub from_version: i64,
+    pub to_version: i64,
+    /// Where the document was at each version. They differ when it moved in between, which is exactly the
+    /// case a diff of the texts alone would not show.
+    pub from_path: String,
+    pub to_path: String,
+    pub diff: String,
+    pub truncated: bool,
+}
+
+/// What changed between two versions of a document.
+///
+/// **The answer to "did that write do what I meant", and it needs neither text in full.** `documents_history`
+/// says a version happened and who did it; it cannot say what is different, and finding out by reading two
+/// 76 KB texts costs more than the change is worth.
+///
+/// `to_version` defaults to the newest version there is, taken from the history rather than from the
+/// document row — so it answers for a document in the trash exactly as it does for a live one, which is the
+/// same rule `documents_history` follows and for the same reason.
+pub async fn document_diff(
+    app: &AppContext,
+    id: &str,
+    from_version: i64,
+    to_version: Option<i64>,
+    context_lines: i64,
+) -> Result<DocumentDiff, String> {
+    // Errors when the id names nothing at all, which is the message a caller wants before any talk of
+    // version numbers.
+    let versions = document_history(app, id).await?;
+
+    let newest = versions
+        .iter()
+        .map(|itm| itm.version)
+        .max()
+        .expect("a history with no versions cannot exist — document_history refuses one");
+
+    let to_version = to_version.unwrap_or(newest);
+
+    for wanted in [from_version, to_version] {
+        if !versions.iter().any(|itm| itm.version == wanted) {
+            return Err(format!(
+                "document {id} has no version {wanted} — it has versions 1 to {newest}"
+            ));
+        }
+    }
+
+    if from_version == to_version {
+        return Err(format!(
+            "`from_version` and `to_version` are both {from_version} — a version does not differ from \
+             itself. The version before it is {}",
+            (from_version - 1).max(1)
+        ));
+    }
+
+    let before = document_version(app, id, from_version).await?;
+    let after = document_version(app, id, to_version).await?;
+
+    let before_body = body_of_version(&before);
+    let after_body = body_of_version(&after);
+
+    // Named rather than lumped together: "which of the two is the file" is what the caller has to know to
+    // do anything about it, and a document may well have been text at one version and bytes at another.
+    let (Some(before_text), Some(after_text)) = (before_body.as_text(), after_body.as_text()) else {
+        let which = match (before_body.is_binary(), after_body.is_binary()) {
+            (true, true) => format!("versions {from_version} and {to_version} are both files"),
+            (true, false) => format!("version {from_version} is a file"),
+            _ => format!("version {to_version} is a file"),
+        };
+
+        return Err(format!(
+            "document {id}: {which}, and bytes do not diff into anything a reader can use. \
+             documents_history reports the size and content type of every version"
+        ));
+    };
+
+    let (diff, truncated) = super::unified_diff(
+        before_text,
+        after_text,
+        &format!("{}@v{from_version}", before.doc_path),
+        &format!("{}@v{to_version}", after.doc_path),
+        context_lines.clamp(0, super::MAX_DIFF_CONTEXT) as usize,
+    );
+
+    Ok(DocumentDiff {
+        id: id.to_string(),
+        project_id: after.project_id.clone(),
+        from_version,
+        to_version,
+        from_path: before.doc_path,
+        to_path: after.doc_path,
+        diff,
+        truncated,
+    })
+}
+
 /// Every live document of one project, by path, WITHOUT the payloads.
 ///
 /// **Served from memory.** The index is the one part of a document that is cached — see

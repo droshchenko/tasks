@@ -315,6 +315,31 @@ date beside it, the url as the tooltip. They are the one thing on that screen th
 they open in a new tab — the board stays where it was, and the back button is not the way home from a CI
 log. Most tasks produced no builds and draw nothing at all rather than an empty heading.
 
+## Searching the board
+
+Every other read here is a **filter**: a column, a kind, an assignee, a goal. Those answer "what is in this
+state", which is what a board is for — and none of them answers the question an agent actually arrives
+with, which is *"where did we discuss this"*. The text is the only thing that knows, and most of it lives on
+threads that no listing returns: `tasks_list` reports `comments_amount` and not one comment, for exactly
+the context reason `documents_list` reports no texts.
+
+So without `tasks_search` the reasoning behind every decision on this board is reachable only by listing it
+and then opening threads one call at a time until the right one turns up. It searches a task's text, a
+goal's name and description, both checklists and **both comment threads**, and each match says which of
+those it came from — because the distinction is what the caller does next with it. The card says what is to
+be done; the thread says what was learned, what was tried and why the work is shaped this way.
+
+It returns a **headline and the matching lines**, never whole tasks. A search that cost what a listing
+costs would not be reached for before guessing, which is the only time it is worth anything. Results are
+sorted **most-matched first** rather than by priority: a card mentioning the subject six times is more
+likely the one that was meant than one mentioning it in passing.
+
+Served entirely from memory — comments ride inside the task's own row and are already in the snapshot, so
+searching the threads is a walk over what is loaded rather than a query. Archived and deleted work is left
+out by default, matching `tasks_list`, so "search finds a task the board does not show" cannot happen by
+accident; `include_archived` is worth passing more often here than on a listing, because "how did we solve
+this last time" is a question about work that has already landed.
+
 ## Documents
 
 A **document** is a text that outlives the work: a specification, a decision written up, a piece of
@@ -355,6 +380,68 @@ two questions a history exists to answer.
 sorts the index by path, the browser walks the segments into a tree. So an empty folder cannot exist, and
 renaming one means moving every document under it, one call each. A folder record would have been a second
 source of truth about the structure, and it would have drifted from the paths.
+
+### A large document is worked on in pieces
+
+Everything above is complete **at one size** — the size where reproducing a document verbatim to change a
+line is affordable, and where reading one to find out whether it mentions something is affordable. Past
+that, the surface quietly becomes read-only in practice: `platform-architecture.md` at 76 KB does not fit
+in a tool result at all, so it could be read and never written back, and finding which of twenty-three
+documents mentions `min_statistics` meant pulling each of them in whole. Two of them, 24 KB and 33 KB,
+turned out to be clean — about fifteen thousand tokens spent learning that nothing was there.
+
+Four tools exist for nothing but that, and they compose in one direction:
+
+**`documents_search`** asks the whole project at once and never returns a text — only matching lines and a
+couple of lines either side. Line-oriented like grep, so a match carries a `line_number` that goes straight
+into a read. The texts come from Postgres (the index deliberately holds no payloads) through a select list
+that **does not name the blob column at all**, so a project holding forty PDFs costs the same to search as
+one holding none. `matches_total` keeps counting past every cap, which is what makes "nothing matched" a
+usable answer rather than a possibly-truncated one.
+
+**`documents_outline`** turns a 76 KB document into about a kilobyte of headings, each with the line range
+of the section it opens. Headings inside fenced code blocks are skipped — a specification full of shell
+examples has a `# comment` on nearly every page, and an outline naming those would be longer than the real
+structure and would point at sections that do not exist. A section **contains its subsections**
+(`end_line` runs to the next heading at the same level or shallower), so slicing one entry gives the whole
+section rather than its first paragraph.
+
+**`documents_get` takes `from_line` / `to_line` / `max_bytes`** — the outline's numbers verbatim. Bounds
+are 1-based and inclusive, `max_bytes` cuts at a line boundary wherever one fits, and `truncated` says the
+content is not the whole document. A file is *refused* rather than sliced: lines are a property of text,
+and half a PDF is not a smaller PDF — cutting one would hand back base64 that decodes to a corrupt file,
+which is worse than a refusal because it looks like it worked.
+
+**`documents_edit`** sends the two hundred bytes that change instead of the seventy-six kilobytes that do
+not. Three rules carry the weight, and each is a refusal:
+
+- **an ambiguous match is refused.** If `old_string` appears more than once and `replace_all` was not
+  asked for, the call fails and names the count. Silently taking the first occurrence, or silently taking
+  all of them, is exactly how a 76 KB architecture document ends up subtly wrong in a place nobody reads
+  again;
+- **all of the edits or none of them.** The new text is built in memory and only then written, so a
+  failure at edit five leaves nothing behind from edits one to four — a half-applied batch is a document
+  in a state nobody asked for, and the caller cannot tell how far it got without reading the whole thing
+  back. Edits apply **in order, each against the result of the last**, so a later edit may match text an
+  earlier one wrote, and one whose match an earlier edit destroyed is an error rather than a skip;
+- **`expected_version` is an optimistic lock** — the only concurrency control in this feature, and it
+  earns its place because a person can upload over a document from the browser at any moment. A caller
+  that read version 4 and now edits had better still be editing version 4: the edits would very likely
+  still *apply*, and would land a document mixing two intentions.
+
+One new version per **call**, not per edit: seven edits are one history entry, because seven entries would
+describe seven documents nobody ever intended. The event is `updated`, indistinguishable from an upload of
+the same text — how a version was produced is a property of the call, not of the document.
+
+**`documents_diff`** answers "did that write do what I meant" without either text. `documents_history` says
+a version exists, who wrote it and when; it cannot say what is *in* it. It is also what tells you what
+somebody else changed after an edit was refused on its version — which is why the refusal message names the
+diff call to make. `to_version` defaults to the newest version taken from the *history* rather than from
+the document row, so it answers for a trashed document exactly as it does for a live one.
+
+The whole loop, then: search to find which document, outline to find the section, get with a line range to
+read it, edit to change it, diff to check the change is the one that was meant. None of the five steps
+carries a whole document.
 
 **Nothing is lost.** Every version is kept whole in `documents_history` — path, text, who, when, and *what
 happened* (`created`, `updated`, `moved`, `deleted`, `restored`). Whole texts rather than diffs: documents are
@@ -604,12 +691,23 @@ Tools:
 - `users_list` — who exists, with email and name. This is how a spoken first name becomes the
   email that goes into `assignee`.
 - `tasks_list` / `tasks_create` / `tasks_update` / `tasks_delete`
+- `tasks_search` — the board and its threads, by what was written on them. The counterpart to
+  `tasks_list`: that one answers "what is in this column", this one answers "where did we discuss
+  this". **It is the only way to see inside a comment thread without already knowing which card to
+  open** — every listing reports `comments_amount` and not one comment, deliberately, so without this
+  the reasoning behind every decision on the board is reachable only by opening threads one call at a
+  time. Returns a headline and the matching lines rather than whole tasks, sorted most-matched first.
 - `tasks_add_comment` / `tasks_get_comments`
 - `labels_list`
 - `documents_list` / `documents_get` / `documents_history` — the index without the texts, one document
   with its text (by id, or by project and path, and optionally at an old `version`), and every version a
   document has had. Split that way on purpose: a document can be a whole specification, and an agent that
   pulled all of them in to find one would have spent the context it needed for the work.
+- `documents_search` / `documents_outline` / `documents_get`'s `from_line` / `to_line` / `max_bytes` —
+  the three halves of reading a large document without reading it. See
+  [Documents](#documents).
+- `documents_edit` — change parts of a text without sending the rest of it, atomically.
+- `documents_diff` — a unified diff between two versions, returning neither.
 - `documents_upload` / `documents_update_path` — write a version at a path, and move a document without
   touching its text. Two calls rather than one, so the history can tell the two apart.
 - `documents_delete` / `documents_trash` / `documents_restore` — the trash, which exists nowhere else: the
@@ -773,6 +871,48 @@ Once it is up, register the MCP surface with the client that will work the board
 ```
 
 Locally: `dx serve` in `task-manager-ui`, and `cargo run` in `task-manager-rest-api`.
+
+### Releasing — the pre-baked builder image
+
+`task-manager-rest-api` releases in about **two minutes** rather than ten, and the trick is that it never
+rebuilds a dependency graph that has not changed. `build-task-manager-rest-api-docker.yaml` is
+`workflow_dispatch`-only: it compiles service-sdk, my-postgres, my-http-server, tokio and jemalloc once
+into `ghcr.io/my-ai-utils/task-manager-rest-api-build-docker:latest`, and every release mounts its fresh
+checkout over that image and compiles only the delta.
+
+**Run the builder workflow by hand whenever the GRAPH moves** — a MyJetTools tag bumped, a crate added,
+`Cargo.lock` updated. Nothing else needs it. It is `workflow_dispatch` because there is no Docker daemon on
+a dev machine, so a builder image can only be tested where it is built; iterating on it through release
+tags would burn a version number per attempt.
+
+Four things are load-bearing, and each one silently turns a warm build back into a cold one — no error,
+just the old ten minutes:
+
+- **`CARGO_HOME` and `CARGO_TARGET_DIR` live outside `/src`.** The release bind-mounts its checkout over
+  `/src`, and a bind mount *hides* whatever the image had underneath. A target dir in there would vanish at
+  exactly the moment it is meant to be reused;
+- **the image bakes at `/src`, the same absolute path the release mounts.** Cargo fingerprints record
+  absolute paths, so the same sources at another path are a cold build wearing a warm image's name;
+- **the builder's base matches the runtime image's** (`ubuntu:22.04`). The binary is copied into the
+  runtime image rather than rebuilt there, so a newer base links it against a newer glibc and the container
+  dies at start-up on a symbol lookup;
+- **`task-manager-rest-api/Cargo.lock` is committed**, un-ignored explicitly in `.gitignore`. With the lock
+  ignored CI resolves fresh and takes the newest semver-compatible release of every transitive crate, so
+  one patch published anywhere in a ~400-crate graph invalidates the image and warm hits become a lottery
+  nobody can measure. It also means a broken transitive dependency reproduces locally instead of only in
+  CI. Verify with `cargo check --locked` before committing a change to it.
+
+The context is the **repo root**, not the service folder, because `task-manager-shared` is a path
+dependency. Only those two crates recompile per release: `actions/checkout` stamps every file with the
+checkout time, so cargo considers all of our own sources dirty regardless — which is fine, they are small.
+
+**A release never breaks because of the builder.** The pull step is `continue-on-error`, and the cold steps
+behind the `if:` are the exact build used before the image existed, token and all. The worst outcome of a
+missing or broken image is the time we used to pay anyway. Confirm in a run that *Build (warm, …)* ran and
+the cold steps were skipped.
+
+Not for `task-manager-ui`: it is a Dioxus WASM build with its own toolchain and `dx build`, running inside
+`ghcr.io/myjettools/dioxus-docker`. Different problem, different fix — and its lock stays ignored.
 
 ## Open
 
