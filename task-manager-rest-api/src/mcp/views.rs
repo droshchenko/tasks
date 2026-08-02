@@ -514,7 +514,7 @@ pub struct DocumentContentView {
     )]
     pub from_line: Option<i64>,
     #[property(
-        description = "The last line `content` holds, 1-based and inclusive. Present only for a slice. It may be BEFORE the `to_line` you asked for, when `max_bytes` ran out first — read on from `to_line + 1`"
+        description = "The last line returned WHOLE, 1-based and inclusive. Present only for a slice. It may be before the `to_line` you asked for, when `max_bytes` ran out first — and it is `from_line - 1` when the budget could not fit even one line, so `content` holds part of a line that no number claims. READ ON FROM `to_line + 1` either way: that re-reads a partially shown line instead of skipping the half you were not given"
     )]
     pub to_line: Option<i64>,
     #[property(

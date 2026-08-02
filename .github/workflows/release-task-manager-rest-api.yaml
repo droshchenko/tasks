@@ -38,10 +38,20 @@ jobs:
         run: |
           echo "${{ secrets.PUBLISH_TOKEN }}" | docker login https://ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # A RELEASE MUST NEVER BREAK BECAUSE OF THE BUILDER. This step is allowed to fail — no image pushed
-      # yet, a bad image, ghcr down — and the cold steps behind the `if:` below are the exact build that was
-      # used before the image existed. The worst outcome of a missing or broken builder is the ten minutes
-      # we used to pay anyway.
+      # A MISSING BUILDER MUST NEVER BREAK A RELEASE. This step is allowed to fail — no image pushed yet,
+      # ghcr down, the token unable to read it — and the cold steps behind the `if:` below are the exact
+      # build used before the image existed. That failure costs the ten minutes we used to pay anyway.
+      #
+      # THE FALLBACK IS ON THE PULL, NOT ON THE BUILD, and it is worth knowing which case that leaves out:
+      # if the pull SUCCEEDS and the warm build then fails — a new crate needing a system package the image
+      # was baked without, toolchain drift, a corrupt CARGO_HOME — the job fails outright and no cold build
+      # is attempted. Since the image is `latest` and only ever written by hand, that state is sticky: every
+      # release keeps failing until somebody re-dispatches build-task-manager-rest-api-docker.yaml. THAT is
+      # the fix when a release dies inside the warm step; do not go looking for a bug in this file.
+      #
+      # Deliberately left as the shared pattern rather than hardened here — this workflow is generated from
+      # the app-bootstrap guide and is identical across every adopting service, and a local improvement is a
+      # local divergence nobody else gets. Harden it in the guide or not at all.
       - name: Pull the builder image
         id: builder
         continue-on-error: true

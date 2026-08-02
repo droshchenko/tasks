@@ -195,11 +195,11 @@ pub struct DocumentsSearchResponse {
     #[property(description = "How many documents matched")]
     pub documents_amount: i32,
     #[property(
-        description = "How many lines matched across the whole project. THE ANSWER TO 'is this mentioned anywhere', and it is complete even when the returned lines are capped"
+        description = "How many lines matched across the documents that were READ. Complete — including matches the per-document cap left out — UNLESS `truncated` is true, which means the project-wide cap stopped the scan early and documents after it contributed nothing to this number. So it is authoritative for 'how often is this mentioned' exactly when `truncated` is false"
     )]
     pub matches_total: i32,
     #[property(
-        description = "How many documents were actually read. Compare it with documents_list: the difference is what `path_prefix` excluded and what had no text in it"
+        description = "How many documents were actually read. Compare it with documents_list: the difference is what `path_prefix` excluded, what had no text in it, and — when `truncated` is true — what the project-wide cap never got to"
     )]
     pub searched_amount: i32,
     #[property(
@@ -233,10 +233,12 @@ until you find it, and most of what that costs is spent on the ones that turn ou
 two documents of 24 KB and 33 KB read in full to learn that neither says anything is the context the \
 work needed, gone. One call answers it for the whole project.\
 \
-It is also how you find out whether something is mentioned AT ALL. `matches_total` is a complete count \
-even when the returned lines are capped, so zero is a real answer and not a truncated one — with one \
-exception the response names: a file has no text, so `skipped_amount` is the part of the project this \
-cannot see into.\
+IT IS ALSO HOW YOU FIND OUT WHETHER SOMETHING IS MENTIONED AT ALL — but read `truncated` before you \
+conclude anything from a number. False, and `matches_total` is the real count for the whole project \
+even where the returned LINES were capped, so zero means it is genuinely not there. True, and a cap \
+stopped the scan early: documents past that point were never read and contributed nothing to the \
+total, so narrow it with `path_prefix` before believing what it says. The other blind spot the \
+response names for you is `skipped_amount` — a file has no text, so this cannot see into one at all.\
 \
 Each match carries a `line_number` you can hand straight to documents_get as `from_line`, which is how \
 a search turns into a read of the right section rather than of the whole document.\

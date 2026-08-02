@@ -54,6 +54,14 @@ pub const MAX_DIFF_CONTEXT: i64 = 20;
 /// flagged, so the caller knows to narrow it rather than believing they saw the end.
 pub const MAX_DIFF_BYTES: usize = 120_000;
 
+/// The most a batch of edits may grow a text to, in BYTES, before the batch is refused.
+///
+/// Not a second content limit — `MAX_CONTENT_LEN` is still the one that decides what may be stored, and it
+/// counts CHARACTERS. This is the guard that has to fire EARLIER than that one, on the intermediate text,
+/// because the thing it is stopping is an allocation rather than a write. Four bytes per character, so a
+/// document sitting exactly on the content limit in a four-byte script cannot be refused by this instead.
+const MAX_EDITED_BYTES: usize = 4 * super::MAX_CONTENT_LEN;
+
 // ---------------------------------------------------------------------------------------------- editing
 
 /// One replacement, as a caller asks for it.
@@ -148,6 +156,28 @@ pub fn apply_edits(text: &str, edits: &[DocumentEdit]) -> Result<(String, Vec<i3
                  `replace_all: true` if all {found} really should change. Quietly changing every occurrence \
                  in a large document is the way one gets wrong without anybody noticing",
                 preview(&edit.old_string)
+            ));
+        }
+
+        // Refused BEFORE the allocation, and that ordering is the whole of it.
+        //
+        // `replace_all` multiplies: every occurrence grows by the difference between the two strings, so a
+        // one-megabyte document of `a` and a one-kilobyte `new_string` asks for a gigabyte — and a batch
+        // compounds, because each edit runs against the result of the last. The content limit cannot catch
+        // it: `DocumentBody::validate` runs on the finished text, by which time the allocation has already
+        // been attempted. An allocation that fails in Rust ABORTS the process; it is not an error a tool
+        // call can return. So the whole service would die of one edit, and this is the check that stops it.
+        let growth = found as i64 * (edit.new_string.len() as i64 - edit.old_string.len() as i64);
+        let projected = current.len() as i64 + growth;
+
+        if projected > MAX_EDITED_BYTES as i64 {
+            return Err(format!(
+                "edit {ordinal} would grow the document to about {projected} bytes, past the {MAX_EDITED_BYTES} \
+                 this allows. NOTHING WAS WRITTEN. {} occurrence(s) each growing by {} bytes is what does it — \
+                 with `replace_all` on a large document that multiplies fast. Narrow the match, or split the \
+                 change across documents",
+                found,
+                edit.new_string.len() as i64 - edit.old_string.len() as i64
             ));
         }
 
@@ -309,9 +339,15 @@ pub fn search_text(
 /// A piece of a document, and where in it that piece came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextSlice {
+    /// EXACTLY the bytes that are stored for those lines, terminators and all — not a re-join. See
+    /// [`line_spans`] for why that distinction is load-bearing.
     pub text: String,
     /// 1-based and inclusive. Both are 0 for an empty document, which has no line 1 to name.
     pub from_line: i64,
+    /// The last line returned WHOLE. Normally at or after `from_line` — but `from_line - 1` when a byte
+    /// budget could not fit even the first line, so that `text` holds part of a line that no number claims.
+    /// Reading on from `to_line + 1` is correct either way, which is the point of reporting it like this:
+    /// the partially-shown line gets read again rather than skipped.
     pub to_line: i64,
     pub lines_total: i64,
     /// True when what is in `text` is not the whole document — by line range, by byte budget, or both.
@@ -333,8 +369,8 @@ pub fn slice_text(
     to_line: Option<i64>,
     max_bytes: Option<i64>,
 ) -> Result<TextSlice, String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let lines_total = lines.len() as i64;
+    let spans = line_spans(text);
+    let lines_total = spans.len() as i64;
 
     if let Some(max) = max_bytes
         && max < 1
@@ -382,9 +418,9 @@ pub fn slice_text(
     // caller does not know the length.
     let to = to_line.unwrap_or(lines_total).min(lines_total);
 
-    let window = &lines[(from - 1) as usize..to as usize];
+    let start = spans[(from - 1) as usize].0;
 
-    let mut body = window.join("\n");
+    let mut body = &text[start..line_range_end(text, &spans, to, lines_total)];
     let mut last = to;
     let mut cut = false;
 
@@ -394,38 +430,108 @@ pub fn slice_text(
         if body.len() > max {
             cut = true;
 
-            let mut used = 0;
+            // The last WHOLE line that fits, found by walking the ends rather than by adding up lengths:
+            // the terminators are part of the text now, so their cost is already in the offsets.
             let mut fitting = 0;
 
-            for (offset, line) in window.iter().enumerate() {
-                // The newline that joins this line to the previous one is part of what it costs.
-                let cost = line.len() + if offset == 0 { 0 } else { 1 };
-
-                if used + cost > max {
+            for line in from..=to {
+                if line_range_end(text, &spans, line, lines_total) - start > max {
                     break;
                 }
 
-                used += cost;
                 fitting += 1;
             }
 
             if fitting == 0 {
-                body = clip_bytes(window[0], max);
-                last = from;
+                // Not even the first line fits. A partial line is still worth returning — but `to_line`
+                // must NOT claim this line, or the documented "read on from `to_line` + 1" would skip the
+                // part that was cut off and the caller would never learn it existed. `from_line - 1` says
+                // no line came back whole, and makes that continuation re-read this one.
+                body = &text[start..start + fitting_bytes(text, start, max)];
+                last = from - 1;
+
+                if body.is_empty() {
+                    return Err(format!(
+                        "`max_bytes` is {max}, which is smaller than the first character of line {from} — \
+                         there is nothing that could be returned. Raise it, or ask for a later line"
+                    ));
+                }
             } else {
-                body = window[..fitting].join("\n");
-                last = from + fitting as i64 - 1;
+                last = from + fitting - 1;
+                body = &text[start..line_range_end(text, &spans, last, lines_total)];
             }
         }
     }
 
     Ok(TextSlice {
-        text: body,
+        text: body.to_string(),
         from_line: from,
         to_line: last,
         lines_total,
         truncated: cut || from > 1 || last < lines_total,
     })
+}
+
+/// Where the text of lines `..=line` ends, in bytes.
+///
+/// The LAST line of the document ends at the end of the text — terminator included — so that reading a
+/// whole document hands back exactly the bytes that are stored, trailing newline and all. Any other line
+/// ends where its own text does, so a slice out of the middle has no dangling terminator on it.
+fn line_range_end(text: &str, spans: &[(usize, usize)], line: i64, lines_total: i64) -> usize {
+    if line >= lines_total {
+        text.len()
+    } else {
+        spans[(line - 1) as usize].1
+    }
+}
+
+/// How many bytes from `start` fit in `max`, cut at a character boundary.
+fn fitting_bytes(text: &str, start: usize, max: usize) -> usize {
+    let mut cut = max.min(text.len() - start);
+
+    while cut > 0 && !text.is_char_boundary(start + cut) {
+        cut -= 1;
+    }
+
+    cut
+}
+
+/// Where each line of a text begins and ends, in BYTES, with the terminator excluded from the end.
+///
+/// **Built rather than reached for via `str::lines` and a re-join, and the difference is not cosmetic.**
+/// `lines` throws away which terminator each line had, so joining them back with `"\n"` produces a document
+/// that is not the one stored: every `\r\n` silently becomes `\n` and a trailing newline disappears. A read
+/// that did that would report `truncated: false` while handing back different bytes — and a caller copying
+/// two of those lines into `documents_edit.old_string` would be told the text is not in the document, with
+/// the error pointing at indentation and dashes rather than at the line endings.
+///
+/// The split matches `str::lines` exactly, so line NUMBERS agree everywhere: split on `\n`, drop one
+/// preceding `\r`, and no empty final line when the text ends in a terminator.
+fn line_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+
+    for (at, ch) in text.char_indices() {
+        if ch != '\n' {
+            continue;
+        }
+
+        let mut end = at;
+
+        if end > start && text.as_bytes()[end - 1] == b'\r' {
+            end -= 1;
+        }
+
+        spans.push((start, end));
+        start = at + 1;
+    }
+
+    // Whatever is after the last terminator, when the text does not end with one.
+    if start < text.len() {
+        spans.push((start, text.len()));
+    }
+
+    spans
 }
 
 // --------------------------------------------------------------------------------------------- outlines
@@ -461,16 +567,21 @@ pub struct DocumentHeading {
 /// shallower and the spans of nested headings overlap. That is what makes a slice of one entry a slice of
 /// the whole section rather than of its first paragraph.
 pub fn outline_of(text: &str) -> Vec<DocumentHeading> {
-    let lines: Vec<&str> = text.lines().collect();
+    let spans = line_spans(text);
 
     let mut headings: Vec<DocumentHeading> = Vec::new();
     let mut fence: Option<(char, usize)> = None;
 
-    for (index, raw) in lines.iter().enumerate() {
+    for (index, span) in spans.iter().enumerate() {
+        let raw = &text[span.0..span.1];
         let line = raw.trim_start();
-        let indent = raw.len() - line.len();
 
-        // Four spaces in is an indented code block, where nothing is markup.
+        // CHARACTERS, not bytes. Measured in bytes, two non-breaking spaces are four — so a heading
+        // indented by them reads as an indented code block and vanishes from the outline entirely, which
+        // an agent can only interpret as the section not existing.
+        let indent = raw.chars().count() - line.chars().count();
+
+        // Four columns in is an indented code block, where nothing is markup.
         if indent > 3 {
             continue;
         }
@@ -508,7 +619,7 @@ pub fn outline_of(text: &str) -> Vec<DocumentHeading> {
         });
     }
 
-    let lines_total = lines.len() as i64;
+    let lines_total = spans.len() as i64;
 
     for index in 0..headings.len() {
         let level = headings[index].level;
@@ -521,7 +632,11 @@ pub fn outline_of(text: &str) -> Vec<DocumentHeading> {
             .max(headings[index].line);
 
         headings[index].end_line = end;
-        headings[index].size = byte_span(&lines, headings[index].line, end);
+
+        // From the real byte offsets, so the size counts the terminators the document actually has rather
+        // than assuming one byte each — a CRLF document would otherwise under-report every section.
+        headings[index].size = (line_range_end(text, &spans, end, lines_total)
+            - spans[(headings[index].line - 1) as usize].0) as i64;
     }
 
     headings
@@ -576,15 +691,6 @@ fn atx_heading(line: &str) -> Option<(i32, &str)> {
     }
 
     Some((hashes as i32, title))
-}
-
-/// How many bytes lines `from..=to` occupy, newlines included. 1-based and inclusive, like everything else
-/// here.
-fn byte_span(lines: &[&str], from: i64, to: i64) -> i64 {
-    lines[(from - 1) as usize..to as usize]
-        .iter()
-        .map(|line| line.len() as i64 + 1)
-        .sum()
 }
 
 // ---------------------------------------------------------------------------------------------- diffing
@@ -756,6 +862,49 @@ mod tests {
         assert_eq!(text, "foofoo");
     }
 
+    /// THE ONE THAT KILLS THE PROCESS IF IT REGRESSES.
+    ///
+    /// `replace_all` multiplies by the number of occurrences, and a batch compounds because each edit runs
+    /// against the result of the last. The content limit cannot catch it — that runs on the finished text,
+    /// after the allocation has been attempted — and a failed allocation in Rust ABORTS rather than
+    /// returning an error, so the whole service goes down on one tool call. Refused before allocating.
+    #[test]
+    fn an_edit_that_would_explode_the_document_is_refused_before_it_allocates() {
+        // 200k occurrences, each growing by ~1 KB: about 200 MB, from a call of a few kilobytes.
+        let document = "a".repeat(200_000);
+        let payload = "x".repeat(1_000);
+
+        let message = apply_edits(&document, &[edit_all("a", &payload)]).unwrap_err();
+
+        assert!(message.contains("NOTHING WAS WRITTEN"), "{message}");
+        assert!(message.contains("grow the document"), "{message}");
+    }
+
+    /// The compounding case: each edit on its own is modest, and together they are not.
+    #[test]
+    fn growth_is_measured_against_the_running_text_not_the_original() {
+        let document = "ab".repeat(50_000);
+
+        let message = apply_edits(
+            &document,
+            &[edit_all("a", &"a".repeat(50)), edit_all("b", &"b".repeat(500))],
+        )
+        .unwrap_err();
+
+        assert!(message.contains("edit 2"), "the first edit is affordable: {message}");
+    }
+
+    /// And the guard must not refuse ordinary work — a real rename in a large document.
+    #[test]
+    fn an_ordinary_replace_all_is_not_refused() {
+        let document = "the API is an API\n".repeat(1_000);
+
+        let (text, counts) = apply_edits(&document, &[edit_all("API", "interface")]).unwrap();
+
+        assert_eq!(counts, vec![2_000]);
+        assert!(text.contains("the interface is an interface"));
+    }
+
     #[test]
     fn a_multi_line_match_works_and_is_escaped_in_the_error() {
         let (text, _) = apply_edits("a\nb\nc", &[edit("a\nb", "A\nB")]).unwrap();
@@ -899,13 +1048,77 @@ mod tests {
     }
 
     /// When not even the first line fits, half a line beats nothing — and must not split a character.
+    ///
+    /// `to_line` reports the line BEFORE the range, which is the whole subtlety: no line came back whole,
+    /// so continuing from `to_line + 1` re-reads this one instead of skipping the part that was cut off.
     #[test]
     fn a_budget_smaller_than_the_first_line_cuts_inside_it_safely() {
-        let slice = slice_text("émdash——————", None, None, Some(3)).unwrap();
+        let slice = slice_text("émdash——————\nsecond", None, None, Some(3)).unwrap();
 
-        assert!(slice.text.len() <= 3);
+        assert_eq!(slice.text, "ém", "cut at a character boundary, not mid-é");
         assert!(slice.truncated);
-        assert_eq!(slice.to_line, 1);
+        assert_eq!(
+            slice.to_line, 0,
+            "no whole line was returned, so continuing from to_line + 1 re-reads line 1"
+        );
+    }
+
+    /// A budget below the first CHARACTER can return nothing at all, and nothing is not an answer — the
+    /// caller would read `text: \"\"` as an empty document.
+    #[test]
+    fn a_budget_below_the_first_character_is_refused() {
+        let message = slice_text("émdash", None, None, Some(1)).unwrap_err();
+
+        assert!(message.contains("smaller than the first character"), "{message}");
+    }
+
+    /// THE ROUND TRIP. A document read whole must come back byte for byte, or text copied out of a read
+    /// and into documents_edit.old_string will not match what is stored — and the edit's error message
+    /// sends the caller looking at indentation and dashes instead of at line endings.
+    #[test]
+    fn a_whole_read_returns_exactly_what_is_stored() {
+        for stored in [
+            "a\r\nb\r\nc\r\n",
+            "a\r\nb\r\nc",
+            "a\nb\nc\n",
+            "a\nb\nc",
+            "\n\n\n",
+            "one line",
+            "trailing\n",
+            "é—😀\r\nsecond\r\n",
+        ] {
+            let slice = slice_text(stored, None, None, None).unwrap();
+
+            assert_eq!(slice.text, stored, "{stored:?} did not round-trip");
+            assert!(!slice.truncated, "{stored:?} reads as the whole document");
+        }
+    }
+
+    /// A slice out of the MIDDLE keeps the terminators it had, and carries no dangling one.
+    #[test]
+    fn a_middle_slice_keeps_the_documents_own_line_endings() {
+        let slice = slice_text("a\r\nb\r\nc\r\nd\r\n", Some(2), Some(3), None).unwrap();
+
+        assert_eq!(slice.text, "b\r\nc");
+        assert!(slice.truncated);
+    }
+
+    /// Line NUMBERS must agree with str::lines everywhere, or a number from documents_search or
+    /// documents_outline would read a different line back.
+    #[test]
+    fn line_numbering_agrees_with_str_lines() {
+        for text in ["", "\n", "\n\n\n", "a", "a\n", "a\r\nb", "a\r\nb\r\n", "\r\n"] {
+            assert_eq!(
+                line_spans(text).len(),
+                text.lines().count(),
+                "{text:?} counts differently"
+            );
+
+            for (index, line) in text.lines().enumerate() {
+                let span = line_spans(text)[index];
+                assert_eq!(&text[span.0..span.1], line, "{text:?} line {index}");
+            }
+        }
     }
 
     #[test]
@@ -977,6 +1190,25 @@ mod tests {
     fn a_closing_hash_run_is_decoration_but_a_sharp_in_a_name_is_not() {
         assert_eq!(outline_of("## Two ##")[0].title, "Two");
         assert_eq!(outline_of("## C#")[0].title, "C#");
+    }
+
+    /// Indentation is COLUMNS, not bytes. Measured in bytes, two non-breaking spaces are four and the
+    /// heading disappears from the outline — which an agent can only read as the section not existing.
+    #[test]
+    fn a_heading_indented_with_multibyte_whitespace_is_still_a_heading() {
+        let outline = outline_of("\u{a0}\u{a0}# Nbsp heading");
+
+        assert_eq!(outline.len(), 1, "{outline:?}");
+        assert_eq!(outline[0].title, "Nbsp heading");
+    }
+
+    /// The section size counts the terminators the document actually has.
+    #[test]
+    fn a_section_size_counts_real_bytes_including_crlf() {
+        let outline = outline_of("# One\r\nbody\r\n");
+
+        // "# One\r\nbody\r\n" is 13 bytes, and the section is the whole document.
+        assert_eq!(outline[0].size, 13);
     }
 
     #[test]
