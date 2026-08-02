@@ -39,6 +39,18 @@ rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-ext
 # allowed in MyJetTools projects — reqwest is not.
 flurl = { tag = "0.7.0", git = "https://github.com/MyJetTools/fl-url.git" }
 
+# Searching documents and the board. `regex` rather than a hand-rolled scan for one reason that is about
+# safety rather than convenience: the pattern comes from a tool argument, and this engine is guaranteed
+# linear in the length of the input — a backtracking one would let `(a+)+b` hang the whole service. A plain
+# substring query goes through the same code path with `regex::escape` around it, which costs nothing:
+# the engine compiles a literal down to a memchr scan.
+regex = "*"
+
+# The unified diff between two versions of a document. Myers with hunk grouping and a unified-diff
+# formatter already written — an algorithm worth using rather than owning, since the failure mode of a
+# subtly wrong diff is a reader believing a change that did not happen.
+similar = "*"
+
 # The whole product state is held in memory and read on every request while being written at
 # human/agent rate — the textbook ArcSwap case. `parking_lot` serialises writers (a plain
 # Mutex<()>, never held across an await); `ahash` is the default for internal keys.

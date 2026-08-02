@@ -7,6 +7,10 @@ on:
 
 env:
   DIR: task-manager-rest-api
+  # The pre-baked dependency graph — see build-task-manager-rest-api-docker.yaml, which is run BY HAND and
+  # produces this. Compiling only the delta against it is the difference between a two-minute release and a
+  # ten-minute one.
+  BUILD_IMAGE: ghcr.io/${{ github.repository_owner }}/task-manager-rest-api-build-docker
 
 jobs:
   build:
@@ -16,14 +20,6 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6.0.2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-
-      # Not about our own protos — we have none. service-sdk pulls in `my-telemetry-writer`, whose build
-      # script runs prost-build, so protoc is required regardless.
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Get the version
         id: get_version
@@ -37,14 +33,58 @@ jobs:
           cd ${DIR}
           sed -i -e 's/^version = .*/version = "${{ steps.get_version.outputs.VERSION }}"/' Cargo.toml
 
-      - run: |
-          export GIT_HUB_TOKEN="${{ secrets.PUBLISH_TOKEN }}"
-          cd ${DIR}
-          cargo build --release
-
+      # Before the pull as well as before the push: the builder image is private to the org.
       - name: Docker login
         run: |
           echo "${{ secrets.PUBLISH_TOKEN }}" | docker login https://ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # A RELEASE MUST NEVER BREAK BECAUSE OF THE BUILDER. This step is allowed to fail — no image pushed
+      # yet, a bad image, ghcr down — and the cold steps behind the `if:` below are the exact build that was
+      # used before the image existed. The worst outcome of a missing or broken builder is the ten minutes
+      # we used to pay anyway.
+      - name: Pull the builder image
+        id: builder
+        continue-on-error: true
+        run: docker pull ${BUILD_IMAGE}:latest
+
+      # The checkout is mounted over /src — the same absolute path the image baked at, which is what makes
+      # cargo's fingerprints match. Only this crate and task-manager-shared recompile: actions/checkout
+      # stamps every file with the checkout time, so cargo considers our own sources dirty regardless. That
+      # is expected and cheap. The dependency sources keep their baked mtimes inside the image's CARGO_HOME,
+      # and that graph is the nine minutes.
+      #
+      # ${DIR} is expanded by the RUNNER before `docker run`, which is why the inner `bash -c` is in double
+      # quotes — the container has no DIR. The copy at the end puts the binary where the runtime Dockerfile
+      # expects it, since CARGO_TARGET_DIR points outside the mount.
+      - name: Build (warm, in the builder image)
+        if: steps.builder.outcome == 'success'
+        run: |
+          docker run --rm \
+            -v "${PWD}:/src" \
+            -w /src/${DIR} \
+            ${BUILD_IMAGE}:latest \
+            bash -c "cargo build --release \
+              && mkdir -p target/release \
+              && cp /build/target/release/${DIR} target/release/${DIR}"
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
+        if: steps.builder.outcome != 'success'
+        with:
+          toolchain: stable
+          rustflags: ""
+
+      # Not about our own protos — we have none. service-sdk pulls in `my-telemetry-writer`, whose build
+      # script runs prost-build, so protoc is required regardless.
+      - name: Install protoc
+        if: steps.builder.outcome != 'success'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Build (cold, on the runner)
+        if: steps.builder.outcome != 'success'
+        run: |
+          export GIT_HUB_TOKEN="${{ secrets.PUBLISH_TOKEN }}"
+          cd ${DIR}
+          cargo build --release
 
       - name: Docker Build and Publish
         run: |
