@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 use task_manager_shared::documents::{DocumentIndexEntryResponse, document_file_name, render_size};
-use task_manager_shared::github::is_github_path;
+use task_manager_shared::github::{GITHUB_ROOT, is_github_path};
 
-use super::{DocumentsState, file_icon, folder_icon, remote_folder_icon};
+use super::{DocumentsState, connection_note, file_icon, folder_icon, remote_folder_icon};
 
 /// How far one level is pushed in, in pixels.
 const INDENT: usize = 14;
@@ -132,6 +132,76 @@ fn sort_level(level: &mut Vec<DocumentNode>) {
     }
 }
 
+/// Put a folder in the tree for every connected repository, whether or not it has files.
+///
+/// **Without this a connection is invisible in exactly the states somebody needs to see it.** Folders
+/// here come from the paths of the documents in them, so a connection with an empty listing produces
+/// nothing — and "waiting for a key", "still reading" and "the folder you named has nothing in it" all
+/// have empty listings. The reader would press Refresh, see no change, and have nothing to go on.
+///
+/// A connection that DOES have files is already in the tree, built from its paths; this only adds what
+/// is missing, so nothing is drawn twice.
+pub fn merge_github_connections(nodes: &mut Vec<DocumentNode>, connections: &[String]) {
+    if connections.is_empty() {
+        return;
+    }
+
+    let root = match nodes.iter().position(|node| match node {
+        DocumentNode::Folder { path, .. } => path == GITHUB_ROOT,
+        DocumentNode::Document { .. } => false,
+    }) {
+        Some(position) => position,
+        None => {
+            nodes.push(DocumentNode::Folder {
+                name: GITHUB_ROOT.to_string(),
+                path: GITHUB_ROOT.to_string(),
+                children: Vec::new(),
+            });
+
+            nodes.len() - 1
+        }
+    };
+
+    let DocumentNode::Folder { children, .. } = &mut nodes[root] else {
+        return;
+    };
+
+    for name in connections {
+        let path = format!("{GITHUB_ROOT}/{name}");
+
+        let present = children.iter().any(|node| match node {
+            DocumentNode::Folder { path: existing, .. } => existing == &path,
+            DocumentNode::Document { .. } => false,
+        });
+
+        if !present {
+            children.push(DocumentNode::Folder {
+                name: name.clone(),
+                path,
+                children: Vec::new(),
+            });
+        }
+    }
+
+    sort_level(children);
+    sort_level(nodes);
+}
+
+/// The connection a folder path names, when it names one — `github/<name>` and nothing deeper.
+///
+/// Derived from the path rather than carried on the node, because the path already says it: a node two
+/// segments under the reserved root IS a connection, and a third field agreeing with the path would only
+/// be a thing to keep in step.
+pub fn folder_connection(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix(GITHUB_ROOT)?.strip_prefix('/')?;
+
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+
+    Some(rest)
+}
+
 /// Every folder path in a tree, outermost first, for offering as a place to put something.
 ///
 /// Off the tree rather than off the raw paths, so it is exactly the set of folders the reader can see — an
@@ -240,6 +310,20 @@ pub fn DocumentTreeRow(
 
             let for_toggle = path.clone();
 
+            // A connection's own row carries what the last listing did, and the one button that acts on
+            // it — both only here, because repeating them down every folder of the repository would be
+            // repeating one fact about the connection at every depth.
+            //
+            // Owned before the rsx rather than read inside it: `connection_note` borrows out of the
+            // signal's read guard, and a guard cannot outlive the expression that made it.
+            let connection = folder_connection(&path).map(str::to_string);
+
+            let note = connection
+                .as_ref()
+                .and_then(|name| cs.read().connection(name).and_then(connection_note));
+
+            let children_amount = children.len();
+
             rsx! {
                 div {
                     class: "{row_class}",
@@ -249,10 +333,38 @@ pub fn DocumentTreeRow(
 
                     img { class: "tree-icon", src: "{icon}" }
                     span { class: "tree-name truncate", "{name}" }
-                    if path == task_manager_shared::github::GITHUB_ROOT {
+                    if path == GITHUB_ROOT {
                         span { class: "tree-tag", "remote" }
                     }
-                    span { class: "tree-size dim", "{children.len()}" }
+
+                    if let Some(note) = note {
+                        span { class: "tree-tag", "{note}" }
+                    }
+
+                    if let Some(connection) = connection {
+                        button {
+                            class: "tree-action",
+                            title: "Read this repository from GitHub again",
+                            onclick: move |event: Event<MouseData>| {
+                                // The row itself folds the tree when clicked, and a press of this
+                                // button is not a press of the row.
+                                event.stop_propagation();
+
+                                let project = cs.read().selected_project.clone();
+
+                                crate::dialogs::open(crate::dialogs::DialogState::PullGithub {
+                                    project,
+                                    connection: connection.clone(),
+                                    on_started: EventHandler::new(move |_| {
+                                        cs.write().refresh_connections()
+                                    }),
+                                });
+                            },
+                            "↻"
+                        }
+                    } else {
+                        span { class: "tree-size dim", "{children_amount}" }
+                    }
                 }
 
                 // Only mounted while open, so collapsing a folder stops its children rendering at all.

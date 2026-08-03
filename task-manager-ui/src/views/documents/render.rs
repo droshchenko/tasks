@@ -74,10 +74,20 @@ pub fn RenderDocuments(selected: String) -> Element {
 
     // Built here rather than kept in state: the tree IS the index, folded a certain way, and a second copy
     // would be a thing to keep in step with the first for no gain.
-    let nodes = match index.as_ref() {
+    let mut nodes = match index.as_ref() {
         Ok(entries) => build_tree(entries),
         Err(_) => Vec::new(),
     };
+
+    // Every connected repository gets a folder whether or not it has files — see
+    // `merge_github_connections`. Without it a connection waiting for a key is invisible on this screen,
+    // which is the state every deploy leaves a private one in.
+    let connection_names: Vec<String> = super::get_connections(cs, &cs_ra)
+        .iter()
+        .map(|itm| itm.name.clone())
+        .collect();
+
+    super::merge_github_connections(&mut nodes, &connection_names);
 
     // Every folder that exists, for the upload dialog to offer. Off the tree rather than off the paths, so it
     // is the same set the reader is looking at — minus the mirrors, which nothing can be written into.

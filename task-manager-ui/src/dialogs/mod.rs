@@ -30,6 +30,8 @@ mod md;
 pub use md::*;
 mod message;
 pub use message::*;
+mod pull_github;
+pub use pull_github::*;
 mod upload_document;
 pub use upload_document::*;
 mod view_document;
@@ -111,6 +113,13 @@ pub enum DialogState {
         folders: Vec<String>,
         initial_folder: String,
         on_synced: EventHandler<()>,
+    },
+    /// Read one connected repository from GitHub again, confirmed first — see the dialog for why a read
+    /// is worth confirming.
+    PullGithub {
+        project: String,
+        connection: String,
+        on_started: EventHandler<()>,
     },
     /// One goal, in full: its text and its thread. Handed the whole goal rather than an id, because the
     /// screen that opens it is already holding one — a goal arrives with the board on every push.
@@ -299,6 +308,33 @@ pub fn RenderDialog() -> Element {
                                     }
                                     None => close(),
                                 }
+                            }
+                            Err(err) => submit_failed(err.message),
+                        }
+                    });
+                },
+            }
+        },
+        DialogState::PullGithub {
+            project,
+            connection,
+            on_started,
+        } => rsx! {
+            PullGithubDialog {
+                connection: connection.clone(),
+                on_submit: move |_| {
+                    let project = project.clone();
+                    let connection = connection.clone();
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::pull_github_connection(&project, &connection).await {
+                            // The pull is asynchronous by design — the request comes back before the
+                            // repository has been read — so this closes on "it was asked for" rather
+                            // than on "it is done". `on_started` re-reads the connection so the row
+                            // shows `reading…` immediately.
+                            Ok(()) => {
+                                on_started.call(());
+                                close();
                             }
                             Err(err) => submit_failed(err.message),
                         }

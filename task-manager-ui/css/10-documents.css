@@ -119,6 +119,28 @@
   padding: 0 4px;
 }
 
+/* The one button that lives inside a tree row. Quiet until the row is hovered: a tree is read far more
+ * often than it is acted on, and a control repeated down a list competes with the names beside it. */
+.tree-action {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  font-size: 13px;
+  opacity: 0;
+}
+
+.tree-row:hover .tree-action {
+  opacity: 1;
+}
+
+.tree-action:hover {
+  color: var(--accent);
+}
+
 /* The pick tree inside the sync dialog. Scrolls on its own so a repository of four hundred files does not
  * push the Override checkbox and the button off the bottom of the dialog — which is precisely the pair a
  * reader has to see before pressing anything. */

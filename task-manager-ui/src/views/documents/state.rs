@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use dioxus_utils::DataState;
 use task_manager_shared::documents::{DocumentIndexEntryResponse, FindDocumentResponse};
+use task_manager_shared::github::GithubConnectionResponse;
 use task_manager_shared::projects::ProjectResponse;
 
 /// The document browser, for one project at a time.
@@ -25,6 +26,14 @@ pub struct DocumentsState {
     /// folder: the server holds the index in memory, so the whole of it costs less than the round trips
     /// walking it one level at a time would.
     pub index: DataState<Vec<DocumentIndexEntryResponse>>,
+    /// The project's connected GitHub repositories, with what each one's listing currently holds.
+    ///
+    /// **Separate from the index because a connection can exist while having no files**, and a folder in
+    /// this product is derived from the paths of the documents in it — so a connection that is waiting
+    /// for a key, still reading, or pointed at an empty folder produces no path and would be invisible.
+    /// That is the most common state there is: a key lives only in the server's memory, so every deploy
+    /// puts every private connection back into it.
+    pub connections: DataState<Vec<GithubConnectionResponse>>,
     /// Which folders are drawn open, by full path. Mirrored into storage on every change.
     expanded: HashSet<String>,
     /// The folder the reader is WORKING IN — the last one they clicked, or the one holding the document they
@@ -103,6 +112,7 @@ impl DocumentsState {
         // A folder from the old board names nothing on the new one.
         self.current_folder = String::new();
         self.index.reset();
+        self.connections.reset();
         self.content.reset();
         self.content_id = None;
     }
@@ -148,8 +158,25 @@ impl DocumentsState {
     /// is open does not appear on its own.
     pub fn refresh(&mut self) {
         self.index.reset();
+        // Read again as well: a connection's state moves without any document changing — a listing
+        // finishing, a key arriving, a repository going unreachable — and the tree draws that state.
+        self.connections.reset();
         self.content.reset();
         self.content_id = None;
+    }
+
+    /// Re-read the connections only. What a pull asks for: the documents have not changed, the
+    /// connection's state has.
+    pub fn refresh_connections(&mut self) {
+        self.connections.reset();
+    }
+
+    /// One connection by name, or `None` while the list is still loading.
+    pub fn connection(&self, name: &str) -> Option<&GithubConnectionResponse> {
+        self.connections
+            .as_ref()
+            .try_unwrap_as_loaded()
+            .and_then(|itm| itm.iter().find(|c| c.name == name))
     }
 
     fn persist_expanded(&self) {

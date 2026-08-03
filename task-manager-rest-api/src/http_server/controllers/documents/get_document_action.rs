@@ -45,6 +45,39 @@ async fn handle_request(
     let telemetry = service_sdk::my_telemetry::MyTelemetryContext::create_empty();
     let id = input_data.id.trim();
 
+    // A file in a connected repository is named by an id of its own shape and has NO ROW IN POSTGRES —
+    // see `crate::scripts::MIRROR_ID_PREFIX`. Intercepted before the repository, which would otherwise
+    // miss and report "No document github:PROP:…", a sentence that reads as a bug rather than as an
+    // answer. This is the same interception `resolve_document` makes for MCP; the two doors must agree.
+    if let Some((id_prefix, mirror_path)) = crate::scripts::parse_mirror_document_id(id) {
+        // The id carries the project it was minted for, so the same disagreement the row check below
+        // guards against is guarded here: naming one project must not read another's.
+        if !id_prefix.eq_ignore_ascii_case(&project.prefix) {
+            return Err(forbidden("That document belongs to another project"));
+        }
+
+        let found =
+            crate::scripts::read_mirror_document(&action.app, &project.prefix, mirror_path).await;
+
+        return match found {
+            Ok(row) => HttpOutput::as_json(FindDocumentResponse {
+                document: Some(document_to_response(&row, &project.prefix)),
+                in_trash: false,
+                not_found: String::new(),
+            })
+            .into_ok_result(true),
+            // A miss here is prose too, and it is DIFFERENT prose: the file may have gone upstream, or
+            // the connection may be waiting for a key. There is no trash to ask about — nothing here
+            // was ever this project's to delete.
+            Err(err) => HttpOutput::as_json(FindDocumentResponse {
+                document: None,
+                in_trash: false,
+                not_found: err,
+            })
+            .into_ok_result(true),
+        };
+    }
+
     if let Some(row) = action.app.documents_repo.get_by_id(id, &telemetry).await {
         // The caller passed a project AND an id, and the id is what actually finds the row — so the two have
         // to be checked to agree. Without this, membership of one project would read any document of any

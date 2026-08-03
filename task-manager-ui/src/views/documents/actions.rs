@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use dioxus_utils::RenderState;
 use task_manager_shared::documents::{DocumentIndexEntryResponse, FindDocumentResponse};
-use task_manager_shared::github::{is_github_path, parse_github_mirror_path};
+use task_manager_shared::github::{
+    GithubConnectionResponse, GithubMirrorState, is_github_path, parse_github_mirror_path,
+};
 
 use crate::dialogs::MirrorChoice;
 
@@ -132,6 +134,59 @@ pub fn get_content<'s>(
         RenderState::None | RenderState::Loading => Err(render_viewer_note("loading…", false)),
         RenderState::Loaded(found) => Ok(found),
         RenderState::Error(err) => Err(render_viewer_note(err.as_str(), true)),
+    }
+}
+
+/// The project's connected repositories, with the state of each one's listing.
+///
+/// **A second request beside the index, and it earns its keep in the states where the index is empty.**
+/// A folder here is derived from the paths of the documents in it, so a connection that is waiting for a
+/// key, still reading, or pointed at a folder with nothing in it produces no path at all — and would be
+/// invisible on this screen with nothing to explain why. That is not a rare corner: a key lives only in
+/// the server's memory, so every deploy puts every private connection back into it.
+pub fn get_connections<'s>(
+    mut cs: Signal<DocumentsState>,
+    cs_ra: &'s DocumentsState,
+) -> &'s [GithubConnectionResponse] {
+    if cs_ra.selected_project.is_empty() {
+        return &[];
+    }
+
+    match cs_ra.connections.as_ref() {
+        RenderState::None => {
+            let project = cs_ra.selected_project.clone();
+
+            spawn(async move {
+                cs.write().connections.set_loading();
+
+                match crate::api::get_github_connections(&project).await {
+                    Ok(response) => cs.write().connections.set_loaded(response.connections),
+                    // Drawn as none rather than as an error: this is decoration beside the tree, and a
+                    // project whose connections cannot be read still has documents worth showing.
+                    Err(_) => cs.write().connections.set_loaded(Vec::new()),
+                }
+            });
+
+            &[]
+        }
+        RenderState::Loaded(connections) => connections.as_slice(),
+        _ => &[],
+    }
+}
+
+/// What a connection's state says in one short phrase, for the row in the tree.
+///
+/// `None` when there is nothing worth saying — the connection is ready and its files are right there to
+/// be counted, which says more than any word would.
+pub fn connection_note(connection: &GithubConnectionResponse) -> Option<String> {
+    match connection.state.as_str() {
+        GithubMirrorState::READY if connection.files_amount > 0 => None,
+        GithubMirrorState::READY => Some("empty".to_string()),
+        GithubMirrorState::PULLING => Some("reading…".to_string()),
+        GithubMirrorState::PENDING => Some("not read yet".to_string()),
+        GithubMirrorState::NEEDS_KEY => Some("needs a key".to_string()),
+        GithubMirrorState::FAILED => Some("failed".to_string()),
+        other => Some(other.to_string()),
     }
 }
 
