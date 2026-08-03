@@ -119,6 +119,21 @@
   padding: 0 4px;
 }
 
+/* A tag that is also the fix. Only `needs a key` earns this: it is the one state a person can clear in
+ * ten seconds, and the tag is where they are already looking when they learn about it. */
+.tree-tag.actionable {
+  cursor: pointer;
+  background: none;
+  font-family: inherit;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tree-tag.actionable:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* The one button that lives inside a tree row. Quiet until the row is hovered: a tree is read far more
  * often than it is acted on, and a control repeated down a list competes with the names beside it. */
 .tree-action {

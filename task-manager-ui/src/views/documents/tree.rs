@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use task_manager_shared::documents::{DocumentIndexEntryResponse, document_file_name, render_size};
-use task_manager_shared::github::{GITHUB_ROOT, is_github_path};
+use task_manager_shared::github::{GITHUB_ROOT, GithubMirrorState, is_github_path};
 
 use super::{DocumentsState, connection_note, file_icon, folder_icon, remote_folder_icon};
 
@@ -318,9 +318,31 @@ pub fn DocumentTreeRow(
             // signal's read guard, and a guard cannot outlive the expression that made it.
             let connection = folder_connection(&path).map(str::to_string);
 
-            let note = connection
-                .as_ref()
-                .and_then(|name| cs.read().connection(name).and_then(connection_note));
+            // The note, and whether it is the one a person can act on. `needs a key` is the only state
+            // with a ten-second fix, so it is the only tag that becomes a button — the rest are facts to
+            // read, and a control that does nothing is worse than a label.
+            let (note, needs_key) = match connection.as_ref() {
+                Some(name) => {
+                    let cs_ra = cs.read();
+                    let found = cs_ra.connection(name);
+
+                    (
+                        found.and_then(connection_note),
+                        found
+                            .map(|itm| itm.state == GithubMirrorState::NEEDS_KEY)
+                            .unwrap_or(false),
+                    )
+                }
+                None => (None, false),
+            };
+
+            // The root says whose account this is when there is one answer — a label, never the path.
+            // See `DocumentsState::github_root_label`.
+            let label = if path == GITHUB_ROOT {
+                cs.read().github_root_label()
+            } else {
+                name.clone()
+            };
 
             let children_amount = children.len();
 
@@ -332,13 +354,38 @@ pub fn DocumentTreeRow(
                     onclick: move |_| cs.write().toggle(&for_toggle),
 
                     img { class: "tree-icon", src: "{icon}" }
-                    span { class: "tree-name truncate", "{name}" }
+                    span { class: "tree-name truncate", "{label}" }
                     if path == GITHUB_ROOT {
                         span { class: "tree-tag", "remote" }
                     }
 
                     if let Some(note) = note {
-                        span { class: "tree-tag", "{note}" }
+                        if needs_key {
+                            button {
+                                class: "tree-tag actionable",
+                                title: "Give this repository a key",
+                                onclick: {
+                                    let connection = connection.clone().unwrap_or_default();
+
+                                    move |event: Event<MouseData>| {
+                                        event.stop_propagation();
+
+                                        let project = cs.read().selected_project.clone();
+
+                                        crate::dialogs::open(crate::dialogs::DialogState::GithubKey {
+                                            project,
+                                            connection: connection.clone(),
+                                            on_saved: EventHandler::new(move |_| {
+                                                cs.write().refresh_connections()
+                                            }),
+                                        });
+                                    }
+                                },
+                                "{note}"
+                            }
+                        } else {
+                            span { class: "tree-tag", "{note}" }
+                        }
                     }
 
                     if let Some(connection) = connection {

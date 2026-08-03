@@ -171,6 +171,37 @@ impl DocumentsState {
         self.connections.reset();
     }
 
+    /// What the reserved root is CALLED on screen — `github@<account>` when every connection is that
+    /// account's, and a plain `github` when they are not.
+    ///
+    /// **A label, never a path.** `github/` is the first segment of every mirrored path, of every
+    /// mirrored id, of the guard that refuses writes there and of what the MCP tools promise an agent.
+    /// Putting an account in it would rename several hundred documents every time somebody connected a
+    /// second repository. So the tree says whose it is and the address stays what it was.
+    ///
+    /// Falls back to the bare name with more than one account rather than listing them: at that point
+    /// the root does not name an account, and the row that does is each connection's own.
+    pub fn github_root_label(&self) -> String {
+        let Some(connections) = self.connections.as_ref().try_unwrap_as_loaded() else {
+            return task_manager_shared::github::GITHUB_ROOT.to_string();
+        };
+
+        let mut owners = connections
+            .iter()
+            .filter_map(|itm| itm.repo.split('/').next())
+            .filter(|itm| !itm.is_empty());
+
+        let Some(first) = owners.next() else {
+            return task_manager_shared::github::GITHUB_ROOT.to_string();
+        };
+
+        if owners.any(|itm| itm != first) {
+            return task_manager_shared::github::GITHUB_ROOT.to_string();
+        }
+
+        format!("{}@{first}", task_manager_shared::github::GITHUB_ROOT)
+    }
+
     /// One connection by name, or `None` while the list is still loading.
     pub fn connection(&self, name: &str) -> Option<&GithubConnectionResponse> {
         self.connections

@@ -22,6 +22,8 @@ mod edit_project;
 pub use edit_project::*;
 mod github_connections;
 pub use github_connections::*;
+mod github_key;
+pub use github_key::*;
 mod sync_github;
 pub use sync_github::*;
 mod land_task;
@@ -113,6 +115,13 @@ pub enum DialogState {
         folders: Vec<String>,
         initial_folder: String,
         on_synced: EventHandler<()>,
+    },
+    /// Hand the server a key for one connected repository, opened from the tree row that says it needs
+    /// one — the fix belongs on the screen where the symptom is.
+    GithubKey {
+        project: String,
+        connection: String,
+        on_saved: EventHandler<()>,
     },
     /// Read one connected repository from GitHub again, confirmed first — see the dialog for why a read
     /// is worth confirming.
@@ -308,6 +317,32 @@ pub fn RenderDialog() -> Element {
                                     }
                                     None => close(),
                                 }
+                            }
+                            Err(err) => submit_failed(err.message),
+                        }
+                    });
+                },
+            }
+        },
+        DialogState::GithubKey {
+            project,
+            connection,
+            on_saved,
+        } => rsx! {
+            GithubKeyDialog {
+                connection: connection.clone(),
+                on_submit: move |key: String| {
+                    let project = project.clone();
+                    let connection = connection.clone();
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::set_github_key(&project, &connection, &key).await {
+                            // The server starts reading the repository the moment it has the key, so
+                            // this closes on "it was accepted" rather than on "the files are here" —
+                            // `on_saved` re-reads the connection so the row moves to `reading…`.
+                            Ok(()) => {
+                                on_saved.call(());
+                                close();
                             }
                             Err(err) => submit_failed(err.message),
                         }
