@@ -20,6 +20,10 @@ mod edit_members;
 pub use edit_members::*;
 mod edit_project;
 pub use edit_project::*;
+mod github_connections;
+pub use github_connections::*;
+mod sync_github;
+pub use sync_github::*;
 mod land_task;
 pub use land_task::*;
 mod md;
@@ -86,6 +90,27 @@ pub enum DialogState {
         initial_folder: String,
         folders: Vec<String>,
         on_uploaded: EventHandler<()>,
+    },
+    /// The GitHub repositories connected to one project, listed and edited in one place.
+    ///
+    /// **`revision` is what makes the list refresh.** This dialog is the one that performs several
+    /// different calls without closing — connect, detach, hand over a key, refresh — so after each one
+    /// the router re-opens it with the number bumped, and the dialog reloads on the change. A dialog
+    /// that closed after every act would make configuring three repositories nine gestures.
+    GithubConnections {
+        project: String,
+        revision: usize,
+        on_saved: EventHandler<()>,
+    },
+    /// Copy files out of a connected repository into the project's own documents. Handed the mirrors as
+    /// the Documents screen already has them — the tree it draws IS the index it loaded, so the dialog
+    /// costs no request and cannot disagree with what the reader is looking at.
+    SyncGithub {
+        project: String,
+        mirrors: Vec<MirrorChoice>,
+        folders: Vec<String>,
+        initial_folder: String,
+        on_synced: EventHandler<()>,
     },
     /// One goal, in full: its text and its thread. Handed the whole goal rather than an id, because the
     /// screen that opens it is already holding one — a goal arrives with the board on every push.
@@ -177,6 +202,105 @@ pub fn RenderDialog() -> Element {
                                     Err(err) => submit_failed(err.message),
                                 }
                             }
+                        }
+                    });
+                },
+            }
+        },
+        DialogState::GithubConnections {
+            project,
+            revision,
+            on_saved,
+        } => rsx! {
+            GithubConnectionsDialog {
+                project: project.clone(),
+                revision,
+                on_submit: move |submit: GithubSubmit| {
+                    let project = project.clone();
+                    begin_submit();
+                    spawn(async move {
+                        let result = match submit {
+                            GithubSubmit::Save { name, url, branch, path, key } => {
+                                crate::api::set_github_connection(
+                                        &project,
+                                        &name,
+                                        &url,
+                                        &branch,
+                                        &path,
+                                        key,
+                                    )
+                                    .await
+                            }
+                            GithubSubmit::Delete { name } => {
+                                crate::api::delete_github_connection(&project, &name).await
+                            }
+                            GithubSubmit::SetKey { name, key } => {
+                                crate::api::set_github_key(&project, &name, &key).await
+                            }
+                            GithubSubmit::Pull { name } => {
+                                crate::api::pull_github_connection(&project, &name).await
+                            }
+                        };
+                        match result {
+                            Ok(()) => {
+                                on_saved.call(());
+                                // Re-opened rather than closed: configuring repositories is several acts
+                                // in a row, and the bumped revision is what makes the list show the one
+                                // just performed. A pull is asynchronous, so what comes back may still
+                                // say `pulling` — pressing Refresh again is how you watch it land.
+                                open(DialogState::GithubConnections {
+                                    project,
+                                    revision: revision + 1,
+                                    on_saved,
+                                });
+                            }
+                            Err(err) => submit_failed(err.message),
+                        }
+                    });
+                },
+            }
+        },
+        DialogState::SyncGithub {
+            project,
+            mirrors,
+            folders,
+            initial_folder,
+            on_synced,
+        } => rsx! {
+            SyncGithubDialog {
+                project,
+                mirrors,
+                folders,
+                initial_folder,
+                on_submit: move |submit: SyncGithubSubmit| {
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::sync_github(
+                                &submit.project,
+                                &submit.connection,
+                                submit.paths,
+                                &submit.folder,
+                                submit.override_existing,
+                            )
+                            .await
+                        {
+                            Ok(response) => {
+                                on_synced.call(());
+                                // A sync half-succeeds in the ordinary case rather than the exceptional
+                                // one — without Override, everything already there is skipped, and that
+                                // IS the outcome the reader asked for. Closing silently would say every
+                                // file arrived.
+                                match sync_report(&response) {
+                                    Some(text) => {
+                                        open(DialogState::Message {
+                                            title: "Synced".to_string(),
+                                            text,
+                                        });
+                                    }
+                                    None => close(),
+                                }
+                            }
+                            Err(err) => submit_failed(err.message),
                         }
                     });
                 },
@@ -280,6 +404,43 @@ fn archive_report(response: &UploadArchiveResponse) -> Option<String> {
         count_of(response.documents.len(), "document"),
         skipped.len(),
         skipped.join("; ")
+    ))
+}
+
+/// What to tell the reader after a sync, or `None` when everything chosen landed.
+///
+/// **Skips are the normal outcome here, not the exceptional one.** With Override off, every file already
+/// in the project is skipped on purpose — which is exactly what was asked for, and exactly what would
+/// look like a silent failure if the dialog just closed. So the count is always said when there is one,
+/// and the reasons are said for the first few: forty identical "already there" lines are not forty
+/// pieces of information.
+fn sync_report(response: &UploadArchiveResponse) -> Option<String> {
+    if response.skipped.is_empty() {
+        return None;
+    }
+
+    const REASONS_SHOWN: usize = 5;
+
+    let reasons: Vec<String> = response
+        .skipped
+        .iter()
+        .take(REASONS_SHOWN)
+        .map(|itm| format!("{} — {}", itm.name, itm.reason))
+        .collect();
+
+    let rest = response.skipped.len().saturating_sub(reasons.len());
+
+    let tail = if rest > 0 {
+        format!("; and {rest} more")
+    } else {
+        String::new()
+    };
+
+    Some(format!(
+        "{} written. {} skipped: {}{tail}.",
+        count_of(response.documents.len(), "document"),
+        response.skipped.len(),
+        reasons.join("; ")
     ))
 }
 

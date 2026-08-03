@@ -155,6 +155,27 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
                         },
                         "Members"
                     }
+                    button {
+                        class: "btn btn-sm",
+                        title: "Mirror a GitHub repository into this project's documents",
+                        onclick: {
+                            let prefix = project.prefix.clone();
+
+                            move |_| {
+                                let prefix = prefix.clone();
+                                // Prefix rather than the `Rc<ProjectResponse>` every other dialog here
+                                // takes: this one reads its own list from the server, and a project's
+                                // connections are not on the project response at all — the live half of
+                                // each of them is in the service's memory, not on the row.
+                                open(data, |on_saved| DialogState::GithubConnections {
+                                    project: prefix,
+                                    revision: 0,
+                                    on_saved,
+                                });
+                            }
+                        },
+                        "GitHub"
+                    }
                 }
             }
         }

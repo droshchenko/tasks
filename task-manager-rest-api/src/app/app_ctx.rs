@@ -7,6 +7,7 @@ use task_manager_shared::ws::{BoardSnapshot, ServerWsPayload};
 
 use crate::board::Board;
 use crate::documents::DocumentsIndex;
+use crate::github::GithubMirrors;
 use crate::postgres::{
     ColumnTemplatesRepo, DocumentsRepo, GoalsRepo, KindTemplatesRepo, ProjectMembersRepo,
     ProjectsRepo, TasksRepo, UsersRepo,
@@ -53,6 +54,14 @@ pub struct AppContext {
     // payloads are the only part that goes to Postgres per read.
     pub documents_index: DocumentsIndex,
 
+    // Connected GitHub repositories: the trees pulled into temp, and the keys that reached them.
+    //
+    // Beside `documents_index` rather than inside it, because the two are different kinds of thing. That
+    // index is the project's own documents, durable in Postgres and merely cached here. This is a cache
+    // with no original on this side at all — the original is somebody else's repository — and everything
+    // in it is rebuilt from nothing on every start.
+    pub github: GithubMirrors,
+
     // The Homes to tell when a board changes.
     pub subscribers: ProjectSubscribers,
 
@@ -97,6 +106,7 @@ impl AppContext {
             documents_repo: DocumentsRepo::new(settings_reader.clone()).await,
             board: Board::new(),
             documents_index: DocumentsIndex::new(),
+            github: GithubMirrors::new(crate::github::mirrors_root()),
             subscribers: ProjectSubscribers::new(),
             session_key,
             settings_reader,

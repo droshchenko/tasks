@@ -233,7 +233,7 @@ fn join_folder(folder: Option<&str>, entry_path: &str) -> String {
 ///
 /// So text is chosen only when the extension says text AND the bytes really are UTF-8 with no NUL in them.
 /// Anything else — including a `.md` that turns out not to be UTF-8 — is stored as what it verifiably is.
-fn body_for_entry(path: &str, bytes: Vec<u8>) -> DocumentBody {
+pub fn body_for_entry(path: &str, bytes: Vec<u8>) -> DocumentBody {
     if !is_text_content_type(content_type_for_path(path)) {
         return DocumentBody::Binary(bytes);
     }

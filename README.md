@@ -540,6 +540,67 @@ beside the box is a shortcut that fills it in.
 **The `(project_id, doc_path)` index is unique**, as the backstop under the path-is-the-key rule: the
 application checks before it writes, and the index is what stops two writes racing past that check.
 
+### A connected repository is a folder you can read and not write
+
+Reference material usually already exists, and it usually already lives in a GitHub repository — a
+specification, an API contract, somebody else's README that four tasks refer to. Copying it in by hand means
+copying it in again every time it changes, which nobody does, which is how a project ends up with a
+specification that is quietly a year old.
+
+So a project can **connect** a repository. It takes a name, a url, optionally a branch and a folder inside the
+repository, and from then on that repository appears in the project's documents as `github/<name>/…`,
+refreshed every ten minutes.
+
+**It is served by the tools that serve the project's own documents, and that is the whole point of the
+design.** `documents_list` answers with the mirrored files beside the real ones, sorted into the same path
+order; `documents_get` reads one by id or by path; `documents_outline` works on one. An agent needs to learn
+nothing new — it asks the same question and gets the reference material with the rest.
+
+**Everything that writes refuses them, by both names.** A mirrored file has no version and no history here,
+so an upload, a move, a delete, a restore, an edit, a history or a diff naming one — by its `github/` path or
+by its `github:`-prefixed id — is refused with a sentence saying where to go instead. There is one guard,
+called from every write, rather than a rule each of them remembers.
+
+**Bringing a file in for real is a sync, and a sync is a copy.** Pick files and folders out of the mirror,
+choose a folder of the project's own, and what lands is a document with an id, a version, an author and a full
+history — the same write an upload makes. It stops tracking the repository the moment it is written. The
+`override` checkbox is the difference between the two ways this gets used: off writes only what is not already
+there and reports the rest as skipped, which is safe to press repeatedly and never overwrites something
+somebody has since edited; on writes a new version over every chosen path. Off is the default, because the
+destructive reading of a button pressed by mistake should be the one you have to ask for.
+
+**The configuration is durable and the key is not, deliberately.** The repository, branch and folder are a
+`jsonb` column on the project row and survive everything. The token is held in the process's memory and is
+written to no table, no settings file and no log — so a database dump carries no credential, and the cost is
+that a private repository stops mirroring after a restart until somebody types the key again. A connection
+reading `needs-key` on Monday having worked all Friday is that trade, not a bug. A public repository mirrors
+anonymously and needs no key at all.
+
+Everything downloaded lives in the container's temp directory, wiped at startup: whatever is in there belongs
+to a process that is no longer running, and its connections may have been retargeted or deleted while nobody
+was looking. Rebuilding costs one pull per connection and is the only way to be sure the disk agrees with the
+configuration.
+
+**The poll is cheap because it asks before it downloads.** Each tick reads the head commit — a few hundred
+bytes — and only fetches the archive when the sha has moved. GitHub answers the archive route with a redirect
+to codeload, which is followed by hand: FlUrl's native backend does not follow redirects at all, and the key
+is deliberately dropped on the hop, because the redirect url is already signed and forwarding a credential to
+another host is how tokens leak.
+
+**A failed pull never empties a mirror that worked.** The entries and the commit are what the last successful
+pull left; the state and the error describe the last attempt. A repository that goes unreachable overnight is
+a warning beside a folder somebody can still read at nine in the morning.
+
+What the mirror deliberately does not hold is counted rather than listed: a file over the single-document
+size limit, a path this product will not name, anything past the five-thousand-file or 128 MiB ceilings. One
+number answers the only question that matters about them — is the file I want missing because it was filtered,
+or because it is not there?
+
+Two things it is worth knowing it does **not** do. `documents_search` does not reach into mirrors — it
+searches the project's own texts out of Postgres, and a mirrored file is on disk. And a key supplied for a
+private repository fills a mirror that every member of the project can read, so the access it grants is
+shared with them for as long as it is held.
+
 ## The session is a cookie
 
 `HttpOnly`, `Secure`, `SameSite`, `Path=/`, and it expires with the token inside it. It replaced a token in

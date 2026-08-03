@@ -72,6 +72,7 @@ fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
         last_task_number: 0,
         // No window of its own, so the tests measure the seven-day default.
         archive_days: None,
+        github_connections: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
     }
 }

@@ -81,7 +81,7 @@ impl DocumentIndexEntry {
 /// `text/*` plus the handful of `application/*` types that are text in practice. Anything else is treated as
 /// bytes, which is the safe direction: a file offered for download when it could have been shown is a click
 /// wasted, where a PDF rendered as text is a screen of noise.
-fn is_text_content_type(content_type: &str) -> bool {
+pub fn is_text_content_type(content_type: &str) -> bool {
     content_type.starts_with("text/")
         || content_type == "application/json"
         || content_type == "application/yaml"

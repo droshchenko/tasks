@@ -225,6 +225,10 @@ pub async fn upload_document(
     };
 
     let path = normalise_document_path(path)?;
+    // Nothing may be written under the root the connected repositories are shown at — see
+    // `super::refuse_reserved_path`. Checked after normalisation, so a path spelled `/github/a.md` is
+    // caught as readily as `github/a.md`.
+    super::refuse_reserved_path(&path)?;
     let who = require_author(who)?;
 
     content.body.validate()?;
@@ -302,6 +306,10 @@ pub async fn update_document_path(
     who: &str,
 ) -> Result<DocumentDto, String> {
     let path = normalise_document_path(path)?;
+    // Both ends of the move: a mirrored file cannot be moved, and nothing can be moved into the root the
+    // mirrors are shown at.
+    super::refuse_reserved_id(id)?;
+    super::refuse_reserved_path(&path)?;
     let who = require_author(who)?;
 
     let ctx = MyTelemetryContext::create_empty();
@@ -352,6 +360,7 @@ pub async fn update_document_path(
 ///
 /// Returns the path it had, which is what a caller wants echoed back: it is what the document was called.
 pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<String, String> {
+    super::refuse_reserved_id(id)?;
     let who = require_author(who)?;
 
     let ctx = MyTelemetryContext::create_empty();
@@ -424,6 +433,12 @@ pub async fn restore_document(
     path: Option<&str>,
     who: &str,
 ) -> Result<DocumentDto, String> {
+    super::refuse_reserved_id(id)?;
+
+    if let Some(path) = path {
+        super::refuse_reserved_path(path)?;
+    }
+
     let who = require_author(who)?;
 
     let ctx = MyTelemetryContext::create_empty();
@@ -532,7 +547,15 @@ pub async fn resolve_document(
     match (id, path) {
         // An id wins when both arrive: it is the identity, where a path is only where the document is
         // sitting today.
-        (Some(id), _) => read_document(app, id).await,
+        (Some(id), _) => {
+            // A mirrored file is named by an id of its own shape and is never looked for in Postgres —
+            // there is no row. See `super::MIRROR_ID_PREFIX`.
+            if let Some((project_prefix, mirror_path)) = super::parse_mirror_document_id(id) {
+                return super::read_mirror_document(app, project_prefix, mirror_path).await;
+            }
+
+            read_document(app, id).await
+        }
         (None, Some(path)) => {
             let project = project_prefix
                 .map(str::trim)
@@ -541,6 +564,12 @@ pub async fn resolve_document(
                     "reading by `path` needs `project` beside it — a path is only unique within one board"
                         .to_string()
                 })?;
+
+            // The same interception by the other door: a path under the reserved root is a file in a
+            // connected repository, and the documents table has never heard of it.
+            if task_manager_shared::github::is_github_path(path) {
+                return super::read_mirror_document(app, project, path).await;
+            }
 
             read_document_by_path(app, project, path).await
         }
@@ -582,6 +611,16 @@ pub async fn edit_document(
     expected_version: Option<i64>,
     who: &str,
 ) -> Result<(DocumentDto, Vec<i32>), String> {
+    // Before anything, and by both names: `resolve_document` below would happily HAND BACK a mirrored
+    // file, and the splice that follows would then try to write a row that never existed.
+    if let Some(id) = id {
+        super::refuse_reserved_id(id)?;
+    }
+
+    if let Some(path) = path {
+        super::refuse_reserved_path(path)?;
+    }
+
     let who = require_author(who)?;
 
     // Before the read, so an empty batch does not cost a database round trip to be told it is empty.
@@ -924,12 +963,23 @@ pub fn list_documents(
     app: &AppContext,
     project_prefix: &str,
 ) -> Result<Vec<DocumentIndexEntry>, String> {
-    let project_id = {
+    let project = {
         let board = app.board.read();
-        resolve_project_by_prefix(&board, project_prefix)?.id.clone()
+        resolve_project_by_prefix(&board, project_prefix)?
     };
 
-    Ok(app.documents_index.of_project(&project_id))
+    let mut rows = app.documents_index.of_project(&project.id);
+
+    // The connected repositories, in the same list and the same shape. That is what "served like your own
+    // folders" means in practice: an agent asks one question and gets the project's own documents and the
+    // reference material beside them, told apart by the `github/` root on the paths.
+    rows.extend(super::mirror_index_entries(app, &project));
+
+    // Re-sorted rather than appended, because the contract this answers is "sorted by path, so everything
+    // under one folder is contiguous" — and two already-sorted lists concatenated are not one sorted list.
+    rows.sort_by(|left, right| left.path.cmp(&right.path));
+
+    Ok(rows)
 }
 
 /// One project's trash, most recently deleted first, WITHOUT the payloads.
@@ -970,6 +1020,11 @@ pub async fn document_history(
     app: &AppContext,
     id: &str,
 ) -> Result<Vec<DocumentVersionDto>, String> {
+    // A mirrored file has no history HERE, which is a different sentence from "no such document" — its
+    // history is in the repository it came from. `document_diff` comes through this function, so refusing
+    // once covers both.
+    super::refuse_reserved_history(id)?;
+
     let ctx = MyTelemetryContext::create_empty();
 
     let mut rows = app.documents_repo.get_history(id, &ctx).await;
@@ -990,6 +1045,8 @@ pub async fn document_version(
     id: &str,
     version: i64,
 ) -> Result<DocumentHistoryDto, String> {
+    super::refuse_reserved_history(id)?;
+
     let ctx = MyTelemetryContext::create_empty();
 
     match app.documents_repo.get_version(id, version, &ctx).await {

@@ -6,6 +6,7 @@ mod app;
 mod auth;
 mod board;
 mod documents;
+mod github;
 mod http_server;
 mod mappers;
 mod mcp;
@@ -30,6 +31,11 @@ async fn main() {
     // the board is loaded; doing this in the background would serve an empty board for the first few
     // hundred milliseconds after every deploy, which looks exactly like data loss.
     scripts::load_state(&app).await;
+
+    // After the board, because it walks every project's connections — and NOT awaited, because a
+    // repository that is slow to answer must not hold up the port opening. Every mirror starts empty and
+    // fills within a few seconds of the service being up.
+    github::run_puller(app.clone());
 
     // Three surfaces on one HTTP server, in one process, over one copy of the state:
     //   /api/*  — reads for the UI and the configuration CRUD

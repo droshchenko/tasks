@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
 use task_manager_shared::documents::{DocumentIndexEntryResponse, document_file_name, render_size};
+use task_manager_shared::github::is_github_path;
 
-use super::{DocumentsState, file_icon, folder_icon};
+use super::{DocumentsState, file_icon, folder_icon, remote_folder_icon};
 
 /// How far one level is pushed in, in pixels.
 const INDENT: usize = 14;
@@ -213,17 +214,44 @@ pub fn DocumentTreeRow(
             children,
         } => {
             let expanded = cs.read().is_expanded(&path);
-            let icon = folder_icon(expanded);
+
+            // A folder inside the reserved root is somebody else's, and is drawn as such at every depth —
+            // not only at the top. A reader three levels into a mirrored repository is exactly the reader
+            // who has forgotten which tree they are in.
+            let remote = is_github_path(&path);
+
+            let icon = if remote {
+                remote_folder_icon()
+            } else {
+                folder_icon(expanded)
+            };
+
+            let row_class = if remote {
+                "tree-row remote"
+            } else {
+                "tree-row"
+            };
+
+            let title = if remote {
+                "A connected GitHub repository — read-only here. Use Sync from GitHub to copy files into this project."
+            } else {
+                ""
+            };
+
             let for_toggle = path.clone();
 
             rsx! {
                 div {
-                    class: "tree-row",
+                    class: "{row_class}",
                     style: "{indent}",
+                    title: "{title}",
                     onclick: move |_| cs.write().toggle(&for_toggle),
 
                     img { class: "tree-icon", src: "{icon}" }
                     span { class: "tree-name truncate", "{name}" }
+                    if path == task_manager_shared::github::GITHUB_ROOT {
+                        span { class: "tree-tag", "remote" }
+                    }
                     span { class: "tree-size dim", "{children.len()}" }
                 }
 

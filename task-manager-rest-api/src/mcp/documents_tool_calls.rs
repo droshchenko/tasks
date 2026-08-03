@@ -100,7 +100,14 @@ pick one, then documents_get.\
 \
 Folders in the paths are not real: there is no such thing as a folder here, they are read off the paths \
 of the documents in them. So an empty folder cannot exist, and moving every document out of one is what \
-makes it disappear.";
+makes it disappear.\
+\
+PATHS UNDER `github/` ARE NOT THIS PROJECT'S DOCUMENTS. They are files in a GitHub repository somebody \
+connected, mirrored here and refreshed every ten minutes, and they are listed beside the real ones \
+because that is what makes reference material reachable. Read one with documents_get exactly as you \
+would any other. You cannot write one: they have no version and no history here, every write names them \
+and refuses, and the way to bring one into the project for real is to copy it into a folder of its own \
+from the Documents screen.";
 }
 
 #[async_trait::async_trait]
@@ -186,7 +193,11 @@ neither an edit nor a conclusion of the form \"it does not mention X\" is safe f
 Pass `version` to read an older text: every version a document has ever had is kept, and \
 documents_history lists them. That is what the stable id is FOR — a document that was rewritten and \
 moved three times is still one document, and its whole past is reachable through it. To see what \
-CHANGED between two versions, documents_diff answers without either text.";
+CHANGED between two versions, documents_diff answers without either text.\
+\
+A path under `github/` is a file in a connected repository and reads exactly like anything else here — \
+but it has no versions, so `version`, documents_history and documents_diff all refuse it and say so. \
+What the mirror holds is what the repository holds now.";
 }
 
 #[async_trait::async_trait]

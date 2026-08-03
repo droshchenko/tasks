@@ -68,7 +68,15 @@ impl DocumentsState {
     }
 
     /// Where an upload should start. See [`Self::current_folder`].
+    ///
+    /// **Never a mirrored folder.** Nothing can be written under the reserved root, so a reader who was
+    /// last browsing a connected repository — which is exactly the reader about to press Sync — is
+    /// offered the top level rather than a destination the server would refuse.
     pub fn current_folder(&self) -> &str {
+        if task_manager_shared::github::is_github_path(&self.current_folder) {
+            return "";
+        }
+
         &self.current_folder
     }
 

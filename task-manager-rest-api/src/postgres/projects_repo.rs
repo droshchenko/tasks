@@ -40,6 +40,25 @@ pub struct ProjectKindJsonModel {
     pub color: String,
 }
 
+// One connected GitHub repository, inside the project row's `github_connections` jsonb.
+//
+// THE KEY IS NOT HERE, and that absence is the feature. A token lives in the process's memory for as
+// long as the process does and is written nowhere — not to this row, not to the settings service, not
+// to a log. So a database dump carries no credential, and the cost is that a private repository stops
+// mirroring after a restart until somebody types the key again. That trade was chosen deliberately.
+//
+// `branch` and `repo_path` are empty rather than absent when they mean "the default branch" and "the
+// whole repository": a jsonb written by an older build must read back as something, and an empty
+// string is a value every reader already handles.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProjectGithubConnectionJsonModel {
+    pub name: String,
+    pub owner: String,
+    pub repo: String,
+    pub branch: String,
+    pub repo_path: String,
+}
+
 // A project. Read once at startup and held in memory from then on; written whenever setup changes.
 //
 // `last_task_number` is the project's own task counter, persisted so a restart does not re-issue a
@@ -82,6 +101,13 @@ pub struct ProjectDto {
     // what every project did before this was configurable — so an existing row keeps its behaviour
     // without being rewritten, and the column can be added to a live table without a backfill.
     pub archive_days: Option<i32>,
+    // The GitHub repositories mirrored into this project's documents under `github/`. NULL means none,
+    // which is what every row that predates the feature holds — `TableSchema` can add a column to a live
+    // table but cannot tighten NULL to NOT NULL, so nullable is the only shape that deploys without a
+    // backfill.
+    #[sql_type("jsonb")]
+    #[json]
+    pub github_connections: Option<Vec<ProjectGithubConnectionJsonModel>>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
 }

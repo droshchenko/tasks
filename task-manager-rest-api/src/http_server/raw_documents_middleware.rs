@@ -66,25 +66,13 @@ async fn serve(
 
     crate::auth::require_project_access(app, ctx, &project_id).await?;
 
-    let telemetry = service_sdk::my_telemetry::MyTelemetryContext::create_empty();
-
-    // By PATH rather than by id, because the path is what the url carries — and it is what a relative link
-    // inside a framed page resolves to, which is the whole point of this route.
-    let Some(row) = app
-        .documents_repo
-        .get_by_path(&project_id, path, &telemetry)
-        .await
-    else {
-        return Err(not_found("No such document"));
-    };
-
-    let content_type = content_type_of(row.content_type.as_deref(), &row.doc_path);
-
-    // Text and bytes both come out as bytes here: a text document served raw is what makes "download" work on
-    // one, and its Content-Type says what it is.
-    let content = match body_of(&row) {
-        DocumentBody::Text(text) => text.into_bytes(),
-        DocumentBody::Binary(bytes) => bytes,
+    // A path under the reserved root is a file in a connected repository — no row, and never was one. It is
+    // served from the mirror on disk instead, through the same access check and with the same headers, so an
+    // image in a repository draws in the viewer exactly as one of the project's own does.
+    let (content_type, content) = if task_manager_shared::github::is_github_path(path) {
+        serve_from_mirror(app, prefix, path).await?
+    } else {
+        serve_from_documents(app, &project_id, path).await?
     };
 
     // HTML is the one type served here that a browser executes, and it would execute in OUR origin. A document
@@ -117,4 +105,63 @@ async fn serve(
             "no-store, no-cache, must-revalidate, max-age=0".to_string(),
         )
         .into_ok_result(false)
+}
+
+/// One of the project's own documents, as a content type and bytes.
+///
+/// By PATH rather than by id, because the path is what the url carries — and it is what a relative link
+/// inside a framed page resolves to, which is the whole point of this route.
+async fn serve_from_documents(
+    app: &Arc<AppContext>,
+    project_id: &str,
+    path: &str,
+) -> Result<(String, Vec<u8>), HttpFailResult> {
+    let telemetry = service_sdk::my_telemetry::MyTelemetryContext::create_empty();
+
+    let Some(row) = app
+        .documents_repo
+        .get_by_path(project_id, path, &telemetry)
+        .await
+    else {
+        return Err(not_found("No such document"));
+    };
+
+    let content_type = content_type_of(row.content_type.as_deref(), &row.doc_path);
+
+    // Text and bytes both come out as bytes here: a text document served raw is what makes "download" work on
+    // one, and its Content-Type says what it is.
+    let content = match body_of(&row) {
+        DocumentBody::Text(text) => text.into_bytes(),
+        DocumentBody::Binary(bytes) => bytes,
+    };
+
+    Ok((content_type, content))
+}
+
+/// One file out of a connected repository's mirror.
+///
+/// Read through `read_mirror_document`, which resolves the path against the mirror's own entry list, so
+/// what can be served here is exactly what the mirror published — not whatever a path happens to reach on
+/// the container's disk.
+///
+/// A miss says "No such document", the same as a document that is not there: whether a path is missing
+/// because the repository never had it or because the mirror has not pulled yet is a distinction for the
+/// Documents screen to draw, not for a url anybody can type.
+async fn serve_from_mirror(
+    app: &Arc<AppContext>,
+    prefix: &str,
+    path: &str,
+) -> Result<(String, Vec<u8>), HttpFailResult> {
+    let row = crate::scripts::read_mirror_document(app, prefix, path)
+        .await
+        .map_err(|_| not_found("No such document"))?;
+
+    let content_type = content_type_of(row.content_type.as_deref(), &row.doc_path);
+
+    let content = match body_of(&row) {
+        DocumentBody::Text(text) => text.into_bytes(),
+        DocumentBody::Binary(bytes) => bytes,
+    };
+
+    Ok((content_type, content))
 }

@@ -99,6 +99,46 @@
   color: var(--text-faint);
 }
 
+/* A folder that is a window onto somebody else's repository. Muted rather than highlighted: it is not a
+ * warning, it is a different KIND of thing, and the tree's own contents are what the eye should land on
+ * first. The icon carries the mark; this only keeps the label from competing with the project's own. */
+.tree-row.remote > .tree-name {
+  color: var(--text-muted);
+}
+
+/* Said once, on the root the mirrors hang under, rather than repeated down every level — the icon does
+ * the repeating. */
+.tree-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+/* The pick tree inside the sync dialog. Scrolls on its own so a repository of four hundred files does not
+ * push the Override checkbox and the button off the bottom of the dialog — which is precisely the pair a
+ * reader has to see before pressing anything. */
+.sync-tree {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 0;
+}
+
+.sync-tree .tree-row {
+  padding-right: 8px;
+}
+
+.sync-tree input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 .tree-note {
   color: var(--text-muted);
   padding: 4px 10px;

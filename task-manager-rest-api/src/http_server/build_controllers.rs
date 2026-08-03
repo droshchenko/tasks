@@ -11,7 +11,8 @@ use crate::app::AppContext;
 /// README.md first.
 pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpServerBuilder) {
     use super::controllers::{
-        auth, column_templates, documents, goals, kind_templates, projects, system, tasks, users,
+        auth, column_templates, documents, github, goals, kind_templates, projects, system, tasks,
+        users,
     };
 
     http_server_builder.register_get_action(system::PingAction::new(app.clone()));
@@ -51,6 +52,17 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
     // it is the same write, applied once per file inside a zip.
     http_server_builder.register_post_action(documents::UploadDocumentAction::new(app.clone()));
     http_server_builder.register_post_action(documents::UploadArchiveAction::new(app.clone()));
+
+    // Connected repositories. Setting one up is admin-only configuration; supplying a key, refreshing
+    // and syncing are things a member of the project does — a mirror that empties on every deploy would
+    // otherwise be one person's job to refill.
+    http_server_builder.register_post_action(github::SetGithubConnectionAction::new(app.clone()));
+    http_server_builder.register_post_action(github::DeleteGithubConnectionAction::new(app.clone()));
+    http_server_builder.register_post_action(github::SetGithubKeyAction::new(app.clone()));
+    http_server_builder.register_post_action(github::ListGithubConnectionsAction::new(app.clone()));
+    http_server_builder.register_post_action(github::PullGithubConnectionAction::new(app.clone()));
+    // The second write on the documents surface, and the same write as an upload: see the action.
+    http_server_builder.register_post_action(github::SyncGithubAction::new(app.clone()));
 
     http_server_builder.register_post_action(goals::ListGoalsAction::new(app.clone()));
     http_server_builder.register_post_action(goals::SetGoalColorAction::new(app.clone()));

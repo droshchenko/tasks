@@ -80,8 +80,15 @@ pub fn RenderDocuments(selected: String) -> Element {
     };
 
     // Every folder that exists, for the upload dialog to offer. Off the tree rather than off the paths, so it
-    // is the same set the reader is looking at.
-    let folders = super::all_folder_paths(&nodes);
+    // is the same set the reader is looking at — minus the mirrors, which nothing can be written into.
+    let folders = super::writable_folders(&super::all_folder_paths(&nodes));
+
+    // The connected repositories, read back out of the same index. Empty when nothing is connected, or
+    // when nothing has been pulled yet — which the sync dialog says in its own words.
+    let mirrors = match index.as_ref() {
+        Ok(entries) => super::mirror_choices(entries),
+        Err(_) => Vec::new(),
+    };
 
     let tree_note = index.err();
 
@@ -176,6 +183,34 @@ pub fn RenderDocuments(selected: String) -> Element {
                         }
                     },
                     "Upload"
+                }
+                // Only when there is something to copy. A button that opens a dialog saying "nothing is
+                // connected" is a button that teaches nothing — the place to connect a repository is the
+                // Projects setup screen, and this one is for using what is connected.
+                if !mirrors.is_empty() {
+                    button {
+                        class: "btn",
+                        title: "Copy files out of a connected repository into this project's documents",
+                        onclick: {
+                            let project = selected_prefix.clone();
+                            let mirrors = mirrors.clone();
+                            let folders = folders.clone();
+
+                            move |_| {
+                                crate::dialogs::open(crate::dialogs::DialogState::SyncGithub {
+                                    project: project.clone(),
+                                    mirrors: mirrors.clone(),
+                                    folders: folders.clone(),
+                                    initial_folder: cs.read().current_folder().to_string(),
+                                    // Read again rather than patched: a sync writes new versions as
+                                    // readily as new documents, which changes sizes as well as adding
+                                    // rows.
+                                    on_synced: EventHandler::new(move |_| cs.write().refresh()),
+                                });
+                            }
+                        },
+                        "Sync from GitHub"
+                    }
                 }
             }
 

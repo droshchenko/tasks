@@ -57,7 +57,7 @@ fn validate_config_id(id: &str, what: &str) -> Result<String, String> {
     Ok(id)
 }
 
-async fn save(app: &AppContext, project: ProjectModel) {
+pub(super) async fn save(app: &AppContext, project: ProjectModel) {
     let ctx = MyTelemetryContext::create_empty();
     let dto: ProjectDto = (&project).into();
     app.projects_repo.upsert(&dto, &ctx).await;
@@ -105,6 +105,8 @@ pub async fn create_project(
         // No window of its own: `None` is the seven-day default, which is what a project setting up its
         // board has no opinion about yet.
         archive_days: None,
+        // Nothing connected. A repository is attached afterwards, from the setup screen.
+        github_connections: Vec::new(),
         created: DateTimeAsMicroseconds::now(),
     };
 
@@ -172,7 +174,7 @@ pub async fn update_project(
     Ok(())
 }
 
-fn load(board: &crate::board::BoardInner, project_id: &str) -> Result<ProjectModel, String> {
+pub(super) fn load(board: &crate::board::BoardInner, project_id: &str) -> Result<ProjectModel, String> {
     board
         .get_project(project_id)
         .map(|itm| itm.as_ref().clone())

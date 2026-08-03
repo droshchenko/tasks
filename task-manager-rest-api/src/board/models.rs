@@ -55,6 +55,36 @@ pub struct KindModel {
     pub icon: String,
 }
 
+/// One connected GitHub repository, in memory.
+///
+/// **The connection, not the mirror.** This is the four things a person configured — what to call it,
+/// which repository, which branch, which folder — and it is the whole of what survives a restart. What
+/// was actually pulled, when, and whether a key is held for it live in `crate::github::GithubMirrors`,
+/// which is rebuilt from nothing every time the process starts.
+///
+/// The split is why this is on the board at all: the board is the configured shape of the product, and
+/// a repository somebody attached to a project is exactly that. A downloaded tree is not.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GithubConnectionModel {
+    // What it is called, and the folder it appears as: `github/<name>/…`. One path segment, unique
+    // within the project.
+    pub name: String,
+    pub owner: String,
+    pub repo: String,
+    // Empty for the repository's default branch — resolved at pull time, because which branch is default
+    // is the repository's business and can change without anybody here being told.
+    pub branch: String,
+    // Which folder inside the repository is mirrored, or empty for the whole of it.
+    pub repo_path: String,
+}
+
+impl GithubConnectionModel {
+    /// `owner/repo`, which is how a repository is named everywhere a person reads one.
+    pub fn full_name(&self) -> String {
+        format!("{}/{}", self.owner, self.repo)
+    }
+}
+
 /// A project, in memory.
 ///
 /// `members` is a `BTreeSet` rather than a `Vec`: membership is a set with no meaningful order,
@@ -95,10 +125,19 @@ pub struct ProjectModel {
     // seven days, which is what every project did before this was configurable — so a row that has never
     // been told otherwise keeps behaving exactly as it did.
     pub archive_days: Option<i32>,
+    // The GitHub repositories mirrored into this project's documents. Ordered as they were configured
+    // and unique by `name`, which is enforced on the write path — the name is a folder, and two folders
+    // with one name is a tree nobody can read.
+    pub github_connections: Vec<GithubConnectionModel>,
     pub created: DateTimeAsMicroseconds,
 }
 
 impl ProjectModel {
+    /// One connection by name, or `None`. Case-sensitive, like every path in this product.
+    pub fn github_connection(&self, name: &str) -> Option<&GithubConnectionModel> {
+        self.github_connections.iter().find(|itm| itm.name == name)
+    }
+
     /// Whether `column_id` is a column this project actually has, counting the two anchors.
     pub fn has_column(&self, column_id: &str) -> bool {
         task_manager_shared::projects::is_anchor_column(column_id)

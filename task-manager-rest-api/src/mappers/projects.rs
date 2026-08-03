@@ -4,10 +4,13 @@ use rust_extensions::AsStr;
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::projects::{ProjectColumnResponse, ProjectKindResponse, ProjectResponse};
 
-use crate::board::{ColumnModel, ColumnTemplateModel, KindModel, KindTemplateModel, ProjectModel};
+use crate::board::{
+    ColumnModel, ColumnTemplateModel, GithubConnectionModel, KindModel, KindTemplateModel,
+    ProjectModel,
+};
 use crate::postgres::{
     ColumnTemplateColumnJsonModel, ColumnTemplateDto, KindTemplateDto, KindTemplateKindJsonModel,
-    ProjectColumnJsonModel, ProjectDto, ProjectKindJsonModel,
+    ProjectColumnJsonModel, ProjectDto, ProjectGithubConnectionJsonModel, ProjectKindJsonModel,
 };
 
 // Conversions are `From` rather than `Into`. The house style says "always an impl, never a standalone
@@ -62,6 +65,30 @@ impl From<&KindModel> for ProjectKindJsonModel {
     }
 }
 
+impl From<&ProjectGithubConnectionJsonModel> for GithubConnectionModel {
+    fn from(src: &ProjectGithubConnectionJsonModel) -> Self {
+        Self {
+            name: src.name.clone(),
+            owner: src.owner.clone(),
+            repo: src.repo.clone(),
+            branch: src.branch.clone(),
+            repo_path: src.repo_path.clone(),
+        }
+    }
+}
+
+impl From<&GithubConnectionModel> for ProjectGithubConnectionJsonModel {
+    fn from(src: &GithubConnectionModel) -> Self {
+        Self {
+            name: src.name.clone(),
+            owner: src.owner.clone(),
+            repo: src.repo.clone(),
+            branch: src.branch.clone(),
+            repo_path: src.repo_path.clone(),
+        }
+    }
+}
+
 /// Postgres row -> memory. Membership is not in the project row (it has its own table), so it starts
 /// empty and the loader fills it.
 impl From<&ProjectDto> for ProjectModel {
@@ -85,6 +112,15 @@ impl From<&ProjectDto> for ProjectModel {
             members: BTreeSet::new(),
             last_task_number: src.last_task_number,
             archive_days: src.archive_days,
+            // NULL is a project that has never connected a repository, which is every row written before
+            // the column existed.
+            github_connections: src
+                .github_connections
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|itm| itm.into())
+                .collect(),
             created: src.created,
         }
     }
@@ -107,6 +143,14 @@ impl From<&ProjectModel> for ProjectDto {
             kinds: Vec::new(),
             last_task_number: src.last_task_number,
             archive_days: src.archive_days,
+            // Always written as a list, never as NULL: NULL is what an older build left behind, not
+            // something this one produces. An empty list and NULL read the same way coming back.
+            github_connections: Some(
+                src.github_connections
+                    .iter()
+                    .map(|itm| itm.into())
+                    .collect(),
+            ),
             created: src.created,
         }
     }

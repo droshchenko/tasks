@@ -1,6 +1,7 @@
 mod auth;
 mod column_templates;
 mod documents;
+mod github;
 mod goals;
 mod kind_templates;
 mod projects;
@@ -11,6 +12,7 @@ mod users;
 pub use auth::*;
 pub use column_templates::*;
 pub use documents::*;
+pub use github::*;
 pub use goals::*;
 pub use kind_templates::*;
 pub use projects::*;

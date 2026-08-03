@@ -1,6 +1,9 @@
 use dioxus::prelude::*;
 use dioxus_utils::RenderState;
 use task_manager_shared::documents::{DocumentIndexEntryResponse, FindDocumentResponse};
+use task_manager_shared::github::{is_github_path, parse_github_mirror_path};
+
+use crate::dialogs::MirrorChoice;
 
 use super::DocumentsState;
 
@@ -28,6 +31,15 @@ pub fn folder_icon(expanded: bool) -> String {
     } else {
         format!("{ICON_DIR}/folder.svg")
     }
+}
+
+/// The icon for a folder that is a window onto a repository rather than a folder of this project's.
+///
+/// **It keeps the remote icon whether it is open or closed, unlike an ordinary folder.** An open folder
+/// looks like an open folder, and that is exactly the moment somebody is most likely to try to upload
+/// into one — the mark has to survive being opened, or it only warns you while you are not looking.
+pub fn remote_folder_icon() -> String {
+    format!("{ICON_DIR}/folder-remote.svg")
 }
 
 fn extension(name: &str) -> Option<String> {
@@ -121,6 +133,46 @@ pub fn get_content<'s>(
         RenderState::Loaded(found) => Ok(found),
         RenderState::Error(err) => Err(render_viewer_note(err.as_str(), true)),
     }
+}
+
+/// The connected repositories, read back out of the index the screen already loaded.
+///
+/// **No request of its own, and that is the point.** The mirrors travel in `documents_list` like every
+/// other folder — that is what "served like your own folders" buys — so the sync dialog can be handed
+/// exactly what the reader is looking at rather than a second answer that may have moved on.
+///
+/// Ordered by connection name, and each file list in the order the index arrived in, which is by path.
+pub fn mirror_choices(entries: &[DocumentIndexEntryResponse]) -> Vec<MirrorChoice> {
+    let mut choices: Vec<MirrorChoice> = Vec::new();
+
+    for entry in entries {
+        let Some((connection, relative)) = parse_github_mirror_path(&entry.path) else {
+            continue;
+        };
+
+        match choices.iter_mut().find(|itm| itm.connection == connection) {
+            Some(choice) => choice.paths.push(relative.to_string()),
+            None => choices.push(MirrorChoice {
+                connection: connection.to_string(),
+                paths: vec![relative.to_string()],
+            }),
+        }
+    }
+
+    choices.sort_by(|left, right| left.connection.cmp(&right.connection));
+    choices
+}
+
+/// The folders a document may be put INTO — every folder in the tree except the mirrors.
+///
+/// The reserved root is left out because nothing can be written there: offering it would be offering a
+/// destination the server refuses, which is a worse experience than not offering it at all.
+pub fn writable_folders(folders: &[String]) -> Vec<String> {
+    folders
+        .iter()
+        .filter(|itm| !is_github_path(itm))
+        .cloned()
+        .collect()
 }
 
 pub fn render_tree_note(text: &str, failed: bool) -> Element {
