@@ -4,6 +4,7 @@ use service_sdk::macros::use_my_http_server;
 use task_manager_shared::documents::{DocumentsResponse, GetDocumentsInputModel};
 
 use crate::app::AppContext;
+use crate::http_server::errors::bad_request;
 use crate::mappers::document_entry_to_index_entry;
 
 use_my_http_server!();
@@ -42,10 +43,13 @@ async fn handle_request(
     let project =
         crate::auth::require_project_by_prefix(&action.app, ctx, &input_data.project).await?;
 
-    let documents = action
-        .app
-        .documents_index
-        .of_project(&project.id)
+    // Through the script rather than off `documents_index` directly, and that is not tidiness — the index
+    // is only HALF the answer. A project's connected GitHub repositories are listed under `github/` too,
+    // and they live in `app.github` rather than in the index, so the two are joined in exactly one place.
+    // Reading the index here is what made this endpoint disagree with MCP's `documents_list`: the agent
+    // saw the connected repository and the browser did not.
+    let documents = crate::scripts::list_documents(&action.app, &project.prefix)
+        .map_err(bad_request)?
         .iter()
         .map(|entry| document_entry_to_index_entry(entry, &project.prefix))
         .collect();
