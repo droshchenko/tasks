@@ -576,30 +576,43 @@ that a private repository stops mirroring after a restart until somebody types t
 reading `needs-key` on Monday having worked all Friday is that trade, not a bug. A public repository mirrors
 anonymously and needs no key at all.
 
-Everything downloaded lives in the container's temp directory, wiped at startup: whatever is in there belongs
-to a process that is no longer running, and its connections may have been retargeted or deleted while nobody
-was looking. Rebuilding costs one pull per connection and is the only way to be sure the disk agrees with the
-configuration.
+**It holds references, never content.** What the service keeps for a connection is a list: a path, a size and
+a blob sha per file, and nothing else. There is no download, no unpacked tree and no cache on disk. A file's
+bytes are fetched from GitHub at the moment somebody asks for that file — a `documents_get`, the viewer
+opening it, a sync copying it — and are let go the moment the answer is written. So a connected repository
+costs a list of paths however large it is, and the process is never holding more than the one file being
+read.
 
-**The poll is cheap because it asks before it downloads.** Each tick reads the head commit — a few hundred
-bytes — and only fetches the archive when the sha has moved. GitHub answers the archive route with a redirect
-to codeload, which is followed by hand: FlUrl's native backend does not follow redirects at all, and the key
-is deliberately dropped on the hop, because the redirect url is already signed and forwarding a credential to
-another host is how tokens leak.
+The bytes are asked for by **blob sha** rather than by path. A path resolves against the branch and could
+answer with a file written since the listing; a sha names exactly the bytes the listing described. It also
+means nothing a path could smuggle ever reaches a url — a sha is forty hex characters or it is refused.
 
-**A failed pull never empties a mirror that worked.** The entries and the commit are what the last successful
-pull left; the state and the error describe the last attempt. A repository that goes unreachable overnight is
-a warning beside a folder somebody can still read at nine in the morning.
+**The poll is cheap because it asks before it re-lists.** Each tick reads the head commit — a few hundred
+bytes — and only re-reads the file list when the sha has moved. The listing itself is one request for the
+whole tree, however deep, because walking it a folder at a time would be one request per folder against a
+budget that is counted by the hour.
 
-What the mirror deliberately does not hold is counted rather than listed: a file over the single-document
-size limit, a path this product will not name, anything past the five-thousand-file or 128 MiB ceilings. One
-number answers the only question that matters about them — is the file I want missing because it was filtered,
-or because it is not there?
+**A failed listing never empties a connection that worked.** The entries and the commit are what the last
+successful listing left; the state and the error describe the last attempt. Since nothing was ever
+downloaded, "still readable" means exactly that — the files are fetchable again the moment GitHub answers.
 
-Two things it is worth knowing it does **not** do. `documents_search` does not reach into mirrors — it
-searches the project's own texts out of Postgres, and a mirrored file is on disk. And a key supplied for a
-private repository fills a mirror that every member of the project can read, so the access it grants is
-shared with them for as long as it is held.
+**The cost of holding references is a request per read**, and it is worth being honest about where that
+bites. Anonymous reads share sixty an hour; a key raises it to five thousand. So a public repository is
+browsable without a key but a sync of two hundred files is not — a rate limit arrives per file, as a skip
+with GitHub's own sentence attached, so what got through is kept and the rest can be asked for again later.
+That is the one place this design is worse than downloading an archive would have been, and it is the price
+of the service never holding somebody else's content.
+
+What the listing deliberately leaves out is counted rather than listed: a file over the single-document size
+limit, a path this product will not name, anything past five thousand files. A file too big to ever be read
+is left out rather than shown, because a row every read and every sync refuses is worse than an absence. One
+number answers the only question that matters — is the file I want missing because it was filtered, or
+because it is not there? A repository so large that GitHub cuts the listing off says so on the connection.
+
+Two things it is worth knowing it does **not** do. `documents_search` does not reach into connected
+repositories — it searches the project's own texts out of Postgres, and a mirrored file has no text on this
+side to search. And a key supplied for a private repository serves every member of the project, so the access
+it grants is shared with them for as long as it is held.
 
 ## The session is a cookie
 

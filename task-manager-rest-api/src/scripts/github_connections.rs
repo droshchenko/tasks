@@ -222,7 +222,7 @@ pub fn list_github_connections(
                 // first seven are what anybody would paste into a `git show`.
                 commit: mirror.commit.chars().take(7).collect(),
                 pulled_unix_seconds: mirror
-                    .pulled
+                    .listed
                     .map(|itm| itm.unix_microseconds / 1_000_000)
                     .unwrap_or(0),
                 files_amount: mirror.entries.len() as i32,

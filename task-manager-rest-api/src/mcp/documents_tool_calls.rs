@@ -103,11 +103,13 @@ of the documents in them. So an empty folder cannot exist, and moving every docu
 makes it disappear.\
 \
 PATHS UNDER `github/` ARE NOT THIS PROJECT'S DOCUMENTS. They are files in a GitHub repository somebody \
-connected, mirrored here and refreshed every ten minutes, and they are listed beside the real ones \
-because that is what makes reference material reachable. Read one with documents_get exactly as you \
-would any other. You cannot write one: they have no version and no history here, every write names them \
-and refuses, and the way to bring one into the project for real is to copy it into a folder of its own \
-from the Documents screen.";
+connected, and they are listed beside the real ones because that is what makes reference material \
+reachable. This service holds only the LIST — a path, a size and a blob sha each — and fetches a file \
+from GitHub when you actually read it, so a read costs a request against an hourly budget: read what \
+you need rather than sweeping the folder. Read one with documents_get exactly as you would any other. \
+You cannot write one: they have no version and no history here, every write names them and refuses, and \
+the way to bring one into the project for real is to copy it into a folder of its own from the \
+Documents screen.";
 }
 
 #[async_trait::async_trait]

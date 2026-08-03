@@ -17,7 +17,7 @@
 # settings-ui and versions-control-ui on these hosts.
 services:
   task-manager-rest-api:
-    image: ghcr.io/my-ai-utils/task-manager-rest-api:0.1.26
+    image: ghcr.io/my-ai-utils/task-manager-rest-api:0.1.28
     hostname: task-manager-rest-api
     container_name: task-manager-rest-api
     restart: always
@@ -47,6 +47,11 @@ services:
           # Above the 64Mb default on purpose: this service holds every project, task, comment and user
           # in memory, and each write replaces a snapshot wholesale. 64Mb would be a restart loop as
           # soon as a board grew.
+          #
+          # Connected GitHub repositories do NOT move this number, which is the point of holding
+          # references rather than content: a connection costs a list of paths, and the largest thing
+          # a read ever allocates is the one file being read, bounded by MAX_BINARY_LEN like every
+          # other document.
           memory: 256Mb
     logging:
       options:
@@ -58,7 +63,7 @@ services:
   # A static bundle: wasm, html, js and css, served by web-app-host. It never knows a base URL — there is
   # nothing to configure in it, which is also why it has no settings and no unix sockets.
   task-manager-ui:
-    image: ghcr.io/my-ai-utils/task-manager-ui:0.1.49
+    image: ghcr.io/my-ai-utils/task-manager-ui:0.1.50
     hostname: task-manager-ui
     container_name: task-manager-ui
     restart: always

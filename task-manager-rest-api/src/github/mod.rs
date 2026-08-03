@@ -27,11 +27,3 @@ pub use connection::*;
 pub use mirror::*;
 pub use puller::*;
 
-/// Where the mirrors live inside the container.
-///
-/// Under the system temp directory rather than beside the binary: this is a cache with a rebuild path,
-/// so it belongs somewhere a container is expected to lose, and putting it anywhere durable would only
-/// invite somebody to treat it as durable.
-pub fn mirrors_root() -> std::path::PathBuf {
-    std::env::temp_dir().join("task-manager-github")
-}

@@ -32,17 +32,16 @@ pub async fn sync_github(
     override_existing: bool,
     who: &str,
 ) -> Result<(Vec<DocumentDto>, Vec<SkippedEntry>), String> {
-    let (project_id, project_prefix) = {
+    let (project_id, project_prefix, connection) = {
         let board = app.board.read();
         let project = resolve_project_by_prefix(&board, project_prefix)?;
 
-        if project.github_connection(connection_name).is_none() {
-            return Err(format!(
-                "this project has no connection called '{connection_name}'"
-            ));
-        }
+        let connection = project
+            .github_connection(connection_name)
+            .ok_or_else(|| format!("this project has no connection called '{connection_name}'"))?
+            .clone();
 
-        (project.id.clone(), project.prefix.clone())
+        (project.id.clone(), project.prefix.clone(), connection)
     };
 
     let mirror = app.github.get_or_pending(&project_id, connection_name);
@@ -89,24 +88,22 @@ pub async fn sync_github(
             continue;
         }
 
-        let Some(on_disk) = mirror.file_on_disk(&entry.path) else {
-            skipped.push(SkippedEntry {
-                name: entry.path.clone(),
-                reason: "it is no longer in the mirror".to_string(),
-            });
-            continue;
-        };
-
-        let bytes = match tokio::fs::read(&on_disk).await {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                skipped.push(SkippedEntry {
-                    name: entry.path.clone(),
-                    reason: format!("it did not read from the mirror: {err}"),
-                });
-                continue;
-            }
-        };
+        // ONE GITHUB REQUEST PER FILE, and this is the loop where that cost is felt: a sync of two
+        // hundred files is two hundred requests against an hourly budget of sixty anonymously and five
+        // thousand with a key. A rate limit arrives here as a skip with GitHub's own sentence attached
+        // rather than as a failed sync, so what did get through is kept and the rest can be asked for
+        // again in an hour.
+        let bytes =
+            match crate::github::read_mirror_file(app, &project_id, &connection, &entry.sha).await {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    skipped.push(SkippedEntry {
+                        name: entry.path.clone(),
+                        reason: err,
+                    });
+                    continue;
+                }
+            };
 
         // The same text-or-bytes rule the archive upload uses, and for the same reason: a repository of
         // Markdown has to arrive as documents that render and diff, not as a folder of downloads.
@@ -190,6 +187,7 @@ mod tests {
         MirrorEntry {
             path: path.to_string(),
             size: 1,
+            sha: format!("sha-{path}"),
             content_type: "text/markdown".to_string(),
             is_binary: false,
         }

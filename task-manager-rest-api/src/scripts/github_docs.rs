@@ -56,7 +56,7 @@ pub fn mirror_index_entries(app: &AppContext, project: &ProjectModel) -> Vec<Doc
     for connection in project.github_connections.iter() {
         let mirror = app.github.get_or_pending(&project.id, &connection.name);
 
-        let updated = mirror.pulled.unwrap_or_else(|| DateTimeAsMicroseconds::new(0));
+        let updated = mirror.listed.unwrap_or_else(|| DateTimeAsMicroseconds::new(0));
 
         for file in mirror.entries.iter() {
             let path = github_mirror_path(&connection.name, &file.path);
@@ -79,9 +79,18 @@ pub fn mirror_index_entries(app: &AppContext, project: &ProjectModel) -> Vec<Doc
     entries
 }
 
-/// Read one mirrored file off disk, as the row shape every reader of a document already handles.
+/// Read one mirrored file, by fetching it from GitHub right now.
 ///
-/// The payload is decided the same way the archive upload decides it — the extension says what the file
+/// **This is where content enters the feature, and it leaves again with the caller.** Nothing is stored:
+/// the service holds a path, a size and a blob sha, and the bytes are asked for at the moment somebody
+/// asks for this file. The blob sha is what they are asked for BY — a path would resolve against the
+/// branch and could answer with a file written since the listing, where a sha names exactly the bytes
+/// the listing described.
+///
+/// The cost is a GitHub request per read. That is the shape this was asked to have, and it is why a key
+/// matters even on a public repository: anonymous reads share an hourly budget of sixty.
+///
+/// The payload is decided the same way an uploaded archive decides it — the extension says what the file
 /// is, and the bytes get to disagree. A `.md` that is not UTF-8 is served as bytes rather than as
 /// mojibake.
 pub async fn read_mirror_document(
@@ -89,34 +98,38 @@ pub async fn read_mirror_document(
     project_prefix: &str,
     mirror_path: &str,
 ) -> Result<DocumentDto, String> {
-    let (project_id, project_prefix) = {
-        let board = app.board.read();
-        let project = resolve_project_by_prefix(&board, project_prefix)?;
-        (project.id.clone(), project.prefix.clone())
-    };
-
-    let Some((connection, relative)) = parse_github_mirror_path(mirror_path) else {
+    let Some((connection_name, relative)) = parse_github_mirror_path(mirror_path) else {
         return Err(format!(
             "'{mirror_path}' is not a path in a connected repository — those look like `{GITHUB_ROOT}/<connection>/<file>`"
         ));
     };
 
-    let mirror = app.github.get_or_pending(&project_id, connection);
+    let (project_id, project_prefix, connection) = {
+        let board = app.board.read();
+        let project = resolve_project_by_prefix(&board, project_prefix)?;
+
+        let connection = project
+            .github_connection(connection_name)
+            .ok_or_else(|| {
+                format!("this project has no connected repository called '{connection_name}'")
+            })?
+            .clone();
+
+        (project.id.clone(), project.prefix.clone(), connection)
+    };
+
+    let mirror = app.github.get_or_pending(&project_id, connection_name);
 
     let Some(entry) = mirror.entry(relative) else {
         return Err(format!(
-            "'{mirror_path}' is not in the mirror. It may have been removed upstream, or the connection may not have pulled yet — its state is '{}'",
+            "'{mirror_path}' is not in the file list. It may have been removed upstream, or the connection may not have listed yet — its state is '{}'",
             mirror.state
         ));
     };
 
-    let Some(on_disk) = mirror.file_on_disk(relative) else {
-        return Err(format!("'{mirror_path}' is not in the mirror"));
-    };
-
-    let bytes = tokio::fs::read(&on_disk).await.map_err(|err| {
-        format!("'{mirror_path}' is in the index but did not read from disk: {err} — the next pull will rebuild it")
-    })?;
+    let bytes = crate::github::read_mirror_file(app, &project_id, &connection, &entry.sha)
+        .await
+        .map_err(|err| format!("'{mirror_path}' did not read from GitHub: {err}"))?;
 
     // Text only when the extension says text AND the bytes agree. Same rule, and the same reason, as the
     // archive unpack: storing a guess as text is what produces a document nobody can read back.
@@ -130,7 +143,16 @@ pub async fn read_mirror_document(
         }
     };
 
-    let updated = mirror.pulled.unwrap_or_else(|| DateTimeAsMicroseconds::new(0));
+    let updated = mirror.listed.unwrap_or_else(|| DateTimeAsMicroseconds::new(0));
+
+    // The size of what actually arrived rather than the size the listing claimed. The two are the same
+    // number in every ordinary case and differ in exactly the one that matters — a file replaced between
+    // the listing and the read — and a size that disagrees with the payload beside it is the kind of
+    // inconsistency a reader cannot see and a diff cannot explain.
+    let content_size = content
+        .as_ref()
+        .map(|itm| itm.len() as i64)
+        .or_else(|| binary_content.as_ref().map(|itm| itm.len() as i64));
 
     Ok(DocumentDto {
         id: mirror_document_id(&project_prefix, mirror_path),
@@ -139,7 +161,7 @@ pub async fn read_mirror_document(
         content_type: Some(entry.content_type.clone()),
         content,
         binary_content,
-        content_size: Some(entry.size),
+        content_size,
         // Not a version. See `mirror_index_entries`.
         version: 0,
         created: updated,

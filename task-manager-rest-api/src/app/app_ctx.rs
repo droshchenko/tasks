@@ -54,12 +54,12 @@ pub struct AppContext {
     // payloads are the only part that goes to Postgres per read.
     pub documents_index: DocumentsIndex,
 
-    // Connected GitHub repositories: the trees pulled into temp, and the keys that reached them.
+    // Connected GitHub repositories: the file LISTS, and the keys that fetch behind them.
     //
     // Beside `documents_index` rather than inside it, because the two are different kinds of thing. That
-    // index is the project's own documents, durable in Postgres and merely cached here. This is a cache
-    // with no original on this side at all — the original is somebody else's repository — and everything
-    // in it is rebuilt from nothing on every start.
+    // index is the project's own documents, durable in Postgres and merely cached here. This holds
+    // references to files this service does not have and never stores — a path, a size and a blob sha
+    // each — and every one of them is rebuilt from nothing on every start.
     pub github: GithubMirrors,
 
     // The Homes to tell when a board changes.
@@ -106,7 +106,7 @@ impl AppContext {
             documents_repo: DocumentsRepo::new(settings_reader.clone()).await,
             board: Board::new(),
             documents_index: DocumentsIndex::new(),
-            github: GithubMirrors::new(crate::github::mirrors_root()),
+            github: GithubMirrors::new(),
             subscribers: ProjectSubscribers::new(),
             session_key,
             settings_reader,
