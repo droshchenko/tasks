@@ -212,39 +212,125 @@ pub const DEFAULT_TEXT_CONTENT_TYPE: &str = "text/markdown";
 /// that means "bytes, download them".
 pub const DEFAULT_BINARY_CONTENT_TYPE: &str = "application/octet-stream";
 
-/// The MIME type a path implies, or `None` when its extension says nothing.
+/// The MIME type a path implies, or `None` when neither its name nor its extension says anything.
 ///
-/// An explicit table rather than a crate: the list is short, it is the same on both sides of the wire, and
-/// what is NOT in it matters as much as what is — an unknown extension has to fall through to a default that
-/// depends on whether the payload is text or bytes, which only the caller knows.
+/// **A page is more than one file, and this table is what decides whether the other files work.** An HTML
+/// document served from `/raw/` asks for its own stylesheet and its own script with relative urls, and a
+/// browser with strict MIME checking — which is every browser — refuses to apply a stylesheet that arrives
+/// as anything but `text/css`, and refuses to run a script that is not a script type. So an extension
+/// missing from here is not a cosmetic gap: it is a page that renders bare with two lines in a console
+/// nobody has open. That is the bug this table was widened for, and it is why the fallback around it says
+/// "bytes" rather than guessing at text — see [`crate::documents::DEFAULT_BINARY_CONTENT_TYPE`].
 ///
-/// Here in `shared` because both sides ask: the server to decide what to store, the browser to pick an icon.
+/// An explicit table rather than a crate: it is the same on both sides of the wire, and what is in it is a
+/// decision rather than a lookup — `text/plain` for source files is chosen because a browser shows it and
+/// cannot be tricked by it, where a more specific `text/x-…` buys nothing anybody reads.
+///
+/// It covers everything `my_http_server::WebContentType::detect_by_extension` covers, deliberately: the
+/// static middleware and this route serve the same kinds of file, and a browser that is happy with one and
+/// not the other would be a difference nobody could explain.
+///
+/// Here in `shared` because both sides ask: the server to decide what to store and what to send, the
+/// browser to pick an icon.
 pub fn content_type_for_path(path: &str) -> Option<&'static str> {
     let name = document_file_name(path);
+
+    // By NAME first, for the files that carry their type in the name and no extension at all. A repository
+    // is full of them, and a `LICENSE` offered as a download rather than shown is the kind of small wrong
+    // answer that makes a mirror feel broken.
+    match name.to_lowercase().as_str() {
+        "makefile" | "dockerfile" | "license" | "licence" | "notice" | "authors" | "codeowners"
+        | "readme" | "changelog" | ".gitignore" | ".gitattributes" | ".dockerignore"
+        | ".editorconfig" | ".env" => return Some("text/plain"),
+        _ => {}
+    }
+
     let (stem, extension) = name.rsplit_once('.')?;
 
-    // `.gitignore` is a name, not an extension of nothing.
+    // A name that is nothing but an extension — `.gitignore` is a name, not an extension of nothing. The
+    // ones worth knowing are matched above, by name.
     if stem.is_empty() {
         return None;
     }
 
     Some(match extension.to_lowercase().as_str() {
+        // Text this product renders as itself.
         "md" | "markdown" => DEFAULT_TEXT_CONTENT_TYPE,
-        "txt" => "text/plain",
+        "txt" | "text" | "log" => "text/plain",
         "csv" => "text/csv",
-        "json" => "application/json",
-        "yaml" | "yml" => "application/yaml",
-        "toml" => "text/plain",
+        "tsv" => "text/tab-separated-values",
+
+        // What a page is made of. The three that broke: a stylesheet, a script and a font are all refused
+        // outright by the browser when the type is wrong, unlike an image, which it sniffs and draws.
         "html" | "htm" => "text/html",
-        "pdf" => "application/pdf",
+        "css" => "text/css",
+        "js" | "mjs" | "cjs" => "text/javascript",
+        "map" | "json" => "application/json",
+        "wasm" => "application/wasm",
+        "xml" | "xsl" | "xsd" => "application/xml",
+        "yaml" | "yml" => "application/yaml",
+
+        // Fonts. `font/*` is the modern spelling and what browsers want; the ancient `eot` keeps the
+        // vendor type it has always had.
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "eot" => "application/vnd.ms-fontobject",
+
+        // Images. `ico` keeps `image/x-icon` rather than the newer `image/vnd.microsoft.icon`, because it
+        // is what every browser and every existing favicon already agrees on.
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "svg" => "image/svg+xml",
         "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+
+        // Source and configuration, all as `text/plain`. They are read far more often than they are run,
+        // and this is a document surface: what matters is that a browser shows them and that nothing here
+        // claims they are a script that ought to execute.
+        "py" | "rs" | "go" | "rb" | "php" | "pl" | "lua" | "r" | "swift" | "kt" | "kts"
+        | "java" | "scala" | "c" | "h" | "cc" | "cpp" | "hpp" | "cs" | "m" | "mm" | "sql"
+        | "graphql" | "gql" | "proto" | "sh" | "bash" | "zsh" | "fish" | "bat" | "cmd" | "ps1"
+        | "toml" | "ini" | "cfg" | "conf" | "properties" | "env" | "gradle" | "tf" | "tfvars"
+        | "vue" | "svelte" | "ts" | "tsx" | "jsx" | "rst" | "adoc" | "asciidoc" | "org" | "tex"
+        | "diff" | "patch" | "lock" => "text/plain",
+
+        // Things the browser has a viewer for, or an obvious way to handle.
+        "pdf" => "application/pdf",
         "zip" => "application/zip",
+        "gz" | "tgz" => "application/gzip",
+        "tar" => "application/x-tar",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+
         _ => return None,
     })
+}
+
+/// Whether a content type is text on the wire and therefore needs a charset beside it.
+///
+/// **Without one the browser guesses**, and its guess for `text/html` and `text/css` is not UTF-8 — it is
+/// the document's locale default, which turns every non-Latin character in a mirrored page into mojibake.
+/// The types that carry their own encoding declaration (an image, a PDF, a font) must NOT get one: a
+/// charset parameter on them is meaningless and some parsers treat the whole type as unknown.
+///
+/// `application/json` is included though JSON is UTF-8 by definition — saying so costs nothing and stops a
+/// proxy in between deciding otherwise.
+pub fn content_type_needs_charset(content_type: &str) -> bool {
+    let content_type = content_type.trim().to_lowercase();
+
+    content_type.starts_with("text/")
+        || matches!(
+            content_type.as_str(),
+            "application/json" | "application/xml" | "application/yaml" | "image/svg+xml"
+        )
 }
 
 /// Whether the browser should draw this in a FRAME rather than as text.
@@ -438,7 +524,9 @@ pub fn normalise_document_path(src: &str) -> Result<String, String> {
     let src = src.trim().replace('\\', "/");
 
     if src.is_empty() {
-        return Err("a document needs a path, e.g. `notes.md` or `docs/design/system.md`".to_string());
+        return Err(
+            "a document needs a path, e.g. `notes.md` or `docs/design/system.md`".to_string(),
+        );
     }
 
     if src.len() > MAX_PATH_LEN {
@@ -541,15 +629,7 @@ mod tests {
 
     #[test]
     fn what_is_not_a_path_is_refused() {
-        for src in [
-            "",
-            "   ",
-            "/",
-            "docs/",
-            "docs/../a.md",
-            "./a.md",
-            "..",
-        ] {
+        for src in ["", "   ", "/", "docs/", "docs/../a.md", "./a.md", ".."] {
             assert!(
                 normalise_document_path(src).is_err(),
                 "{src:?} should not be accepted as a path"
@@ -565,7 +645,10 @@ mod tests {
 
     #[test]
     fn folders_come_from_the_path_and_nothing_else() {
-        assert_eq!(document_folders("docs/design/system.md"), vec!["docs", "design"]);
+        assert_eq!(
+            document_folders("docs/design/system.md"),
+            vec!["docs", "design"]
+        );
         assert_eq!(document_folders("notes.md"), Vec::<&str>::new());
     }
 
@@ -612,7 +695,11 @@ mod tests {
     fn what_is_not_a_raw_url_falls_through() {
         assert_eq!(parse_raw_document_url("/api/documents/v1/list"), None);
         assert_eq!(parse_raw_document_url("/raw/"), None);
-        assert_eq!(parse_raw_document_url("/raw/TM"), None, "a project is not a document");
+        assert_eq!(
+            parse_raw_document_url("/raw/TM"),
+            None,
+            "a project is not a document"
+        );
         assert_eq!(parse_raw_document_url("/raw/TM/"), None);
     }
 
@@ -626,14 +713,112 @@ mod tests {
 
     #[test]
     fn a_content_type_is_read_off_the_extension() {
-        assert_eq!(content_type_for_path("docs/spec.pdf"), Some("application/pdf"));
+        assert_eq!(
+            content_type_for_path("docs/spec.pdf"),
+            Some("application/pdf")
+        );
         assert_eq!(content_type_for_path("a/b/notes.MD"), Some("text/markdown"));
         assert_eq!(content_type_for_path("logo.png"), Some("image/png"));
 
         // Nothing to read: the caller's declaration or a kind-dependent default decides.
-        assert_eq!(content_type_for_path("Makefile"), None);
-        assert_eq!(content_type_for_path(".gitignore"), None);
-        assert_eq!(content_type_for_path("build.sh"), None);
+        assert_eq!(content_type_for_path("prototype.unknownext"), None);
+        assert_eq!(content_type_for_path("noextension"), None);
+    }
+
+    /// **The three that a browser refuses outright when the type is wrong.** An image with a bad type is
+    /// sniffed and drawn anyway; a stylesheet is not applied, a script is not run and a font is not loaded —
+    /// which is a page rendering bare with nothing but two console lines to say why.
+    #[test]
+    fn a_page_gets_the_types_its_own_assets_need() {
+        assert_eq!(
+            content_type_for_path("design-system/css/design-system.css"),
+            Some("text/css")
+        );
+        assert_eq!(
+            content_type_for_path("design-system/js/design-system.js"),
+            Some("text/javascript")
+        );
+        assert_eq!(content_type_for_path("app.mjs"), Some("text/javascript"));
+        assert_eq!(
+            content_type_for_path("fonts/inter.woff2"),
+            Some("font/woff2")
+        );
+        assert_eq!(content_type_for_path("fonts/inter.ttf"), Some("font/ttf"));
+        assert_eq!(content_type_for_path("icons.svg"), Some("image/svg+xml"));
+        assert_eq!(content_type_for_path("data.json"), Some("application/json"));
+    }
+
+    /// Everything `my_http_server::WebContentType::detect_by_extension` knows, this knows too — the static
+    /// middleware and the raw route serve the same kinds of file, and a browser happy with one and not the
+    /// other would be a difference nobody could explain. `wasm` is the one that was missing.
+    #[test]
+    fn it_covers_what_the_static_middleware_covers() {
+        for (path, expected) in [
+            ("a.png", "image/png"),
+            ("a.svg", "image/svg+xml"),
+            ("a.css", "text/css"),
+            ("a.js", "text/javascript"),
+            ("a.html", "text/html"),
+            ("a.htm", "text/html"),
+            ("a.text", "text/plain"),
+            ("a.json", "application/json"),
+            ("a.yaml", "application/yaml"),
+            ("a.yml", "application/yaml"),
+            ("a.wasm", "application/wasm"),
+        ] {
+            assert_eq!(content_type_for_path(path), Some(expected), "{path}");
+        }
+    }
+
+    /// Source and configuration read as text rather than downloading — a repository is mostly these, and a
+    /// `build.py` offered as a file to save is a mirror that feels broken.
+    #[test]
+    fn source_files_are_text() {
+        for path in [
+            "build.py",
+            "src/main.rs",
+            "run.sh",
+            "Cargo.toml",
+            "schema.sql",
+            "app.ts",
+            "notes.rst",
+        ] {
+            assert_eq!(content_type_for_path(path), Some("text/plain"), "{path}");
+        }
+    }
+
+    /// The files that carry their type in the NAME and have no extension at all. A repository is full of
+    /// them, and they are read constantly.
+    #[test]
+    fn the_names_that_are_text_without_an_extension() {
+        for path in [
+            "Makefile",
+            "docs/LICENSE",
+            "Dockerfile",
+            "README",
+            ".gitignore",
+            ".editorconfig",
+        ] {
+            assert_eq!(content_type_for_path(path), Some("text/plain"), "{path}");
+        }
+    }
+
+    /// A charset belongs on text and nowhere else: on an image or a font it is meaningless, and some
+    /// parsers treat a type carrying one as unknown.
+    #[test]
+    fn only_text_asks_for_a_charset() {
+        assert!(content_type_needs_charset("text/html"));
+        assert!(content_type_needs_charset("text/css"));
+        assert!(content_type_needs_charset("text/javascript"));
+        assert!(content_type_needs_charset("TEXT/Markdown"));
+        assert!(content_type_needs_charset("application/json"));
+        // XML and SVG both carry an encoding declaration of their own, and both are still served as text.
+        assert!(content_type_needs_charset("image/svg+xml"));
+
+        assert!(!content_type_needs_charset("image/png"));
+        assert!(!content_type_needs_charset("font/woff2"));
+        assert!(!content_type_needs_charset("application/pdf"));
+        assert!(!content_type_needs_charset("application/octet-stream"));
     }
 
     /// The bug this pins: HTML is TEXT, so a viewer that framed only binary payloads showed a web page as
@@ -645,7 +830,10 @@ mod tests {
 
         assert!(!is_framed_content_type("text/markdown"));
         assert!(!is_framed_content_type("text/plain"));
-        assert!(!is_framed_content_type("image/png"), "an image is drawn, not framed");
+        assert!(
+            !is_framed_content_type("image/png"),
+            "an image is drawn, not framed"
+        );
         assert!(!is_framed_content_type("application/zip"));
     }
 
@@ -673,11 +861,17 @@ mod tests {
     fn a_zip_is_recognised_by_its_name_first() {
         assert!(is_zip_upload("docs.zip", None));
         assert!(is_zip_upload("docs.ZIP", None));
-        assert!(is_zip_upload("a/b/docs.zip", Some("application/octet-stream")));
+        assert!(is_zip_upload(
+            "a/b/docs.zip",
+            Some("application/octet-stream")
+        ));
 
         // No name to go on: the reported type is the fallback.
         assert!(is_zip_upload("archive", Some("application/zip")));
-        assert!(is_zip_upload("archive", Some("application/x-zip-compressed")));
+        assert!(is_zip_upload(
+            "archive",
+            Some("application/x-zip-compressed")
+        ));
 
         assert!(!is_zip_upload("notes.md", Some("text/markdown")));
         assert!(!is_zip_upload("zipped", None));

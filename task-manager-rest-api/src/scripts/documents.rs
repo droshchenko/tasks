@@ -1243,23 +1243,42 @@ pub fn body_of_version(row: &DocumentHistoryDto) -> DocumentBody {
     DocumentBody::from_columns(row.content.clone(), row.binary_content.clone())
 }
 
-/// The content type to report for a row whose stored one may be missing.
+/// The content type to report for a row whose stored one may be missing, or may be an old guess.
 ///
 /// **The path is consulted before the default, and that is not a nicety — it is the fix for a real bug.** Rows
 /// written before this column existed have `NULL` in it, and a flat `text/markdown` fallback made every one of
 /// them Markdown: `prototype_draft.html` came back as `text/markdown`, so the viewer did not frame it and drew
 /// a web page as a wall of markup. The path knew the answer all along.
 ///
-/// Order: what was stored, then what the path implies, then Markdown — which is what a document with a
-/// meaningless name and no stored type most likely is, since text was all this feature held at the time.
+/// Order: what was stored, then what the path implies, then **bytes**.
+///
+/// **The last step used to be Markdown, and that was the second half of the same bug.** An extension the table
+/// did not know became `text/markdown` — so a mirrored `design-system.css` was served as Markdown, and every
+/// browser refused to apply it as a stylesheet, leaving a page that renders bare with two lines in a console
+/// nobody has open. Claiming a type we do not know is worse than admitting it: `application/octet-stream`
+/// makes the browser offer a download, which is visible, rather than quietly discard the file.
+///
+/// **A stored `text/markdown` on a path that says otherwise is treated as that old guess rather than as a
+/// declaration.** Nothing declared it — it is what every unknown extension became before the table grew, and
+/// it is sitting in the rows those builds wrote, on files that are plainly a stylesheet or a script. The
+/// narrow reading is deliberate: only the one legacy value, and only when the path has a specific answer of
+/// its own, so a `.md` document and anything a caller actually named are both untouched.
 pub fn content_type_of(stored: Option<&str>, path: &str) -> String {
+    let from_path = content_type_for_path(path);
+
     if let Some(declared) = stored.map(str::trim).filter(|itm| !itm.is_empty()) {
-        return declared.to_lowercase();
+        let declared = declared.to_lowercase();
+
+        if declared == DEFAULT_TEXT_CONTENT_TYPE
+            && let Some(guessed) = from_path.filter(|itm| *itm != DEFAULT_TEXT_CONTENT_TYPE)
+        {
+            return guessed.to_string();
+        }
+
+        return declared;
     }
 
-    content_type_for_path(path)
-        .unwrap_or(DEFAULT_TEXT_CONTENT_TYPE)
-        .to_string()
+    from_path.unwrap_or(DEFAULT_BINARY_CONTENT_TYPE).to_string()
 }
 
 /// What a caller wants to change about the documents a task or a goal references.
@@ -1697,14 +1716,68 @@ mod tests {
         assert_eq!(content_type_of(None, "docs/spec.pdf"), "application/pdf");
         assert_eq!(content_type_of(None, "docs/notes.md"), DEFAULT_TEXT_CONTENT_TYPE);
 
-        // Nothing stored and nothing in the name: text was all this feature held when such a row was written.
-        assert_eq!(content_type_of(None, "Makefile"), DEFAULT_TEXT_CONTENT_TYPE);
+        // A name the table knows without an extension.
+        assert_eq!(content_type_of(None, "Makefile"), "text/plain");
         assert_eq!(content_type_of(Some("  "), "a.html"), "text/html");
 
         // A stored type still wins over the path — it was said on purpose.
         assert_eq!(
             content_type_of(Some("application/pdf"), "a.md"),
             "application/pdf"
+        );
+    }
+
+    /// **Nothing known, so nothing claimed.** The old fallback said `text/markdown` about every extension
+    /// the table had not heard of, which is how a stylesheet came to be served as Markdown and silently
+    /// dropped by the browser. Bytes are the honest answer: the browser offers a download, which somebody
+    /// can see, instead of discarding the file behind a clean-looking page.
+    #[test]
+    fn an_extension_nobody_knows_is_bytes_rather_than_a_guess() {
+        assert_eq!(
+            content_type_of(None, "prototype.unknownext"),
+            DEFAULT_BINARY_CONTENT_TYPE
+        );
+        assert_eq!(
+            content_type_of(None, "docs/thing"),
+            DEFAULT_BINARY_CONTENT_TYPE
+        );
+    }
+
+    /// The rows the old fallback already wrote. A stored `text/markdown` on a path that plainly says
+    /// otherwise is that guess, not a declaration — so the path wins and the file starts working without
+    /// anybody re-uploading it.
+    #[test]
+    fn a_stored_markdown_guess_gives_way_to_what_the_path_says() {
+        assert_eq!(
+            content_type_of(Some("text/markdown"), "design-system/css/design-system.css"),
+            "text/css"
+        );
+        assert_eq!(
+            content_type_of(Some("text/markdown"), "js/design-system.js"),
+            "text/javascript"
+        );
+        assert_eq!(
+            content_type_of(Some("text/markdown"), "build.py"),
+            "text/plain"
+        );
+
+        // A real Markdown document is untouched — the path agrees with what is stored.
+        assert_eq!(
+            content_type_of(Some("text/markdown"), "docs/notes.md"),
+            DEFAULT_TEXT_CONTENT_TYPE
+        );
+
+        // And so is one whose path says nothing: there is no better answer to swap in.
+        assert_eq!(
+            content_type_of(Some("text/markdown"), "docs/thing"),
+            DEFAULT_TEXT_CONTENT_TYPE
+        );
+
+        // Only that one legacy value gives way. Anything else a caller stored is a decision.
+        assert_eq!(
+            content_type_of(Some("text/plain"), "a.css"),
+            "text/plain",
+            "a declared type is not overridden"
         );
     }
 }

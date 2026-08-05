@@ -254,8 +254,9 @@ pub fn body_for_entry(path: &str, bytes: Vec<u8>) -> DocumentBody {
 /// diffable and searchable — and it is the viewer that decides to frame it.
 fn is_text_content_type(content_type: Option<&str>) -> bool {
     let Some(content_type) = content_type else {
-        // Nothing to go on. `Makefile`, `.gitignore`, `build.sh` — plausibly text, but a guess with no
-        // evidence behind it is the guess the browser upload refuses to make.
+        // Nothing to go on. The table knows the names that are text by convention — `Makefile`,
+        // `LICENSE`, `.gitignore` — so what reaches here is a suffix nobody has a type for, and a guess
+        // with no evidence behind it is the guess the browser upload refuses to make.
         return false;
     };
 
@@ -362,8 +363,15 @@ mod tests {
             DocumentBody::Binary(png)
         );
 
-        // No extension to read: no evidence, so no guess.
-        assert!(body_for_entry("Makefile", b"all:".to_vec()).is_binary());
+        // A name the table knows IS evidence, even with no extension on it — and the bytes are still
+        // checked, which is what keeps this from being a guess.
+        assert_eq!(
+            body_for_entry("Makefile", b"all:".to_vec()),
+            DocumentBody::Text("all:".to_string())
+        );
+
+        // A name it does not know, on the other hand, is nothing to go on and stays a file.
+        assert!(body_for_entry("thing.unknownext", b"all:".to_vec()).is_binary());
     }
 
     /// The confirmation half. An extension is a claim, and bytes that are not utf-8 are the counter-evidence —

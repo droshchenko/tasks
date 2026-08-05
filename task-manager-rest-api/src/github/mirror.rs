@@ -296,10 +296,23 @@ pub fn entries_from_tree(tree: Vec<TreeEntry>, repo_path: &str) -> (Vec<MirrorEn
 
         let content_type = crate::scripts::content_type_of(None, &relative);
 
+        // **What we CLAIM and what we try to READ are two different questions, and an unknown extension
+        // answers them differently.** The type above says `application/octet-stream` when the table has
+        // never heard of the extension, because a browser must not be told a file is something nobody
+        // checked. But a file with an unfamiliar extension in a repository is a `.rst`, a `.gradle` or
+        // somebody's own suffix far more often than it is a binary — so it is still READ as text first,
+        // and `read_mirror_document` falls back to bytes the moment the bytes disagree. Deciding this from
+        // the type would have made every such file undownloadable-as-text on the strength of a fallback
+        // that exists precisely because we know nothing.
+        let is_binary = match task_manager_shared::documents::content_type_for_path(&relative) {
+            Some(known) => !crate::documents::is_text_content_type(known),
+            None => false,
+        };
+
         entries.push(MirrorEntry {
             size: item.size,
             sha: item.sha,
-            is_binary: !crate::documents::is_text_content_type(&content_type),
+            is_binary,
             content_type,
             path: relative,
         });
@@ -368,6 +381,66 @@ mod tests {
         assert_eq!(entries[1].content_type, "text/markdown");
         // The reference, which is what a read is made with.
         assert_eq!(entries[1].sha, "sha-docs/readme.md");
+    }
+
+    /// **A page in a repository is more than one file, and the listing is where its types are decided.**
+    /// This is the regression test for a mirrored page rendering bare: a stylesheet listed as anything but
+    /// `text/css` is refused by the browser, and before the table grew every extension it had not heard of
+    /// became `text/markdown`.
+    #[test]
+    fn a_pages_own_assets_are_listed_as_what_they_are() {
+        let (entries, _) = entries_from_tree(
+            vec![
+                tree_entry("index.html", 10),
+                tree_entry("css/design-system.css", 10),
+                tree_entry("js/design-system.js", 10),
+                tree_entry("build.py", 10),
+                tree_entry("img/icon.png", 10),
+            ],
+            "",
+        );
+
+        let type_of = |path: &str| {
+            entries
+                .iter()
+                .find(|itm| itm.path == path)
+                .map(|itm| itm.content_type.as_str())
+                .unwrap_or("missing")
+        };
+
+        assert_eq!(type_of("index.html"), "text/html");
+        assert_eq!(type_of("css/design-system.css"), "text/css");
+        assert_eq!(type_of("js/design-system.js"), "text/javascript");
+        assert_eq!(type_of("build.py"), "text/plain");
+        assert_eq!(type_of("img/icon.png"), "image/png");
+    }
+
+    /// The two questions an unknown extension answers differently: it is OFFERED as bytes, because
+    /// claiming a type nobody checked is what broke the page above — and it is still READ as text, because
+    /// a file with an unfamiliar suffix in a repository is somebody's own convention far more often than it
+    /// is a binary, and the read verifies the bytes anyway.
+    #[test]
+    fn an_extension_nobody_knows_is_offered_as_bytes_and_still_read_as_text() {
+        let (entries, _) = entries_from_tree(
+            vec![
+                tree_entry("notes.unknownext", 10),
+                tree_entry("logo.png", 10),
+            ],
+            "",
+        );
+
+        let unknown = entries
+            .iter()
+            .find(|itm| itm.path == "notes.unknownext")
+            .expect("listed");
+
+        assert_eq!(unknown.content_type, "application/octet-stream");
+        assert!(!unknown.is_binary, "still read as text first");
+
+        // What the table DOES know is binary stays binary, and is never read as text at all.
+        let image = entries.iter().find(|itm| itm.path == "logo.png").unwrap();
+        assert_eq!(image.content_type, "image/png");
+        assert!(image.is_binary);
     }
 
     /// A file nothing could ever read is not put in the tree — it would be a row that every read and

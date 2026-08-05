@@ -94,7 +94,7 @@ async fn serve(
 
     HttpOutput::from_builder()
         .set_content(content)
-        .set_content_type(WebContentType::Raw(content_type))
+        .set_content_type(WebContentType::Raw(with_charset(content_type)))
         .add_header_if_some("Content-Security-Policy", sandbox)
         // Without it a browser sniffs a type for anything whose declared one looks wrong — which is how a
         // document stored as text/plain gets executed as html, straight past the check above.
@@ -105,6 +105,30 @@ async fn serve(
             "no-store, no-cache, must-revalidate, max-age=0".to_string(),
         )
         .into_ok_result(false)
+}
+
+/// A text type with `charset=utf-8` on it, and everything else untouched.
+///
+/// **Everything this service stores as text is UTF-8, and a browser told nothing does not assume that.** Its
+/// default for `text/html` and `text/css` is the locale's encoding, so a mirrored page with a Cyrillic word in
+/// it arrives as mojibake — which reads as a broken document rather than as a missing header.
+///
+/// Only on the wire, never in what is stored: the charset is how the bytes travel, not what the document IS,
+/// and putting it in the column would leave every screen and every tool comparing `text/markdown` against
+/// something that no longer equals it.
+///
+/// A type that already carries a charset is left exactly as it arrived — the caller said it, and a second
+/// parameter would be malformed.
+fn with_charset(content_type: String) -> String {
+    if !task_manager_shared::documents::content_type_needs_charset(&content_type) {
+        return content_type;
+    }
+
+    if content_type.to_lowercase().contains("charset") {
+        return content_type;
+    }
+
+    format!("{content_type}; charset=utf-8")
 }
 
 /// One of the project's own documents, as a content type and bytes.
@@ -164,4 +188,49 @@ async fn serve_from_mirror(
     };
 
     Ok((content_type, content))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A page's own assets are what this is for: a stylesheet with a Cyrillic comment and a script with a
+    /// Cyrillic string both arrive as UTF-8 or as mojibake, and nothing but this header decides which.
+    #[test]
+    fn text_travels_with_a_charset_and_nothing_else_does() {
+        assert_eq!(
+            with_charset("text/css".to_string()),
+            "text/css; charset=utf-8"
+        );
+        assert_eq!(
+            with_charset("text/html".to_string()),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            with_charset("application/json".to_string()),
+            "application/json; charset=utf-8"
+        );
+
+        // Bytes carry their own encoding or none at all, and a charset on them is meaningless.
+        assert_eq!(with_charset("image/png".to_string()), "image/png");
+        assert_eq!(with_charset("font/woff2".to_string()), "font/woff2");
+        assert_eq!(
+            with_charset("application/octet-stream".to_string()),
+            "application/octet-stream"
+        );
+    }
+
+    /// One a caller already spelled out is left exactly as it is — a second parameter would be malformed,
+    /// and theirs is the one that was meant.
+    #[test]
+    fn a_charset_that_is_already_there_is_not_doubled() {
+        assert_eq!(
+            with_charset("text/html; charset=windows-1251".to_string()),
+            "text/html; charset=windows-1251"
+        );
+        assert_eq!(
+            with_charset("text/plain; CHARSET=utf-8".to_string()),
+            "text/plain; CHARSET=utf-8"
+        );
+    }
 }

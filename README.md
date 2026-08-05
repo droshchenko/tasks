@@ -365,6 +365,35 @@ from: served as `/raw/TM/docs/page.html`, `style.css` beside it resolves to `/ra
 arrives. From a query url it would resolve back onto the api route and arrive as nothing. A path of arbitrary
 depth is not something the routing macro can express, which is why this one is a middleware.
 
+**Arriving is not enough — the type has to be right, and for three kinds of file the browser is unforgiving.**
+A stylesheet whose `Content-Type` is not `text/css` is *not applied*; a script that is not a script type is
+*not run*; a font that is not a font type is *not loaded*. Nothing fails: the request is a 200, the bytes are
+there, and the page renders bare with two lines in a console nobody has open. That was a real bug, and its
+cause was the extension table knowing a dozen extensions and calling everything else `text/markdown` — so a
+mirrored `design-system.css` was served as Markdown and silently dropped. The table now covers what a page is
+made of (css, js/mjs, json, wasm, xml, the `font/*` family, every image), the source and configuration files a
+repository is mostly made of as `text/plain`, and the names that carry their type without an extension at all
+— `Makefile`, `LICENSE`, `.gitignore`. It is a superset of `my_http_server`'s
+`WebContentType::detect_by_extension`, deliberately: the static middleware and this route serve the same kinds
+of file, and a browser happy with one and not the other would be a difference nobody could explain.
+
+**What is left over falls back to `application/octet-stream`, not to text.** Claiming a type nobody checked is
+how the failure above got to be silent; bytes make the browser offer a download, which somebody can see. The
+same honesty is why a stored `text/markdown` on a path that plainly says otherwise gives way to the path: that
+value is not a declaration, it is what every unknown extension became before the table grew, and it is sitting
+in rows those builds wrote.
+
+**A mirror answers the two questions differently, on purpose.** What a connected repository's file is *offered
+as* is that honest type; whether it is *read as text* is decided from the table alone, so an extension nobody
+has a type for is still read as text first — a file with an unfamiliar suffix in a repository is somebody's own
+convention far more often than it is a binary, and the read checks the bytes before calling anything text.
+
+Text types go out with `charset=utf-8` appended, on the wire only. Without it the browser's default for
+`text/html` and `text/css` is the locale's encoding rather than UTF-8, which turns every Cyrillic character in
+a mirrored page into mojibake — a document that reads as broken rather than as a missing header. It is not
+stored: the charset is how the bytes travel, not what the document is, and putting it in the column would
+leave every screen comparing `text/markdown` against something that no longer equals it.
+
 **The path is the key; the id is the identity.** `documents_upload` takes a project, a path and a payload, and
 looks the path up: found, and it writes a *new version* of the document that lives there, keeping its id and
 its whole history; not found, and it creates one. So "upload the file again" is the entire editing story, and
