@@ -142,6 +142,10 @@ pub async fn pull_connection(
             listed: Some(DateTimeAsMicroseconds::now()),
             entries: Arc::new(entries),
             skipped_amount,
+            // Carried over rather than bumped: the run is counted once, by the guard's `Drop`, after
+            // this has been written. Every other branch out of this function carries it the same way,
+            // by cloning what was there.
+            pull_no: previous.pull_no,
         },
     );
 }

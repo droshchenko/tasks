@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use service_sdk::macros::use_my_http_server;
-use task_manager_shared::github::PullGithubConnectionInputModel;
+use task_manager_shared::github::{PullGithubConnectionInputModel, PullGithubConnectionResponse};
 
 use crate::app::AppContext;
 use crate::http_server::errors::{bad_request, not_found};
@@ -13,10 +13,10 @@ use_my_http_server!();
     route: "/api/github/v1/pull",
     controller: "GitHub",
     summary: "Refresh one connection now",
-    description: "Every connection is pulled on a ten-minute timer anyway; this is the button for somebody who has just pushed and does not want to wait for it. IT RETURNS BEFORE THE PULL FINISHES — a repository can take half a minute to arrive, and a request held open for that is a request that times out somewhere in between. Read the state back from the connections list. A pull that is already running is not started twice: the second caller gets the same answer and the same pull.",
+    description: "Every connection is pulled on a ten-minute timer anyway; this is the button for somebody who has just pushed and does not want to wait for it. IT RETURNS BEFORE THE PULL FINISHES — a repository can take half a minute to arrive, and a request held open for that is a request that times out somewhere in between. What comes back is a receipt: `pull_no`, the connection's finished-listings count as it was when the ask was accepted. Read the connections list until that connection reports a HIGHER one and the run is over, whatever it did — the state and the error on it then describe THIS run rather than the one before. A pull that is already running is not started twice: the second caller watches the listing already under way, which is the same answer it was asking for.",
     input_data: "PullGithubConnectionInputModel",
     result: [
-        {status_code: 200, description: "A pull was asked for"},
+        {status_code: 200, description: "A pull was asked for", model: "PullGithubConnectionResponse"},
         {status_code: 400, description: "No such connection"},
         {status_code: 401, description: "Not authenticated"},
         {status_code: 403, description: "No access to this project"},
@@ -49,9 +49,10 @@ async fn handle_request(
 
     crate::auth::require_project_access(&action.app, ctx, &project_id).await?;
 
-    crate::scripts::pull_github_connection(&action.app, &input_data.project, &input_data.name)
-        .await
-        .map_err(bad_request)?;
+    let pull_no =
+        crate::scripts::pull_github_connection(&action.app, &input_data.project, &input_data.name)
+            .await
+            .map_err(bad_request)?;
 
-    HttpOutput::Empty.into_ok_result(true)
+    HttpOutput::as_json(PullGithubConnectionResponse { pull_no }).into_ok_result(true)
 }

@@ -1991,6 +1991,48 @@ button.task-view-check-row:hover {
   padding: 0 4px;
 }
 
+/* A tag that is also the fix. Only `needs a key` earns this: it is the one state a person can clear in
+ * ten seconds, and the tag is where they are already looking when they learn about it. */
+.tree-tag.actionable {
+  cursor: pointer;
+  background: none;
+  font-family: inherit;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tree-tag.actionable:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* The one button that lives inside a tree row — refresh, on the mirrors and on the root they hang under.
+ *
+ * **Drawn, not revealed on hover.** It used to appear only under the pointer, on the reasoning that a tree
+ * is read far more often than it is acted on; what that actually bought was a control nobody knew existed,
+ * on the two rows in the whole product where a person has a reason to press something. It sits at half
+ * strength instead and comes up to full on the row's hover, which keeps it from competing with the names
+ * beside it without hiding it from the reader who is looking for it. */
+.tree-action {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+.tree-row:hover .tree-action {
+  opacity: 1;
+}
+
+.tree-action:hover {
+  color: var(--accent);
+}
+
 /* The pick tree inside the sync dialog. Scrolls on its own so a repository of four hundred files does not
  * push the Override checkbox and the button off the bottom of the dialog — which is precisely the pair a
  * reader has to see before pressing anything. */
@@ -2195,5 +2237,50 @@ button.task-view-check-row:hover {
 .upload-folder-pick {
   flex: 0 0 auto;
   max-width: 180px;
+}
+
+/* The refresh dialog: one row per connection, and the row is what changes while the listing runs. Wide
+ * enough for a repository name beside its state without either wrapping — a row that reflows every time a
+ * word changes reads as the screen being redrawn rather than as one number moving. */
+.github-refresh {
+  min-width: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 10px 0;
+}
+
+.refresh-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 10px;
+}
+
+.refresh-row + .refresh-row {
+  border-top: 1px solid var(--border);
+}
+
+.refresh-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Right-aligned, so the states of eight connections read as one column rather than as eight sentences
+ * starting wherever the name before them ended. */
+.refresh-state {
+  flex: 0 0 auto;
+  max-width: 55%;
+  text-align: right;
+}
+
+/* The answer the dialog was opened for. It replaces nothing — the rows still say what each connection
+ * holds — it says whether there is anything left to wait for. */
+.refresh-done {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.refresh-done.failed {
+  color: var(--danger);
 }
 

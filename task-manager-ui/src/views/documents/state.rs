@@ -202,6 +202,18 @@ impl DocumentsState {
         format!("{}@{first}", task_manager_shared::github::GITHUB_ROOT)
     }
 
+    /// Every connected repository's name, in the order the server listed them.
+    ///
+    /// Empty while the list is still loading, which is the right answer for the one thing it is for: the
+    /// refresh on the root reads all of them, and there is nothing to read until they are known.
+    pub fn connection_names(&self) -> Vec<String> {
+        self.connections
+            .as_ref()
+            .try_unwrap_as_loaded()
+            .map(|connections| connections.iter().map(|itm| itm.name.clone()).collect())
+            .unwrap_or_default()
+    }
+
     /// One connection by name, or `None` while the list is still loading.
     pub fn connection(&self, name: &str) -> Option<&GithubConnectionResponse> {
         self.connections

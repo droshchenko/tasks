@@ -318,6 +318,26 @@ pub fn DocumentTreeRow(
             // signal's read guard, and a guard cannot outlive the expression that made it.
             let connection = folder_connection(&path).map(str::to_string);
 
+            // What a refresh started HERE would read. A connection's own row is that connection; the root
+            // is every one of them — "the GitHub folders are stale" is a thought somebody has about the
+            // whole tree rather than about one repository at a time, and the root is the row they are
+            // looking at when they have it. Nowhere else: a folder inside a mirror is not a thing that
+            // refreshes on its own.
+            let refresh: Option<Vec<String>> = match connection.as_ref() {
+                Some(name) => Some(vec![name.clone()]),
+                None if path == GITHUB_ROOT => match cs.read().connection_names() {
+                    names if names.is_empty() => None,
+                    names => Some(names),
+                },
+                None => None,
+            };
+
+            let refresh_title = if path == GITHUB_ROOT {
+                "Read every connected repository from GitHub again"
+            } else {
+                "Read this repository from GitHub again"
+            };
+
             // The note, and whether it is the one a person can act on. `needs a key` is the only state
             // with a ten-second fix, so it is the only tag that becomes a button — the rest are facts to
             // read, and a control that does nothing is worse than a label.
@@ -388,10 +408,10 @@ pub fn DocumentTreeRow(
                         }
                     }
 
-                    if let Some(connection) = connection {
+                    if let Some(refresh) = refresh {
                         button {
                             class: "tree-action",
-                            title: "Read this repository from GitHub again",
+                            title: "{refresh_title}",
                             onclick: move |event: Event<MouseData>| {
                                 // The row itself folds the tree when clicked, and a press of this
                                 // button is not a press of the row.
@@ -399,12 +419,17 @@ pub fn DocumentTreeRow(
 
                                 let project = cs.read().selected_project.clone();
 
-                                crate::dialogs::open(crate::dialogs::DialogState::PullGithub {
+                                crate::dialogs::open(crate::dialogs::DialogState::RefreshGithub {
                                     project,
-                                    connection: connection.clone(),
-                                    on_started: EventHandler::new(move |_| {
-                                        cs.write().refresh_connections()
-                                    }),
+                                    connections: refresh.clone(),
+                                    // Nothing is running yet — the dialog is opened at the question,
+                                    // and pressing Refresh in it is what starts anything.
+                                    attempt: 0,
+                                    runs: None,
+                                    // The whole index, not just the connections: a listing that
+                                    // finished may hold different files, and those are rows in this
+                                    // tree.
+                                    on_finished: EventHandler::new(move |_| cs.write().refresh()),
                                 });
                             },
                             "↻"

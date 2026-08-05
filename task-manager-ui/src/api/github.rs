@@ -2,8 +2,8 @@ use flurl::HttpVerb;
 use task_manager_shared::documents::UploadArchiveResponse;
 use task_manager_shared::github::{
     DeleteGithubConnectionInputModel, GetGithubConnectionsInputModel, GithubConnectionsResponse,
-    PullGithubConnectionInputModel, SetGithubConnectionInputModel, SetGithubKeyInputModel,
-    SyncGithubInputModel,
+    PullGithubConnectionInputModel, PullGithubConnectionResponse, SetGithubConnectionInputModel,
+    SetGithubKeyInputModel, SyncGithubInputModel,
 };
 
 use crate::models::RequestError;
@@ -76,14 +76,21 @@ pub async fn set_github_key(project: &str, name: &str, key: &str) -> Result<(), 
     handle_http_empty(authed("/api/github/v1/key", HttpVerb::Post, request).await).await
 }
 
-/// Refresh one connection now. Returns before the pull finishes — read the state back.
-pub async fn pull_github_connection(project: &str, name: &str) -> Result<(), RequestError> {
+/// Refresh one connection now. Returns before the pull finishes.
+///
+/// What comes back is where to watch from: the connection's finished-listings count as it stood when the
+/// ask was accepted. Read the connections back until that connection reports a higher `pull_no` and the
+/// run is over — see [`PullGithubConnectionResponse`].
+pub async fn pull_github_connection(
+    project: &str,
+    name: &str,
+) -> Result<PullGithubConnectionResponse, RequestError> {
     let request = PullGithubConnectionInputModel {
         project: project.to_string(),
         name: name.to_string(),
     };
 
-    handle_http_empty(authed("/api/github/v1/pull", HttpVerb::Post, request).await).await
+    handle_http_response(authed("/api/github/v1/pull", HttpVerb::Post, request).await).await
 }
 
 /// Copy chosen files out of a connected repository into the project's own documents.

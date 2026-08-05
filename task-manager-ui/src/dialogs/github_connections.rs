@@ -1,9 +1,14 @@
 use dioxus::prelude::*;
 use dioxus_utils::{DataState, RenderState};
-use task_manager_shared::github::{GithubConnectionResponse, GithubMirrorState};
+use task_manager_shared::github::GithubConnectionResponse;
 
-/// What the reader asked the router to do. Four different calls, because they are four different acts:
-/// connecting a repository, detaching one, handing over a key, and asking for a refresh.
+/// What the reader asked the router to do. Three different calls, because they are three different acts:
+/// connecting a repository, detaching one, and handing over a key.
+///
+/// **Refreshing is deliberately not one of them.** It is not configuration — it is a thing somebody does
+/// while reading a repository, and it belongs where the folder is: the Documents tree, where the button
+/// opens a dialog that stays open until the reading is over. Having it here as well meant two ways to
+/// start the same listing, one of which could only ever say "asked for".
 ///
 /// A dialog that manages a LIST cannot follow the one-model-in-one-model-out shape the rest of them do —
 /// there is no single object to hand back. So it hands back the ACT instead, and the router still owns
@@ -24,9 +29,6 @@ pub enum GithubSubmit {
     SetKey {
         name: String,
         key: String,
-    },
-    Pull {
-        name: String,
     },
 }
 
@@ -181,7 +183,7 @@ fn render_list(
                             th { "Folder" }
                             th { "Repository" }
                             th { "State" }
-                            th { style: "width: 210px" }
+                            th { style: "width: 160px" }
                         }
                     }
                     tbody {
@@ -278,22 +280,13 @@ fn RenderRow(
                 }
             }
             td {
-                div { "{state_text(&connection)}" }
+                div { "{super::github_state_text(&connection)}" }
                 if !connection.error.is_empty() {
                     div { class: "field-hint", "{connection.error}" }
                 }
             }
             td {
                 div { class: "page-actions",
-                    button {
-                        class: "btn",
-                        title: "Read the repository again now, rather than at the next ten-minute tick",
-                        onclick: {
-                            let name = name.clone();
-                            move |_| on_submit.call(GithubSubmit::Pull { name: name.clone() })
-                        },
-                        "Refresh"
-                    }
                     button {
                         class: "btn",
                         title: "Hand the server a key for this repository",
@@ -453,38 +446,6 @@ fn render_form(mut cs: Signal<ComponentState>, form: EditForm, error: &str) -> E
                 }
             }
         }
-    }
-}
-
-/// What a connection's state says, in a sentence rather than a keyword.
-///
-/// The vocabulary travels as an open string — an unknown one is drawn as itself rather than swallowed,
-/// which is the same leniency every other open vocabulary in this client gets.
-fn state_text(connection: &GithubConnectionResponse) -> String {
-    let files = if connection.skipped_amount > 0 {
-        format!(
-            "{} files ({} not mirrored)",
-            connection.files_amount, connection.skipped_amount
-        )
-    } else {
-        format!("{} files", connection.files_amount)
-    };
-
-    match connection.state.as_str() {
-        GithubMirrorState::READY => files,
-        GithubMirrorState::PULLING => "reading…".to_string(),
-        GithubMirrorState::PENDING => "not read yet".to_string(),
-        GithubMirrorState::NEEDS_KEY => {
-            if connection.has_key {
-                "the key is not enough".to_string()
-            } else {
-                "needs a key".to_string()
-            }
-        }
-        // A failure keeps whatever the last good read left, so what is still readable is worth saying
-        // beside the fact that the last attempt did not work.
-        GithubMirrorState::FAILED => format!("failed · {files} still readable"),
-        other => other.to_string(),
     }
 }
 

@@ -57,6 +57,13 @@ pub struct GithubConnectionResponse {
     pub commit: String,
     // When the mirror was last refreshed, or 0 if never. Unix seconds.
     pub pulled_unix_seconds: i64,
+    // How many listings have FINISHED for this connection since the service started — a success and a
+    // failure count the same, because what it answers is "has the refresh I asked for happened yet"
+    // rather than "did it work". Nothing else can answer that: a pull is asynchronous, and a second
+    // `failed` looks exactly like the first one. `/pull` returns the number the connection was at when
+    // it accepted the ask, and a HIGHER number here is that run landing. It restarts at 0 with the
+    // service, along with every mirror.
+    pub pull_no: i64,
     // How many files the mirror holds. Zero with a `ready` state is a real answer: the path names a folder
     // that has nothing in it this side of the filters.
     pub files_amount: i32,
@@ -166,6 +173,19 @@ pub struct PullGithubConnectionInputModel {
     pub project: String,
     #[http_body(name = "name", description = "Which connection")]
     pub name: String,
+}
+
+/// What asking for a refresh answers — a receipt, not a result.
+///
+/// **The pull is still running when this comes back**, so what it carries is the one thing that makes the
+/// run watchable: where the connection's counter stood the moment the ask was accepted. Read the
+/// connections back until [`GithubConnectionResponse::pull_no`] is HIGHER than this, and that is the run
+/// finishing — whatever it finished as.
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct PullGithubConnectionResponse {
+    // The connection's finished-listings count as it was when the refresh was asked for. Watch for a
+    // higher one.
+    pub pull_no: i64,
 }
 
 /// Copy chosen files out of a mirror and into the project's own documents.

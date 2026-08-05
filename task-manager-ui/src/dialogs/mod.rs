@@ -32,8 +32,8 @@ mod md;
 pub use md::*;
 mod message;
 pub use message::*;
-mod pull_github;
-pub use pull_github::*;
+mod refresh_github;
+pub use refresh_github::*;
 mod upload_document;
 pub use upload_document::*;
 mod view_document;
@@ -98,9 +98,9 @@ pub enum DialogState {
     /// The GitHub repositories connected to one project, listed and edited in one place.
     ///
     /// **`revision` is what makes the list refresh.** This dialog is the one that performs several
-    /// different calls without closing — connect, detach, hand over a key, refresh — so after each one
-    /// the router re-opens it with the number bumped, and the dialog reloads on the change. A dialog
-    /// that closed after every act would make configuring three repositories nine gestures.
+    /// different calls without closing — connect, detach, hand over a key — so after each one the router
+    /// re-opens it with the number bumped, and the dialog reloads on the change. A dialog that closed
+    /// after every act would make configuring three repositories nine gestures.
     GithubConnections {
         project: String,
         revision: usize,
@@ -123,12 +123,25 @@ pub enum DialogState {
         connection: String,
         on_saved: EventHandler<()>,
     },
-    /// Read one connected repository from GitHub again, confirmed first — see the dialog for why a read
-    /// is worth confirming.
-    PullGithub {
+    /// Read connected repositories from GitHub again — one, or every one of a project's — and watch the
+    /// reading to its end rather than closing on "it was asked for".
+    ///
+    /// **`runs` is what makes it a watch rather than a wish.** The dialog opens with `None`; pressing
+    /// Refresh sends the router off to ask for a listing per connection, and each ask comes back with the
+    /// number that connection's finished listings stood at. The router then re-opens this dialog carrying
+    /// them, exactly as `GithubConnections` re-opens itself with a bumped revision, and the dialog polls
+    /// until every one of those numbers has been passed.
+    ///
+    /// **`attempt` is why a second press is a second watch.** The dialog wakes on its props CHANGING, and
+    /// two presses can hand back the same numbers: a refresh that was given up on and tried again reports
+    /// the same baseline precisely because nothing has finished since. Without a number that always moves,
+    /// that second press would start nothing and the dialog would sit there reading `Reading…` for ever.
+    RefreshGithub {
         project: String,
-        connection: String,
-        on_started: EventHandler<()>,
+        connections: Vec<String>,
+        attempt: usize,
+        runs: Option<Vec<GithubRefreshRun>>,
+        on_finished: EventHandler<()>,
     },
     /// One goal, in full: its text and its thread. Handed the whole goal rather than an id, because the
     /// screen that opens it is already holding one — a goal arrives with the board on every push.
@@ -255,17 +268,14 @@ pub fn RenderDialog() -> Element {
                             GithubSubmit::SetKey { name, key } => {
                                 crate::api::set_github_key(&project, &name, &key).await
                             }
-                            GithubSubmit::Pull { name } => {
-                                crate::api::pull_github_connection(&project, &name).await
-                            }
                         };
                         match result {
                             Ok(()) => {
                                 on_saved.call(());
                                 // Re-opened rather than closed: configuring repositories is several acts
                                 // in a row, and the bumped revision is what makes the list show the one
-                                // just performed. A pull is asynchronous, so what comes back may still
-                                // say `pulling` — pressing Refresh again is how you watch it land.
+                                // just performed. Connecting one and handing over a key both start a
+                                // listing, so a row that says `reading…` here is that, landing.
                                 open(DialogState::GithubConnections {
                                     project,
                                     revision: revision + 1,
@@ -350,29 +360,53 @@ pub fn RenderDialog() -> Element {
                 },
             }
         },
-        DialogState::PullGithub {
+        DialogState::RefreshGithub {
             project,
-            connection,
-            on_started,
+            connections,
+            attempt,
+            runs,
+            on_finished,
         } => rsx! {
-            PullGithubDialog {
-                connection: connection.clone(),
+            RefreshGithubDialog {
+                project: project.clone(),
+                connections: connections.clone(),
+                attempt,
+                runs,
+                on_finished,
                 on_submit: move |_| {
                     let project = project.clone();
-                    let connection = connection.clone();
+                    let connections = connections.clone();
                     begin_submit();
                     spawn(async move {
-                        match crate::api::pull_github_connection(&project, &connection).await {
-                            // The pull is asynchronous by design — the request comes back before the
-                            // repository has been read — so this closes on "it was asked for" rather
-                            // than on "it is done". `on_started` re-reads the connection so the row
-                            // shows `reading…` immediately.
-                            Ok(()) => {
-                                on_started.call(());
-                                close();
+                        // One ask per connection, each one's receipt kept beside its name. Sequential
+                        // because the receipts have to line up with the rows and a refusal has to stop
+                        // the rest — the listings themselves are started on the server and overlap there
+                        // whatever order these went out in.
+                        let mut runs = Vec::with_capacity(connections.len());
+                        for connection in connections.iter() {
+                            match crate::api::pull_github_connection(&project, connection).await {
+                                Ok(response) => {
+                                    runs.push(GithubRefreshRun {
+                                        connection: connection.clone(),
+                                        pull_no: response.pull_no,
+                                    });
+                                }
+                                // Nothing was started for this one, and what was started for the ones
+                                // before it goes on running — the dialog stays where it is with the
+                                // reason on it, rather than watching a set it cannot describe.
+                                Err(err) => return submit_failed(err.message),
                             }
-                            Err(err) => submit_failed(err.message),
                         }
+                        // Re-opened rather than closed, and this is the whole gesture: the listing is
+                        // running, and the dialog re-opens holding what to watch it by. `open` clears the
+                        // feedback, so the button comes back out of `Asking…` by itself.
+                        open(DialogState::RefreshGithub {
+                            project,
+                            connections,
+                            attempt: attempt + 1,
+                            runs: Some(runs),
+                            on_finished,
+                        });
                     });
                 },
             }

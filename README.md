@@ -596,6 +596,25 @@ budget that is counted by the hour.
 successful listing left; the state and the error describe the last attempt. Since nothing was ever
 downloaded, "still readable" means exactly that — the files are fetchable again the moment GitHub answers.
 
+**Refreshing by hand is watched to its end, and it lives where the folder is.** The button is on the
+mirror's own row in the documents tree, and on the `github` root where it covers every connection at once —
+a stale folder is something a person notices while reading it, not while configuring a project, which is
+why the connections dialog under Projects setup does not offer it at all. Pressing it opens a dialog that
+asks for the listing and then stays open, polling until it is over, and says how it went: synced, or the
+reason it did not read.
+
+The ask itself cannot report that, and must not try: it returns before the listing has run, because a
+repository can take half a minute to arrive and a request held open for that times out somewhere in
+between. So it hands back a receipt — `pull_no`, the number of listings that connection has **finished** —
+and a higher one coming back is that run ending. Nothing else on the wire can say it: a pull that finds the
+commit unmoved leaves every field exactly as it was, and a second failure looks precisely like the first.
+The count is bumped by the pull guard's `Drop` rather than at the three places a listing can end, for the
+same reason the guard exists at all — a run that panics still has to be counted, or the dialog waits for an
+end that never comes.
+
+A refresh asked for while a listing is already running does not start a second one — the guard refuses it —
+and the watcher then simply watches the listing already under way, which is the answer it was asking for.
+
 **The cost of holding references is a request per read**, and it is worth being honest about where that
 bites. Anonymous reads share sixty an hour; a key raises it to five thousand. So a public repository is
 browsable without a key but a sync of two hundred files is not — a rate limit arrives per file, as a skip
@@ -852,6 +871,14 @@ without which a failed save would leave a dialog looking busy for ever, since it
 the request came back. `DialogState` is a context signal of its own rather than a field of `AppState`, which
 the guide would have it be: Dioxus subscribes per signal, not per field, so putting it in `AppState` would
 make opening a dialog re-run Home's board read.
+
+**Two dialogs re-open themselves instead of closing, and both do it through the router.** The connections
+dialog performs several acts in a row — connect, detach, hand over a key — so the router re-opens it with a
+bumped `revision` after each, and the list reloads on the change; closing after every act would make
+configuring three repositories nine gestures. The refresh dialog does the same with what it got back: the
+router asks for a listing per connection, and re-opens the dialog carrying the receipts, which is what turns
+it from a confirmation into a watch. Neither breaks the rule that matters — the dialog reads, the router
+writes.
 
 ### Columns and task types live in templates, not in a project
 

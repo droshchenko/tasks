@@ -60,6 +60,14 @@ pub struct Mirror {
     /// it is the difference between "that file is not there" and "that file is not there FOR US", and
     /// one number answers it.
     pub skipped_amount: usize,
+    /// How many listings have FINISHED for this connection since the service started, whatever they
+    /// finished as.
+    ///
+    /// **It exists so that a refresh somebody pressed can be watched to its end.** Every other field
+    /// describes what the mirror holds, and none of them can say whether a particular run is over: a
+    /// pull that finds nothing changed leaves every one of them exactly as it was, and a second failure
+    /// looks precisely like the first. A number that only goes up says it in one comparison.
+    pub pull_no: u64,
 }
 
 impl Mirror {
@@ -71,6 +79,7 @@ impl Mirror {
             listed: None,
             entries: Arc::new(Vec::new()),
             skipped_amount: 0,
+            pull_no: 0,
         }
     }
 
@@ -106,8 +115,16 @@ pub struct PullGuard<'s> {
 }
 
 impl Drop for PullGuard<'_> {
+    /// Release the claim, and count the run.
+    ///
+    /// **Counted here rather than at the three places a pull can end** — a fresh listing, a commit that
+    /// had not moved, a failure — for the same reason the guard exists at all: one of them is easy to
+    /// forget and a panic goes through none of them, and an uncounted run is a dialog that watches for
+    /// an end that never arrives. It runs after whatever the pull last wrote, so what it bumps is the
+    /// number on the mirror that pull produced.
     fn drop(&mut self) {
         self.mirrors.listing.lock().remove(&self.key);
+        self.mirrors.count_finished_pull(&self.key);
     }
 }
 
@@ -213,6 +230,24 @@ impl GithubMirrors {
 
     pub fn has_key(&self, project_id: &str, name: &str) -> bool {
         self.keys.lock().contains_key(&key_of(project_id, name))
+    }
+
+    /// Add one to a connection's finished-listings count. See [`PullGuard::drop`], which is its only
+    /// caller.
+    ///
+    /// A connection detached while its listing was running has nothing to count, and nothing is put back
+    /// for it: the row is gone, and re-creating an entry here would resurrect a mirror nobody owns.
+    fn count_finished_pull(&self, key: &str) {
+        self.update(|map| {
+            let Some(existing) = map.get(key) else {
+                return;
+            };
+
+            let mut mirror = (**existing).clone();
+            mirror.pull_no += 1;
+
+            map.insert(key.to_string(), Arc::new(mirror));
+        });
     }
 
     fn update(&self, apply: impl FnOnce(&mut AHashMap<String, Arc<Mirror>>)) {
@@ -350,6 +385,60 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "fine.md");
         assert_eq!(skipped, 1);
+    }
+
+    /// The number a screen watching a refresh compares against: it moves once, when the run ENDS, and it
+    /// moves whatever the run did.
+    #[test]
+    fn a_listing_is_counted_when_it_ends_and_not_before() {
+        let mirrors = GithubMirrors::new();
+
+        assert_eq!(mirrors.get_or_pending("P", "specs").pull_no, 0);
+
+        {
+            let _guard = mirrors
+                .try_begin_pull("P", "specs")
+                .expect("nothing running");
+
+            // What a pull does first, and what a failing one does last — neither is the end of the run.
+            mirrors.set_state(
+                "P",
+                "specs",
+                task_manager_shared::github::GithubMirrorState::PULLING,
+                String::new(),
+            );
+
+            assert!(
+                mirrors.try_begin_pull("P", "specs").is_none(),
+                "a second listing must not start while one is claimed"
+            );
+
+            assert_eq!(
+                mirrors.get_or_pending("P", "specs").pull_no,
+                0,
+                "still running — nothing to report yet"
+            );
+        }
+
+        assert_eq!(mirrors.get_or_pending("P", "specs").pull_no, 1);
+
+        // And the claim is free again, which is what makes a second refresh possible at all.
+        let _second = mirrors.try_begin_pull("P", "specs").expect("released");
+    }
+
+    /// A connection detached mid-listing is not re-created by the run ending.
+    #[test]
+    fn a_listing_that_outlived_its_connection_counts_nothing() {
+        let mirrors = GithubMirrors::new();
+
+        {
+            let _guard = mirrors
+                .try_begin_pull("P", "specs")
+                .expect("nothing running");
+            mirrors.forget("P", "specs");
+        }
+
+        assert!(mirrors.get("P", "specs").is_none());
     }
 
     /// A path this product will not name is counted rather than mangled into one it would.

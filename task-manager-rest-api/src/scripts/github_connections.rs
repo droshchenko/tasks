@@ -155,11 +155,15 @@ pub async fn delete_github_connection(
 }
 
 /// Refresh one connection now, rather than at the next tick.
+///
+/// Answers with the connection's finished-listings count as it stood the moment the ask was accepted —
+/// which is what makes the run watchable, since nothing about it is finished when this returns. See
+/// [`crate::github::Mirror::pull_no`].
 pub async fn pull_github_connection(
     app: &Arc<AppContext>,
     project_prefix: &str,
     name: &str,
-) -> Result<(), String> {
+) -> Result<i64, String> {
     let (project_id, connection) = {
         let board = app.board.read();
         let project = resolve_project_by_prefix(&board, project_prefix)?;
@@ -172,9 +176,17 @@ pub async fn pull_github_connection(
         (project.id.clone(), connection)
     };
 
+    // Read BEFORE the pull is started, or a listing that finished in between would be handed back as
+    // the baseline — and the caller would take somebody else's run for its own and stop watching at
+    // once.
+    let pull_no = app
+        .github
+        .get_or_pending(&project_id, &connection.name)
+        .pull_no as i64;
+
     start_pull(app, project_id, connection);
 
-    Ok(())
+    Ok(pull_no)
 }
 
 /// Every connection of one project, with what its mirror currently holds.
@@ -227,6 +239,7 @@ pub fn list_github_connections(
                     .unwrap_or(0),
                 files_amount: mirror.entries.len() as i32,
                 skipped_amount: mirror.skipped_amount as i32,
+                pull_no: mirror.pull_no as i64,
             }
         })
         .collect();
