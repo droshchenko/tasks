@@ -468,6 +468,20 @@ The trash is **flat** (it keeps only the last path each document had) and **invi
 `documents_trash` is the only way to see it. It is not a place to browse — it is a list you ask for when
 something needs restoring.
 
+**Deleting a folder is `documents_delete_folder`, and it is the single deletion repeated.** There is no
+folder to delete — folders are read off the paths of the documents in them, so a folder stops existing
+exactly when the last document under it does, and emptying one by hand is one call per document and a
+folder that survives because the caller got bored three files early. The call takes the **subtree**, which
+is what deleting a folder means anywhere else, and it does *not* take a document that merely shares the
+folder's name: the rule is the `docs/` prefix, slash included. Every document goes through the same path a
+single deletion does — its own history entry, its own trash row, its own id — so each is restorable on its
+own, and the answer lists what went, because the trash is flat and a folder of forty is forty rows in it.
+
+There is deliberately **no way to say "all of them"**: an empty folder is refused, since that is not a
+folder, it is the project's documents. And there is no transaction across the documents — each is two
+tables of its own — so a failure part way through is *reported as itself*, with how many went and which one
+stopped it, rather than rolled back. What went is in the trash and re-running finishes the job.
+
 **A reference is a list of ids in a `jsonb` column** on the task or goal row — `add_documents` /
 `remove_documents`, the same shape as labels and for the same reason: a caller attaching one document must
 not have to resend the four already there. Ids and never paths, which is the whole reason the id is stable.
@@ -805,6 +819,9 @@ Tools:
   touching its text. Two calls rather than one, so the history can tell the two apart.
 - `documents_delete` / `documents_trash` / `documents_restore` — the trash, which exists nowhere else: the
   browser does not show it.
+- `documents_delete_folder` — a folder and everything under it, in one call. The same deletion as
+  `documents_delete`, repeated over the subtree, because there is no folder to delete: emptying it IS
+  deleting it, and doing that one document at a time is how a folder ends up half gone.
 - `tasks_resolve_id` — the counterpart to composing ids on read. Given a human-written `RMS-42` it
   answers in two parts: the **direct** hit (the project holding `RMS` right now, and the task's
   current id), and the **archived** ones — every project that used to hold `RMS`, whether task 42

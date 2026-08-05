@@ -24,9 +24,9 @@ use documents_text_tool_calls::{
     DocumentsDiffHandler, DocumentsEditHandler, DocumentsOutlineHandler, DocumentsSearchHandler,
 };
 use documents_tool_calls::{
-    DocumentsDeleteHandler, DocumentsGetHandler, DocumentsHistoryHandler, DocumentsListHandler,
-    DocumentsRestoreHandler, DocumentsTrashHandler, DocumentsUpdatePathHandler,
-    DocumentsUploadHandler,
+    DocumentsDeleteFolderHandler, DocumentsDeleteHandler, DocumentsGetHandler,
+    DocumentsHistoryHandler, DocumentsListHandler, DocumentsRestoreHandler, DocumentsTrashHandler,
+    DocumentsUpdatePathHandler, DocumentsUploadHandler,
 };
 use goals_tool_calls::{
     GoalsAddCommentHandler, GoalsCreateHandler, GoalsDeleteHandler, GoalsGetCommentsHandler,
@@ -331,7 +331,10 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(DocumentsUploadHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsUpdatePathHandler::new(app.clone())));
 
+    // The single deletion first, and the folder one straight after it: the second is the first repeated,
+    // and a reader of this list should meet them in that order rather than discover the bulk one on its own.
     mcp.register_tool_call(Arc::new(DocumentsDeleteHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsDeleteFolderHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsTrashHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsRestoreHandler::new(app.clone())));
 

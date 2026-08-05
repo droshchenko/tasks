@@ -4,7 +4,10 @@ use mcp_server_middleware::*;
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppContext;
-use crate::mcp::{DocumentContentView, DocumentVersionView, DocumentView, TrashedDocumentView};
+use crate::mcp::{
+    DeletedDocumentView, DocumentContentView, DocumentVersionView, DocumentView,
+    TrashedDocumentView,
+};
 
 /// The prefix of the project a document belongs to.
 ///
@@ -491,6 +494,91 @@ impl McpToolCall<DocumentsDeleteInput, DocumentsDeleteResponse> for DocumentsDel
         Ok(DocumentsDeleteResponse {
             id: model.id,
             path,
+        })
+    }
+}
+
+// ----------------------------------------------------------------------------------- delete folder
+
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DocumentsDeleteFolderInput {
+    #[property(description = "Which project the folder is in, by prefix, e.g. `RMS`")]
+    pub project: String,
+    #[property(
+        description = "Which folder to empty, e.g. `docs/design`. Everything BELOW it goes too. A trailing slash is fine, and the spelling is case-sensitive — it is the path the documents carry"
+    )]
+    pub folder: String,
+    #[property(description = "Who is deleting them: an email, or `AI`")]
+    pub who: String,
+}
+
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DocumentsDeleteFolderResponse {
+    #[property(description = "The folder that was emptied, as it was read")]
+    pub folder: String,
+    #[property(
+        description = "What went, in path order. Each one is in the trash under its own id, and documents_restore takes them back one at a time — keep this list if any of them might be wanted back"
+    )]
+    pub documents: Vec<DeletedDocumentView>,
+    #[property(description = "How many were deleted")]
+    pub amount: i32,
+}
+
+pub struct DocumentsDeleteFolderHandler {
+    app: Arc<AppContext>,
+}
+
+impl DocumentsDeleteFolderHandler {
+    pub fn new(app: Arc<AppContext>) -> Self {
+        Self { app }
+    }
+}
+
+impl ToolDefinition for DocumentsDeleteFolderHandler {
+    const FUNC_NAME: &'static str = "documents_delete_folder";
+    const DESCRIPTION: &'static str = "Put EVERY document under one folder in the trash, in one call. \
+This is how a folder is deleted — there is no folder to delete otherwise: folders are read off the paths \
+of the documents in them, so a folder stops existing exactly when the last document under it does.\
+\
+IT TAKES THE SUBTREE. `docs` takes `docs/design/system.md` as readily as `docs/notes.md`. What it does \
+NOT take is a document CALLED `docs` — a file sharing a folder's name is not inside it.\
+\
+Each document goes exactly as documents_delete sends it: its own history entry, its own trash row, its id \
+kept. So nothing here is more destructive than one deletion — it is the same one repeated, and every \
+document is restorable on its own with documents_restore. The response lists what went; keep it if \
+anything in there might be wanted back, because the trash is flat and a folder of forty is forty rows in \
+it.\
+\
+CALL documents_list FIRST when you are not certain what is under the folder. There is deliberately no way \
+to say 'all of them' — an empty folder argument is refused, because that is not a folder, it is the \
+project's documents.\
+\
+References on tasks and goals are NOT removed, on purpose, exactly as with a single deletion: restoring \
+is one call away, and a reference quietly dropped would not come back with the document.\
+\
+Paths under `github/` are refused. They are files in a connected repository, not this project's \
+documents, and there is nothing here to delete — detaching the repository is done in the browser.";
+}
+
+#[async_trait::async_trait]
+impl McpToolCall<DocumentsDeleteFolderInput, DocumentsDeleteFolderResponse>
+    for DocumentsDeleteFolderHandler
+{
+    async fn execute_tool_call(
+        &self,
+        model: DocumentsDeleteFolderInput,
+    ) -> Result<DocumentsDeleteFolderResponse, String> {
+        let deleted =
+            crate::scripts::delete_folder(&self.app, &model.project, &model.folder, &model.who)
+                .await?;
+
+        let documents: Vec<DeletedDocumentView> =
+            deleted.iter().map(DeletedDocumentView::from_dto).collect();
+
+        Ok(DocumentsDeleteFolderResponse {
+            folder: model.folder,
+            amount: documents.len() as i32,
+            documents,
         })
     }
 }

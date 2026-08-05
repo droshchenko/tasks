@@ -421,6 +421,123 @@ pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<St
     Ok(existing.doc_path)
 }
 
+/// One document that a folder deletion took, as the caller wants it echoed back.
+///
+/// The id first, because that is the half a restore needs and the half nobody can reconstruct: the path is
+/// free again the moment it goes, and a folder deletion is exactly the operation after which somebody
+/// discovers one file in it mattered.
+pub struct DeletedDocument {
+    pub id: String,
+    pub path: String,
+}
+
+/// Put every document under one folder in the trash — the folder and everything below it.
+///
+/// **There is no folder to delete, which is why this exists.** A folder in this product is read off the
+/// paths of the documents in it, so removing one is removing every document whose path goes through it —
+/// one call each, and a folder five levels deep is dozens of them. Done by hand that is dozens of round
+/// trips, and the failure mode is the interesting one: an agent that gets bored half way leaves a folder
+/// that still exists because three files nobody meant to keep are still in it.
+///
+/// **Each document goes exactly as [`delete_document`] sends it**: its own history entry, its own trash
+/// row, its own id kept. So this is not a bigger kind of deletion, it is the same one repeated — and every
+/// one of them is restorable on its own.
+///
+/// It takes the SUBTREE. `docs` takes `docs/design/system.md` as readily as `docs/notes.md`, because that
+/// is what deleting a folder means to anyone who has ever deleted one. What it does not take is a document
+/// CALLED `docs` — a file that shares a name with a folder is not in it.
+///
+/// There is no transaction across the documents, and there could not be one: each is two tables of its own.
+/// A failure part way through is reported as itself — how many went, which one stopped it — rather than
+/// rolled back, because the ones that went are in the trash and are the caller's to restore.
+pub async fn delete_folder(
+    app: &AppContext,
+    project_prefix: &str,
+    folder: &str,
+    who: &str,
+) -> Result<Vec<DeletedDocument>, String> {
+    let folder = normalise_folder(folder)?;
+    // The reserved root, by the same guard every other write goes through: a mirrored file is somebody
+    // else's, and there is nothing here to delete.
+    super::refuse_reserved_path(&folder)?;
+    let who = require_author(who)?;
+
+    let project_id = {
+        let board = app.board.read();
+        resolve_project_by_prefix(&board, project_prefix)?
+            .id
+            .clone()
+    };
+
+    // Off the index rather than out of Postgres: it is the same list `documents_list` answers with, so what
+    // this deletes is exactly what the caller was looking at. Mirrored files are not in it at all — they
+    // are added to that answer separately — which is the second reason nothing under `github/` can be hit.
+    let targets = documents_in_folder(&app.documents_index.of_project(&project_id), &folder);
+
+    if targets.is_empty() {
+        return Err(format!(
+            "nothing is under '{folder}' — no documents to delete. Folders are read off the paths of the documents in them, so one with nothing in it does not exist; check documents_list for the spelling, which is case-sensitive"
+        ));
+    }
+
+    let total = targets.len();
+    let mut deleted: Vec<DeletedDocument> = Vec::with_capacity(total);
+
+    for (id, path) in targets {
+        match delete_document(app, &id, &who).await {
+            Ok(path) => deleted.push(DeletedDocument { id, path }),
+            // Said with the count rather than as a bare failure: the ones already in the trash are a fact
+            // the caller has to know about, and re-running this call finishes the job.
+            Err(err) => {
+                return Err(format!(
+                    "{} of {total} under '{folder}' were put in the trash, then '{path}' stopped it: {err}",
+                    deleted.len()
+                ));
+            }
+        }
+    }
+
+    Ok(deleted)
+}
+
+/// Which documents are inside a folder, by id and path, in path order.
+///
+/// Separate and pure because it is the whole rule: `docs/` as a prefix — the slash being what makes `docs`
+/// not match `docs-old/a.md` — and nothing clever about the tree, since a subtree is just a longer prefix.
+fn documents_in_folder(entries: &[DocumentIndexEntry], folder: &str) -> Vec<(String, String)> {
+    let prefix = format!("{folder}/");
+
+    let mut found: Vec<(String, String)> = entries
+        .iter()
+        .filter(|itm| itm.path.starts_with(&prefix))
+        .map(|itm| (itm.id.clone(), itm.path.clone()))
+        .collect();
+
+    // In path order, so the report reads like the tree it came from and everything under one subfolder is
+    // contiguous — the same order `documents_list` answers in.
+    found.sort_by(|left, right| left.1.cmp(&right.1));
+    found
+}
+
+/// A folder path, or a refusal saying why it is not one.
+///
+/// The grammar of a document path with one difference: a trailing slash is how a person writes a folder, so
+/// it is stripped rather than refused. Everything else — `..`, the length limit, case being significant —
+/// is the same rule, checked by the same function, because a folder is nothing but the front of a path.
+fn normalise_folder(src: &str) -> Result<String, String> {
+    let src = src.trim().replace('\\', "/");
+    let src = src.trim_matches('/');
+
+    if src.is_empty() {
+        return Err(
+            "name the folder to delete, e.g. `docs` or `docs/design`. There is deliberately no way to say 'all of them': that is not a folder, it is the project's documents"
+                .to_string(),
+        );
+    }
+
+    normalise_document_path(src)
+}
+
 /// Take a document back out of the trash.
 ///
 /// `path` is optional, and the default is the point: with nothing passed it goes back where it was, which is
@@ -1344,6 +1461,95 @@ mod tests {
         // `AI` survives whatever case it arrived in, exactly as a comment's author does — the two must not
         // drift, or a filter on one spelling misses the other.
         assert_eq!(require_author("ai").unwrap(), "AI");
+    }
+
+    fn index_entry(id: &str, path: &str) -> DocumentIndexEntry {
+        DocumentIndexEntry {
+            id: id.to_string(),
+            project_id: "P".to_string(),
+            path: path.to_string(),
+            content_type: "text/markdown".to_string(),
+            is_binary: false,
+            size: 0,
+            version: 1,
+            created: DateTimeAsMicroseconds::new(0),
+            updated: DateTimeAsMicroseconds::new(0),
+            updated_by: "AI".to_string(),
+        }
+    }
+
+    fn paths_in(entries: &[DocumentIndexEntry], folder: &str) -> Vec<String> {
+        documents_in_folder(entries, folder)
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect()
+    }
+
+    /// Deleting a folder takes the SUBTREE, which is what deleting a folder means everywhere else.
+    #[test]
+    fn a_folder_is_everything_under_it() {
+        let entries = [
+            index_entry("1", "docs/notes.md"),
+            index_entry("2", "docs/design/system.md"),
+            index_entry("3", "docs/design/api/v2.md"),
+            index_entry("4", "readme.md"),
+        ];
+
+        assert_eq!(
+            paths_in(&entries, "docs"),
+            vec![
+                "docs/design/api/v2.md",
+                "docs/design/system.md",
+                "docs/notes.md"
+            ]
+        );
+
+        // A subfolder is just a longer prefix, and taking it leaves the rest of the tree alone.
+        assert_eq!(
+            paths_in(&entries, "docs/design"),
+            vec!["docs/design/api/v2.md", "docs/design/system.md"]
+        );
+    }
+
+    /// The slash in the prefix is the whole rule: a neighbour that merely starts with the same letters is
+    /// not inside, and a DOCUMENT sharing a folder's name is not the folder.
+    #[test]
+    fn only_what_is_really_inside_is_taken() {
+        let entries = [
+            index_entry("1", "docs/notes.md"),
+            index_entry("2", "docs-old/notes.md"),
+            index_entry("3", "docs"),
+            index_entry("4", "archive/docs/notes.md"),
+        ];
+
+        assert_eq!(paths_in(&entries, "docs"), vec!["docs/notes.md"]);
+    }
+
+    /// A folder nobody has anything in does not exist — there is nothing to delete and nothing to report,
+    /// and the caller is told rather than answered with an empty success.
+    #[test]
+    fn a_folder_with_nothing_in_it_matches_nothing() {
+        let entries = [index_entry("1", "docs/notes.md")];
+
+        assert!(paths_in(&entries, "drafts").is_empty());
+        // Case is significant in a path, so it is significant here.
+        assert!(paths_in(&entries, "Docs").is_empty());
+    }
+
+    /// A trailing slash is how a person writes a folder, so it is taken rather than refused — everything
+    /// else is the grammar of a path, checked by the one function that owns it.
+    #[test]
+    fn a_folder_is_written_the_way_people_write_folders() {
+        assert_eq!(normalise_folder(" docs/design/ ").unwrap(), "docs/design");
+        assert_eq!(normalise_folder("/docs/").unwrap(), "docs");
+        assert_eq!(normalise_folder("docs\\design").unwrap(), "docs/design");
+
+        // "everything" is not a folder, and there is deliberately no way to say it.
+        assert!(normalise_folder("").is_err());
+        assert!(normalise_folder("   ").is_err());
+        assert!(normalise_folder("/").is_err());
+
+        assert!(normalise_folder("../etc").is_err());
     }
 
     #[test]

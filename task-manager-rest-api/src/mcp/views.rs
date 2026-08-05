@@ -770,6 +770,32 @@ impl DocumentVersionView {
     }
 }
 
+/// One document a folder deletion took.
+///
+/// Two fields and no more, because a bulk answer is read differently from a single one: what a caller does
+/// with it is either recognise a path they did not mean to delete, or hand an id back to
+/// `documents_restore`. Sizes and content types would be forty lines of context nobody asked for.
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct DeletedDocumentView {
+    #[property(
+        description = "The document's id, unchanged by the deletion — this is what documents_restore takes"
+    )]
+    pub id: String,
+    #[property(
+        description = "Where it was. A restore puts it back here, and the path is free from the moment it went"
+    )]
+    pub path: String,
+}
+
+impl DeletedDocumentView {
+    pub fn from_dto(src: &crate::scripts::DeletedDocument) -> Self {
+        Self {
+            id: src.id.clone(),
+            path: src.path.clone(),
+        }
+    }
+}
+
 /// One document in the trash.
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct TrashedDocumentView {
