@@ -17,7 +17,7 @@
 # settings-ui and versions-control-ui on these hosts.
 services:
   task-manager-rest-api:
-    image: ghcr.io/my-ai-utils/task-manager-rest-api:0.1.33
+    image: ghcr.io/my-ai-utils/task-manager-rest-api:0.1.34
     hostname: task-manager-rest-api
     container_name: task-manager-rest-api
     restart: always
@@ -73,7 +73,7 @@ services:
   # A static bundle: wasm, html, js and css, served by web-app-host. It never knows a base URL — there is
   # nothing to configure in it, which is also why it has no settings and no unix sockets.
   task-manager-ui:
-    image: ghcr.io/my-ai-utils/task-manager-ui:0.1.53
+    image: ghcr.io/my-ai-utils/task-manager-ui:0.1.54
     hostname: task-manager-ui
     container_name: task-manager-ui
     restart: always
