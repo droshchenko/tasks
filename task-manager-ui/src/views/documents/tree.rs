@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 use task_manager_shared::documents::{DocumentIndexEntryResponse, document_file_name, render_size};
 use task_manager_shared::github::{GITHUB_ROOT, GithubMirrorState, is_github_path};
 
-use super::{DocumentsState, connection_note, file_icon, folder_icon, remote_folder_icon};
+use super::{
+    DocumentsState, connection_note, file_icon, folder_icon, github_icon, remote_folder_icon,
+};
 
 /// How far one level is pushed in, in pixels.
 const INDENT: usize = 14;
@@ -63,7 +65,21 @@ pub fn build_tree(entries: &[DocumentIndexEntryResponse]) -> Vec<DocumentNode> {
             continue;
         }
 
-        insert(&mut roots, &segments, "", entry);
+        // **A connected repository is ONE row, not a `github` folder with a repository inside it.** The
+        // reserved segment is dropped from the WALK and handed to `insert` as the ground it starts from,
+        // which is what collapses two levels into one without touching the path: `github/analytics/docs/a.md`
+        // builds a node named `analytics` whose path is still `github/analytics`, and everything below it
+        // carries on as normal.
+        //
+        // The path must not change, and that is the whole reason it is done this way rather than by rewriting
+        // it: `github/<connection>/<file>` is what the server reads, writes and refuses by, what the open/closed
+        // set is keyed by, and what `folder_connection` reads a connection's name back out of.
+        let (folders, walked) = match segments.split_first() {
+            Some((&first, rest)) if first == GITHUB_ROOT => (rest, GITHUB_ROOT),
+            _ => (&segments[..], ""),
+        };
+
+        insert(&mut roots, folders, walked, entry);
     }
 
     sort_level(&mut roots);
@@ -141,41 +157,27 @@ fn sort_level(level: &mut Vec<DocumentNode>) {
 ///
 /// A connection that DOES have files is already in the tree, built from its paths; this only adds what
 /// is missing, so nothing is drawn twice.
+///
+/// **At the TOP level, beside the project's own folders**, because a connected repository is a place work
+/// happens rather than an entry in a directory of repositories. There is no `github` node any more: it was
+/// a level that carried one word and cost every reader a click to get past, and what it used to say — which
+/// account this is — now sits on the connection's own row where it names one repository instead of hedging
+/// across all of them.
 pub fn merge_github_connections(nodes: &mut Vec<DocumentNode>, connections: &[String]) {
     if connections.is_empty() {
         return;
     }
 
-    let root = match nodes.iter().position(|node| match node {
-        DocumentNode::Folder { path, .. } => path == GITHUB_ROOT,
-        DocumentNode::Document { .. } => false,
-    }) {
-        Some(position) => position,
-        None => {
-            nodes.push(DocumentNode::Folder {
-                name: GITHUB_ROOT.to_string(),
-                path: GITHUB_ROOT.to_string(),
-                children: Vec::new(),
-            });
-
-            nodes.len() - 1
-        }
-    };
-
-    let DocumentNode::Folder { children, .. } = &mut nodes[root] else {
-        return;
-    };
-
     for name in connections {
         let path = format!("{GITHUB_ROOT}/{name}");
 
-        let present = children.iter().any(|node| match node {
+        let present = nodes.iter().any(|node| match node {
             DocumentNode::Folder { path: existing, .. } => existing == &path,
             DocumentNode::Document { .. } => false,
         });
 
         if !present {
-            children.push(DocumentNode::Folder {
+            nodes.push(DocumentNode::Folder {
                 name: name.clone(),
                 path,
                 children: Vec::new(),
@@ -183,7 +185,6 @@ pub fn merge_github_connections(nodes: &mut Vec<DocumentNode>, connections: &[St
         }
     }
 
-    sort_level(children);
     sort_level(nodes);
 }
 
@@ -290,10 +291,17 @@ pub fn DocumentTreeRow(
             // who has forgotten which tree they are in.
             let remote = is_github_path(&path);
 
-            let icon = if remote {
-                remote_folder_icon()
-            } else {
-                folder_icon(expanded)
+            // Owned before the rsx rather than read inside it: `connection_note` and `connection_tag`
+            // borrow out of the signal's read guard, and a guard cannot outlive the expression that made
+            // it. `Some` here means this row IS a connection rather than a folder inside one.
+            let connection = folder_connection(&path).map(str::to_string);
+
+            let icon = match (&connection, remote) {
+                // The repository's own row: GitHub's mark, because this is where somebody else's
+                // repository starts rather than a folder of this project's.
+                (Some(_), _) => github_icon(),
+                (None, true) => remote_folder_icon(),
+                (None, false) => folder_icon(expanded),
             };
 
             let row_class = if remote {
@@ -310,38 +318,21 @@ pub fn DocumentTreeRow(
 
             let for_toggle = path.clone();
 
-            // A connection's own row carries what the last listing did, and the one button that acts on
-            // it — both only here, because repeating them down every folder of the repository would be
-            // repeating one fact about the connection at every depth.
+            // What a refresh started HERE would read: this connection, and only on its own row. A folder
+            // INSIDE a repository is not a thing that refreshes on its own, and there is no root row left
+            // to hang "refresh all of them" on — each repository is now its own top-level row, so the
+            // button sits on every one of them rather than once above the lot.
+            let refresh: Option<Vec<String>> = connection.as_ref().map(|name| vec![name.clone()]);
+
+            let refresh_title = "Read this repository from GitHub again";
+
+            // The note, whether it is the one a person can act on, and whose account this is. `needs a key`
+            // is the only state with a ten-second fix, so it is the only tag that becomes a button — the
+            // rest are facts to read, and a control that does nothing is worse than a label.
             //
-            // Owned before the rsx rather than read inside it: `connection_note` borrows out of the
-            // signal's read guard, and a guard cannot outlive the expression that made it.
-            let connection = folder_connection(&path).map(str::to_string);
-
-            // What a refresh started HERE would read. A connection's own row is that connection; the root
-            // is every one of them — "the GitHub folders are stale" is a thought somebody has about the
-            // whole tree rather than about one repository at a time, and the root is the row they are
-            // looking at when they have it. Nowhere else: a folder inside a mirror is not a thing that
-            // refreshes on its own.
-            let refresh: Option<Vec<String>> = match connection.as_ref() {
-                Some(name) => Some(vec![name.clone()]),
-                None if path == GITHUB_ROOT => match cs.read().connection_names() {
-                    names if names.is_empty() => None,
-                    names => Some(names),
-                },
-                None => None,
-            };
-
-            let refresh_title = if path == GITHUB_ROOT {
-                "Read every connected repository from GitHub again"
-            } else {
-                "Read this repository from GitHub again"
-            };
-
-            // The note, and whether it is the one a person can act on. `needs a key` is the only state
-            // with a ten-second fix, so it is the only tag that becomes a button — the rest are facts to
-            // read, and a control that does nothing is worse than a label.
-            let (note, needs_key) = match connection.as_ref() {
+            // One read guard for all three: three separate `cs.read()` calls would be three borrows of the
+            // same signal in one render for no gain.
+            let (note, needs_key, owner_tag) = match connection.as_ref() {
                 Some(name) => {
                     let cs_ra = cs.read();
                     let found = cs_ra.connection(name);
@@ -351,18 +342,13 @@ pub fn DocumentTreeRow(
                         found
                             .map(|itm| itm.state == GithubMirrorState::NEEDS_KEY)
                             .unwrap_or(false),
+                        cs_ra.connection_tag(name),
                     )
                 }
-                None => (None, false),
+                None => (None, false, None),
             };
 
-            // The root says whose account this is when there is one answer — a label, never the path.
-            // See `DocumentsState::github_root_label`.
-            let label = if path == GITHUB_ROOT {
-                cs.read().github_root_label()
-            } else {
-                name.clone()
-            };
+            let label = name.clone();
 
             let children_amount = children.len();
 
@@ -375,8 +361,11 @@ pub fn DocumentTreeRow(
 
                     img { class: "tree-icon", src: "{icon}" }
                     span { class: "tree-name truncate", "{label}" }
-                    if path == GITHUB_ROOT {
-                        span { class: "tree-tag", "remote" }
+                    // Whose account it is, on the repository's own row. It is what the `github` level used
+                    // to say before it was folded away — said once, about one repository, instead of once
+                    // about all of them.
+                    if let Some(tag) = owner_tag {
+                        span { class: "tree-tag", "{tag}" }
                     }
 
                     if let Some(note) = note {
@@ -559,6 +548,58 @@ mod tests {
     fn folders_sort_before_documents() {
         let tree = build_tree(&[entry("zz.md"), entry("aa/one.md")]);
         assert_eq!(names(&tree), vec!["aa/(one.md)", "zz.md"]);
+    }
+
+    /// **A connected repository is ONE row, and its path still has both segments.** Those two facts have to
+    /// hold together: the row a person sees is `analytics`, sitting beside the project's own folders with no
+    /// `github` level above it — and the node's path is `github/analytics`, because that is what the server
+    /// reads, writes and refuses by, what the open/closed set is keyed by, and what `folder_connection`
+    /// reads the connection's name back out of. A change that flattened the PATH would pass the eye and
+    /// break every one of those.
+    #[test]
+    fn a_connected_repository_is_one_row_and_keeps_its_full_path() {
+        let tree = build_tree(&[
+            entry("github/analytics/docs/a.md"),
+            entry("github/analytics/readme.md"),
+            entry("docs/own.md"),
+        ]);
+
+        // Two top-level rows, not a `github` node with a repository inside it — and the repository sorts
+        // among the project's own folders rather than under a level of its own.
+        assert_eq!(
+            names(&tree),
+            vec!["analytics/(docs/(a.md),readme.md)", "docs/(own.md)"]
+        );
+
+        let DocumentNode::Folder { path, children, .. } = &tree[0] else {
+            panic!("expected the repository's folder");
+        };
+
+        assert_eq!(path, "github/analytics", "the path keeps the reserved root");
+        assert_eq!(folder_connection(path), Some("analytics"));
+        assert_eq!(node_key(&tree[0]), "folder:github/analytics");
+
+        // And the depth below it is untouched: a folder inside the repository carries the whole path too.
+        let DocumentNode::Folder { path, .. } = &children[0] else {
+            panic!("expected a folder inside the repository");
+        };
+
+        assert_eq!(path, "github/analytics/docs");
+    }
+
+    /// A connection with no files still gets a row, at the top level — the state somebody most needs to see
+    /// is the empty one, because "needs a key" and "still reading" both list nothing.
+    #[test]
+    fn a_connection_with_nothing_in_it_is_still_a_top_level_row() {
+        let mut tree = build_tree(&[entry("docs/own.md")]);
+
+        merge_github_connections(&mut tree, &["analytics".to_string()]);
+
+        assert_eq!(names(&tree), vec!["analytics/()", "docs/(own.md)"]);
+
+        // Merging again must not draw it twice — a connection that HAS files is already in the tree.
+        merge_github_connections(&mut tree, &["analytics".to_string()]);
+        assert_eq!(names(&tree), vec!["analytics/()", "docs/(own.md)"]);
     }
 
     /// A folder is keyed by its path and a document by its id, so a repaint does not swap rows around.

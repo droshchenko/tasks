@@ -599,6 +599,14 @@ refreshed every ten minutes. It is set up by a person in the browser, under **Pr
 only there: a connection is configuration, like a project's columns and its members, so nothing on the MCP
 surface creates one. What the MCP surface then gets is everything *inside* it.
 
+**The path has three parts and the documents tree draws two**, on purpose. `github/<name>/…` is what every
+tool reads, writes and refuses by — it is the contract, and nothing in the browser may change it. But the
+tree shows the repository as ONE top-level row, `analytics` with a `github@<owner>` tag and GitHub's mark
+beside it, sitting among the project's own folders rather than inside a `github` one. That level held a
+single word and cost a click to get past, and what it used to say — whose account this is — now sits on the
+repository's own row, where it names one owner instead of hedging across all of them. The consequence worth
+knowing: refreshing is per repository now, on each row, because there is no row above them to mean "all".
+
 **What is behind those paths is a real `git clone` on a mounted disk.** Not a listing, not a cache of blobs —
 a working copy, the same thing you would have in a terminal. That single fact is what the rest of this
 section follows from: reading a file is reading a file, editing one edits it in the working tree, and

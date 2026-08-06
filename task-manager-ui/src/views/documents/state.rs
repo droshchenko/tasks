@@ -181,37 +181,23 @@ impl DocumentsState {
     ///
     /// Falls back to the bare name with more than one account rather than listing them: at that point
     /// the root does not name an account, and the row that does is each connection's own.
-    pub fn github_root_label(&self) -> String {
-        let Some(connections) = self.connections.as_ref().try_unwrap_as_loaded() else {
-            return task_manager_shared::github::GITHUB_ROOT.to_string();
-        };
-
-        let mut owners = connections
-            .iter()
-            .filter_map(|itm| itm.repo.split('/').next())
-            .filter(|itm| !itm.is_empty());
-
-        let Some(first) = owners.next() else {
-            return task_manager_shared::github::GITHUB_ROOT.to_string();
-        };
-
-        if owners.any(|itm| itm != first) {
-            return task_manager_shared::github::GITHUB_ROOT.to_string();
-        }
-
-        format!("{}@{first}", task_manager_shared::github::GITHUB_ROOT)
-    }
-
-    /// Every connected repository's name, in the order the server listed them.
+    /// The tag beside a connection's name, saying whose account it is — `github@mxtm-po`.
     ///
-    /// Empty while the list is still loading, which is the right answer for the one thing it is for: the
-    /// refresh on the root reads all of them, and there is nothing to read until they are known.
-    pub fn connection_names(&self) -> Vec<String> {
-        self.connections
-            .as_ref()
-            .try_unwrap_as_loaded()
-            .map(|connections| connections.iter().map(|itm| itm.name.clone()).collect())
-            .unwrap_or_default()
+    /// **It replaced a label on a `github` root that no longer exists**, and it says more than that one
+    /// could: the root had to hedge, falling back to the bare word whenever two connections came from
+    /// different accounts, because one row cannot name two owners. A tag on the connection itself always
+    /// names exactly the owner of that repository, so a project connecting one repository from a company
+    /// account and another from somebody's own reads correctly on both rows.
+    ///
+    /// `None` when the connections have not loaded yet, or when the stored `owner/repo` has no owner in
+    /// it — a tag reading `github@` would be a label with a hole in it.
+    pub fn connection_tag(&self, name: &str) -> Option<String> {
+        let owner = self.connection(name)?.repo.split('/').next()?.trim();
+
+        match owner.is_empty() {
+            true => None,
+            false => Some(format!("{}@{owner}", task_manager_shared::github::GITHUB_ROOT)),
+        }
     }
 
     /// One connection by name, or `None` while the list is still loading.

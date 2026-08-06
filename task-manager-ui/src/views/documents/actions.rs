@@ -44,6 +44,18 @@ pub fn remote_folder_icon() -> String {
     format!("{ICON_DIR}/folder-remote.svg")
 }
 
+/// The icon on a connected repository's OWN row — GitHub's mark rather than a folder of any kind.
+///
+/// That row is not a folder of this project's: it is where somebody else's repository starts, and it is
+/// the one place in the tree where saying so decides what a reader expects of everything under it. It
+/// lives beside the images rather than under `file-types`, because it is a brand mark and not a file kind.
+///
+/// Folders INSIDE a repository keep [`remote_folder_icon`], which is the same point made again at every
+/// depth — see the note there on why the mark has to survive being opened.
+pub fn github_icon() -> String {
+    "/assets/images/github.svg".to_string()
+}
+
 fn extension(name: &str) -> Option<String> {
     let (stem, extension) = name.rsplit_once('.')?;
 
