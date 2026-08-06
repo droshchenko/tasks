@@ -54,13 +54,22 @@ pub struct AppContext {
     // payloads are the only part that goes to Postgres per read.
     pub documents_index: DocumentsIndex,
 
-    // Connected GitHub repositories: the file LISTS, and the keys that fetch behind them.
+    // Connected GitHub repositories: the file list of each working copy, and the keys that reach GitHub
+    // behind them.
     //
     // Beside `documents_index` rather than inside it, because the two are different kinds of thing. That
-    // index is the project's own documents, durable in Postgres and merely cached here. This holds
-    // references to files this service does not have and never stores — a path, a size and a blob sha
-    // each — and every one of them is rebuilt from nothing on every start.
+    // index is the project's own documents, durable in Postgres and merely cached here. This is a listing
+    // of what is on disk in a clone — rebuilt by walking the working copy, never authoritative, and
+    // thrown away on every start.
     pub github: GithubMirrors,
+
+    // Where those clones live. One folder per connection underneath it, and a mounted volume rather than
+    // the container's writable layer — a clone holds edits that exist nowhere else until they are
+    // committed and pushed.
+    //
+    // Read once at startup rather than per call, for the same reason as the session key: it is a deploy
+    // to change, and re-reading it on every git command would only add work.
+    pub git_repos_path: String,
 
     // The Homes to tell when a board changes.
     pub subscribers: ProjectSubscribers,
@@ -95,6 +104,20 @@ impl AppContext {
 
         let session_key = AesKey::new(session_encryption_key.as_bytes());
 
+        // Trailing slashes trimmed here rather than at every join: this is pasted into a settings file by
+        // a person, and `/root/git-repos/` and `/root/git-repos` must not produce two different roots.
+        let git_repos_path = settings_reader
+            .get_settings()
+            .await
+            .git_repos_path
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+
+        if git_repos_path.is_empty() {
+            panic!("settings: git_repos_path must name a folder to clone connected repositories into");
+        }
+
         Self {
             projects_repo: ProjectsRepo::new(settings_reader.clone()).await,
             column_templates_repo: ColumnTemplatesRepo::new(settings_reader.clone()).await,
@@ -107,6 +130,7 @@ impl AppContext {
             board: Board::new(),
             documents_index: DocumentsIndex::new(),
             github: GithubMirrors::new(),
+            git_repos_path,
             subscribers: ProjectSubscribers::new(),
             session_key,
             settings_reader,

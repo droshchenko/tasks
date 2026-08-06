@@ -7,6 +7,7 @@ use crate::app::AppContext;
 mod comment_tool_calls;
 mod documents_text_tool_calls;
 mod documents_tool_calls;
+mod github_git_tool_call;
 mod goals_tool_calls;
 mod labels_list_tool_call;
 mod projects_list_tool_call;
@@ -28,6 +29,7 @@ use documents_tool_calls::{
     DocumentsHistoryHandler, DocumentsListHandler, DocumentsRestoreHandler, DocumentsTrashHandler,
     DocumentsUpdatePathHandler, DocumentsUploadHandler,
 };
+use github_git_tool_call::GithubGitHandler;
 use goals_tool_calls::{
     GoalsAddCommentHandler, GoalsCreateHandler, GoalsDeleteHandler, GoalsGetCommentsHandler,
     GoalsListHandler, GoalsUpdateHandler,
@@ -218,6 +220,27 @@ References to a deleted document are deliberately NOT cleaned up, because restor
 a reference quietly dropped would not come back with it. The trash is invisible in the browser: \
 documents_trash is the only way to see what is in it.\
 \
+A CONNECTED REPOSITORY IS A REAL CLONE, AND YOU CAN WORK IN IT. A project may connect GitHub \
+repositories; each appears in that project's documents as `github/<connection>/…`, and what is behind \
+those paths is a working copy on this server. Every documents tool works on them: documents_list shows \
+them beside the project's own, documents_get reads one, documents_search does not reach them (it \
+searches this product's own texts — use `git grep` for a repository). documents_edit, documents_upload, \
+documents_delete and documents_update_path WRITE them.\
+\
+A WRITE LANDS IN THE WORKING TREE AND STOPS THERE, WHICH IS THE WHOLE CONTRACT. Nothing is staged, \
+committed or pushed by editing a file — that would put a commit on somebody's branch for every edit you \
+make. Recording and sending the work is github_git, which runs any git command you like in that clone: \
+`git diff` to see what you changed, `git add` and `git commit -m \"…\"` to record it, `git push` to send \
+it, `git pull` to take what others did. Conflicts arrive as markers in the files, which documents_get \
+shows and documents_edit fixes, then `git add` and `git commit` — or `git merge --abort` to undo the \
+attempt. So: edit with the documents tools, then reach for github_git.\
+\
+A FILE IN A REPOSITORY HAS NO VERSION HERE, AND THAT IS NOT A GAP. documents_history, documents_diff \
+and documents_restore refuse one, and say which git command answers the same question — `git log`, \
+`git diff`, `git checkout`. Its history is the repository's and is complete; this product simply is not \
+the thing keeping it. `expected_version` means nothing on one for the same reason: every read reports \
+version 0, and `git status` is what tells you whether it moved under you.\
+\
 A BUILD IS RECORDED ON THE TASK THAT PRODUCED IT. When a change made in a task is built, put the \
 GitHub Actions run on that task with `add_gh_actions` on tasks_update: the `url` of the run and a `title` \
 saying what shipped — `my-service v1.2.3`. It is the reverse of a document: a document is what the work \
@@ -337,6 +360,11 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(DocumentsDeleteFolderHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsTrashHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsRestoreHandler::new(app.clone())));
+
+    // After the documents tools, because that is the order the work happens in: a change is made with
+    // those, and this is what records and sends it. It is also the only tool here that does not act on
+    // the board at all.
+    mcp.register_tool_call(Arc::new(GithubGitHandler::new(app.clone())));
 
     mcp.register_tool_call(Arc::new(GoalsAddCommentHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(GoalsGetCommentsHandler::new(app.clone())));

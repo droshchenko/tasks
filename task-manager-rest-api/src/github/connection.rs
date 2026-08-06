@@ -26,9 +26,12 @@ pub struct ParsedRepoUrl {
 /// * `owner/repo` — what a person types when they are not copying anything
 /// * `https://github.com/owner/repo/tree/<branch>/<folder>` — the address bar, browsed to a folder
 ///
-/// **Only github.com.** A host that is not github.com is refused by name rather than attempted: this
-/// talks to `api.github.com` with GitHub's own routes, so a GitHub Enterprise host would not be a
-/// smaller change here, it would be a different client.
+/// **Only github.com.** A host that is not github.com is refused by name rather than attempted: git
+/// would clone an Enterprise host perfectly well, but there is nowhere on a connection to put one. It
+/// carries an owner and a repo and no host, `workdir::repo_url` composes the remote as
+/// `https://github.com/<owner>/<repo>.git` out of those two, and `git::auth_args` scopes the key to
+/// `http.https://github.com/` so it is never handed to another host. Enterprise means carrying a host
+/// through all three, not loosening the check here.
 ///
 /// A branch containing a slash is genuinely ambiguous in a `/tree/` url — `tree/feature/x/docs` could be
 /// branch `feature` and path `x/docs`, or branch `feature/x` and path `docs`, and the url carries

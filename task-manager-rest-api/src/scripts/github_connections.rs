@@ -124,7 +124,18 @@ pub async fn set_github_key(
     Ok(())
 }
 
-/// Detach a repository: the row, the tree on disk, and the key, in that order.
+/// Detach a repository: the row, then the listing and the key.
+///
+/// **The clone on the volume is left where it is.** Nothing here removes
+/// `<git_repos_path>/<project id>/<name>`, and that is a decision rather than an oversight: a working copy
+/// may hold an edit nobody committed and a commit nobody pushed, and a button on a settings dialog is not
+/// where work that exists nowhere else gets destroyed. The folder goes on the host or it does not go.
+///
+/// **What follows is that the next connection of the same name on the same project ADOPTS that folder**,
+/// `origin` included — see [`crate::github::pull_connection`], which clones only when there is nothing on
+/// disk and otherwise fetches whatever `.git/config` already points at. So detaching and re-connecting is
+/// not a way to re-clone from a different url: connect it under a different name, or repoint the working
+/// copy with `github_git` (`git remote set-url origin …`).
 pub async fn delete_github_connection(
     app: &Arc<AppContext>,
     project_prefix: &str,
@@ -147,8 +158,9 @@ pub async fn delete_github_connection(
         project_id
     };
 
-    // After the row, so a crash between the two leaves a connection whose mirror rebuilds itself rather
-    // than a tree on disk that nothing owns.
+    // After the row, so a crash between the two leaves a listing nothing on the board owns any more —
+    // inert, and gone with the process — rather than a live connection whose key has already been thrown
+    // away and has to be typed in again.
     app.github.forget(&project_id, name);
 
     Ok(())

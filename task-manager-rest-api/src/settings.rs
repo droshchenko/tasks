@@ -35,4 +35,20 @@ pub struct SettingsModel {
     // row, never a replacement for it: this is the emergency door and the bootstrap.
     #[serde(default)]
     pub admins: Vec<String>,
+    // Where connected repositories are cloned. One folder per connection underneath it.
+    //
+    // **This has to be a mounted volume, and the default is one.** A clone holds work that is not
+    // anywhere else yet — a file edited but not committed exists only here — so leaving it in the
+    // container's writable layer would mean a deploy silently throwing somebody's edits away. The
+    // compose file mounts a host folder onto this path for exactly that reason.
+    //
+    // Defaulted rather than required so a settings template that predates this field still starts:
+    // an old template produces the same path the compose file mounts, which is the value it would
+    // have been given anyway.
+    #[serde(default = "default_git_repos_path")]
+    pub git_repos_path: String,
+}
+
+fn default_git_repos_path() -> String {
+    "/root/git-repos".to_string()
 }

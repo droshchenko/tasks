@@ -4,17 +4,20 @@ use dioxus::prelude::*;
 use dioxus_utils::{DataState, RenderState};
 use task_manager_shared::github::{GithubConnectionResponse, GithubMirrorState};
 
-/// How often the watch asks whether the listing is over.
+/// How often the watch asks whether the refresh is over.
 ///
 /// A second, and it is cheap on both sides: the answer is served out of the service's memory and never
-/// touches GitHub. The listing being waited on is the only thing in this that spends anybody's budget.
+/// touches GitHub. What is being waited on is the `git fetch` — or, on a connection with nothing on disk
+/// yet, the `git clone` that has to happen first.
 const POLL_EVERY: Duration = Duration::from_secs(1);
 
 /// How long the watch keeps asking before it says so out loud.
 ///
-/// A listing is two requests and normally lands in a second or two, so two and a half minutes is far past
-/// anything healthy — reaching it means something is wrong rather than slow. A dialog that spins for ever
-/// is a dialog that has stopped telling the truth.
+/// A fetch over a repository that has not moved lands in a second or two, so two and a half minutes is far
+/// past anything healthy for one — but a first clone is a whole repository over the network, and git is
+/// allowed 300 seconds for a single command, so a slow one outlasts this watch. That is why giving up is
+/// said as the watching stopping rather than as the refresh failing: a dialog that spins for ever has
+/// stopped telling the truth, and one that reports a failure that did not happen is worse.
 const GIVE_UP_AFTER: Duration = Duration::from_secs(150);
 
 /// One connection's refresh, and the number it is being watched against.
@@ -312,14 +315,14 @@ fn render_body(
 
 /// What pressing the button will do, said before it is pressed and not repeated afterwards.
 ///
-/// **A read is worth a sentence because this one spends something.** Every listing is a request against an
-/// hourly allowance the whole project shares — sixty an hour without a key — so a button that re-read on
-/// every stray click would exhaust it for everybody reading files at the same time.
+/// **A refresh is worth a sentence because it is not the copy-everything-down it looks like.** What
+/// arrives is merged only into a working copy with nothing to lose, so somebody pressing this to have
+/// their edited file replaced by the repository's version is owed that before the press rather than after.
 fn render_intro(watching: &[String], started: bool) -> Element {
     if started {
         return rsx! {
             p { class: "field-hint",
-                "Reading the file list from GitHub. This stays open until it is done — it usually takes a second or two."
+                "Fetching from GitHub. This stays open until it is done — a fetch over a repository that has not moved takes a second or two, but the first refresh of a connection clones the whole repository and can take minutes."
             }
         };
     }
@@ -338,7 +341,7 @@ fn render_intro(watching: &[String], started: bool) -> Element {
     rsx! {
         p { {what} }
         p { class: "field-hint",
-            "Only the file list is read — a file's contents are fetched when you open it. Each listing spends one request of the allowance this project shares with everybody reading it."
+            "A refresh is a git fetch into the clone on this disk — the files are already here, so opening one costs nothing. What arrives is merged only when the working copy is clean, so an edit nobody has committed is never overwritten: a connection with local changes stays on the commit it is on until somebody merges it deliberately."
         }
     }
 }
@@ -358,7 +361,11 @@ fn render_outcome(connections: &[GithubConnectionResponse], stopped: Option<&Sto
 
             if unread.is_empty() {
                 rsx! {
-                    div { class: "refresh-done", "Synced. Everything here is what GitHub holds right now." }
+                    // Not "everything here is what GitHub holds": a working copy with an uncommitted
+                    // change of its own fetches and then declines the fast-forward, on purpose, and it
+                    // ends the run in exactly this state. Claiming it matched would be a sentence that is
+                    // wrong precisely for the person who has work in flight.
+                    div { class: "refresh-done", "Fetched. Anything with no local change of its own is now what GitHub holds." }
                 }
             } else {
                 let unread = unread.join(", ");
@@ -372,7 +379,7 @@ fn render_outcome(connections: &[GithubConnectionResponse], stopped: Option<&Sto
         }
         Some(Stopped::GaveUp) => rsx! {
             div { class: "refresh-done failed",
-                "This is taking longer than a listing normally does. It may still be running — close this and open the folder again in a minute."
+                "This is taking longer than a fetch normally does, which a first clone of a large repository can. It may still be running — close this and open the folder again in a few minutes."
             }
         },
         Some(Stopped::Failed(message)) => rsx! {

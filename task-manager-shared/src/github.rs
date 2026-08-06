@@ -4,13 +4,17 @@ use serde::{Deserialize, Serialize};
 // Never put `///` doc comments on fields of a struct deriving MyHttpInput or
 // MyHttpObjectStructure: the macro's attribute parser panics with `Somehow we got Punct here: =`.
 
-/// The first segment every mirrored path starts with, and the one folder name a real document may not use.
+/// The first segment every connected repository's path starts with, and the one folder name a real
+/// document may not use.
 ///
-/// **A reserved root is what lets a remote folder be served by the tools that serve the project's own.** An
-/// agent calls `documents_list` and sees `github/specs/design/system.md` beside `docs/system.md`; it reads
-/// either with `documents_get`. The only thing it cannot do is WRITE under this root — there is nothing
-/// there to write to, the files belong to somebody else's repository, and the way to bring one in is to sync
-/// it into a folder of the project's own.
+/// **A reserved root is what lets a cloned repository be served by the tools that serve the project's
+/// own.** An agent calls `documents_list` and sees `github/specs/design/system.md` beside
+/// `docs/system.md`, reads either with `documents_get`, and edits either with `documents_edit`. What is
+/// under this root is a working copy on disk rather than rows in a table, and that is the whole of the
+/// difference: a write lands in the working tree and stops there — nothing is staged, committed or pushed
+/// by it — and the versions are git's, which is why `documents_history` and `documents_restore` name the
+/// git command instead of answering. Copying a file OUT of here, into a document of the project's own
+/// with an id and a history, is still a sync.
 pub const GITHUB_ROOT: &str = "github";
 
 /// The longest a connection's name may be. It is one segment of every path the mirror produces, so it is
@@ -45,7 +49,9 @@ pub struct GithubConnectionResponse {
     // rooted here: `path` of `docs` makes `docs/design/a.md` appear as `github/<name>/design/a.md`.
     pub path: String,
     // Whether the server currently holds a key for this connection. False is not an error — a public
-    // repository mirrors anonymously — but for a private one it is the reason nothing is showing.
+    // repository clones anonymously — and for a private one it stops the exchange with GitHub rather
+    // than the folder: a connection that has never cloned shows nothing until a key is given, while one
+    // already on disk keeps listing, reading and editing, and only fetching and pushing wait for it.
     pub has_key: bool,
     // What the last pull did. See [`GithubMirrorState`] for the vocabulary; it travels as a string for the
     // same reason every open vocabulary in this contract does.
@@ -191,7 +197,7 @@ pub struct PullGithubConnectionResponse {
 /// Copy chosen files out of a mirror and into the project's own documents.
 ///
 /// **The mirror is not the documents, and this is the one call that crosses between them.** Everything under
-/// `github/` is somebody else's repository seen through a window; what this writes is a document of the
+/// `github/` is a working copy of somebody else's repository; what this writes is a document of the
 /// project's own, with an id, a version and a history, exactly as an upload would.
 #[derive(MyHttpInput)]
 pub struct SyncGithubInputModel {

@@ -41,6 +41,15 @@ services:
     - ${HOME}/unix-sockets/task-manager-mcp/grpc:/root/grpc
     - ${HOME}/unix-sockets/task-manager-mcp/system:/root/product-system-sockets
     - ${HOME}/unix-sockets/system:/root/system-sockets
+    # Where connected repositories are CLONED, and the one volume on this stack that holds data
+    # somebody would miss.
+    #
+    # It has to be a mount rather than the container's writable layer, and the reason is not the clone
+    # — that could be re-fetched — but what sits in it uncommitted. A file edited through
+    # documents_edit lives in the working tree and nowhere else until somebody commits it, so on the
+    # writable layer every deploy would silently throw away whatever was in progress. This is the path
+    # `git_repos_path` defaults to; a settings template that overrides it has to move both.
+    - ${HOME}/task-manager-mcp/git-repos:/root/git-repos
     deploy:
       resources:
         limits:
@@ -48,10 +57,11 @@ services:
           # in memory, and each write replaces a snapshot wholesale. 64Mb would be a restart loop as
           # soon as a board grew.
           #
-          # Connected GitHub repositories do NOT move this number, which is the point of holding
-          # references rather than content: a connection costs a list of paths, and the largest thing
-          # a read ever allocates is the one file being read, bounded by MAX_BINARY_LEN like every
-          # other document.
+          # Connected GitHub repositories do NOT move this number, even though they are now full
+          # clones: the clone is on the DISK below, and what this process holds for one is still a
+          # list of paths and sizes. The largest thing a read ever allocates is the one file being
+          # read, bounded by MAX_BINARY_LEN like every other document, and git does its own work in
+          # its own process.
           memory: 256Mb
     logging:
       options:

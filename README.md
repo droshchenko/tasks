@@ -291,7 +291,9 @@ build was recorded against the work, and takes the new title if one was given, s
 to name it a second time is correcting the first. Removing names the url; one that is not there is not
 an error, exactly as with a label.
 
-**Nothing is fetched.** This service never talks to GitHub — what is stored is what the caller said. So
+**Nothing is fetched.** A build link is stored exactly as the caller said it, and nothing here ever asks
+GitHub about it — not even now that connected repositories give this service a way to. The two are
+unrelated on purpose: one is a clone of a repository somebody chose, the other is a url on a card. So
 there is no run status here, nothing goes stale, and the moment is when the link was *attached* rather
 than when GitHub ran anything: a time read off a url nobody fetched would be a guess dressed as a
 record. For the same reason the host is not checked against `github.com` — an enterprise install answers
@@ -583,7 +585,8 @@ beside the box is a shortcut that fills it in.
 **The `(project_id, doc_path)` index is unique**, as the backstop under the path-is-the-key rule: the
 application checks before it writes, and the index is what stops two writes racing past that check.
 
-### A connected repository is a folder you can read and not write
+
+### A connected repository is a clone you can work in
 
 Reference material usually already exists, and it usually already lives in a GitHub repository — a
 specification, an API contract, somebody else's README that four tasks refer to. Copying it in by hand means
@@ -592,89 +595,206 @@ specification that is quietly a year old.
 
 So a project can **connect** a repository. It takes a name, a url, optionally a branch and a folder inside the
 repository, and from then on that repository appears in the project's documents as `github/<name>/…`,
-refreshed every ten minutes.
+refreshed every ten minutes. It is set up by a person in the browser, under **Projects setup → GitHub**, and
+only there: a connection is configuration, like a project's columns and its members, so nothing on the MCP
+surface creates one. What the MCP surface then gets is everything *inside* it.
+
+**What is behind those paths is a real `git clone` on a mounted disk.** Not a listing, not a cache of blobs —
+a working copy, the same thing you would have in a terminal. That single fact is what the rest of this
+section follows from: reading a file is reading a file, editing one edits it in the working tree, and
+everything git can say about a repository is one command away.
 
 **It is served by the tools that serve the project's own documents, and that is the whole point of the
-design.** `documents_list` answers with the mirrored files beside the real ones, sorted into the same path
+design.** `documents_list` answers with the repository's files beside the real ones, sorted into the same path
 order; `documents_get` reads one by id or by path; `documents_outline` works on one. An agent needs to learn
 nothing new — it asks the same question and gets the reference material with the rest.
 
-**Everything that writes refuses them, by both names.** A mirrored file has no version and no history here,
-so an upload, a move, a delete, a restore, an edit, a history or a diff naming one — by its `github/` path or
-by its `github:`-prefixed id — is refused with a sentence saying where to go instead. There is one guard,
-called from every write, rather than a rule each of them remembers.
+**And now it writes them too.** `documents_upload` creates or replaces a file, `documents_edit` splices one,
+`documents_delete` removes it, `documents_update_path` renames it inside the same connection. The same tools,
+the same refusals, the same edit semantics — an `old_string` that matches twice fails the batch here exactly
+as it does on a document of the project's own.
 
-**Bringing a file in for real is a sync, and a sync is a copy.** Pick files and folders out of the mirror,
-choose a folder of the project's own, and what lands is a document with an id, a version, an author and a full
-history — the same write an upload makes. It stops tracking the repository the moment it is written. The
-`override` checkbox is the difference between the two ways this gets used: off writes only what is not already
-there and reports the rest as skipped, which is safe to press repeatedly and never overwrites something
-somebody has since edited; on writes a new version over every chosen path. Off is the default, because the
-destructive reading of a button pressed by mistake should be the one you have to ask for.
+**A write lands in the working tree and stops there, deliberately.** Nothing is staged, nothing is committed
+and nothing is pushed by editing a file. The alternative was considered and is worse in both directions: an
+edit that committed itself puts a commit on a branch for every keystroke of an agent's, and an edit that
+pushed itself does that to a repository other people are working in. So the loop is the one every developer
+already has — edit, `git diff`, `git add`, `git commit`, `git push` — and the tool that runs the second half
+is `github_git`.
 
-**The configuration is durable and the key is not, deliberately.** The repository, branch and folder are a
-`jsonb` column on the project row and survive everything. The token is held in the process's memory and is
-written to no table, no settings file and no log — so a database dump carries no credential, and the cost is
-that a private repository stops mirroring after a restart until somebody types the key again. A connection
-reading `needs-key` on Monday having worked all Friday is that trade, not a bug. A public repository mirrors
-anonymously and needs no key at all.
+#### `github_git` is git, not a menu
 
-**It holds references, never content.** What the service keeps for a connection is a list: a path, a size and
-a blob sha per file, and nothing else. There is no download, no unpacked tree and no cache on disk. A file's
-bytes are fetched from GitHub at the moment somebody asks for that file — a `documents_get`, the viewer
-opening it, a sync copying it — and are let go the moment the answer is written. So a connected repository
-costs a list of paths however large it is, and the process is never holding more than the one file being
-read.
+One tool, three arguments — project, connection, and a command written the way you would type it. It runs
+**the whole of git**: status, diff, log, add, commit, push, pull, fetch, branch, checkout, stash, merge,
+rebase, reset, show, blame, `-c`, aliases. There is deliberately no allow-list of subcommands, because a git
+with subcommands taken out of it is a git that will not do the one thing somebody needs at the moment they
+need it — and because this runs inside the container the clones live in, so the blast radius of git is the
+container.
 
-The bytes are asked for by **blob sha** rather than by path. A path resolves against the branch and could
-answer with a file written since the listing; a sha names exactly the bytes the listing described. It also
-means nothing a path could smuggle ever reaches a url — a sha is forty hex characters or it is refused.
+**The one rule is that it has to be git**, and it is checked against the first ARGUMENT rather than against
+the text. A prefix check on the string would pass `gitleaks …` and `github-cli …`, which are different
+programs.
 
-**The poll is cheap because it asks before it re-lists.** Each tick reads the head commit — a few hundred
-bytes — and only re-reads the file list when the sha has moved. The listing itself is one request for the
-whole tree, however deep, because walking it a folder at a time would be one request per folder against a
-budget that is counted by the hour.
+**The command never reaches a shell**, and that is what makes the rule mean anything rather than being
+decoration. Through a shell, `git status; rm -rf /` starts with `git` and passes any prefix check ever
+written, because a shell reads it as two commands. The string is split into arguments here — quoting
+honoured, so a commit message with spaces survives — and `git` is executed directly with them. There is then
+no second command to read: `;`, `&&`, `|`, `$(…)` and backticks are ordinary characters inside an argument,
+which git rejects for itself. That costs nothing in capability, because none of those were ever git.
 
-**A failed listing never empties a connection that worked.** The entries and the commit are what the last
-successful listing left; the state and the error describe the last attempt. Since nothing was ever
-downloaded, "still readable" means exactly that — the files are fetchable again the moment GitHub answers.
+The command runs **at the root of the clone**, which is not always where the documents paths start: a
+connection rooted at `docs` shows `github/<name>/design/a.md` for what git calls `docs/design/a.md`, so
+`git add design/a.md` fails with "did not match any files". `git status` settles it — it covers the whole
+repository and prints paths in the spelling `git add` accepts.
 
-**Refreshing by hand is watched to its end, and it lives where the folder is.** The button is on the
-mirror's own row in the documents tree, and on the `github` root where it covers every connection at once —
-a stale folder is something a person notices while reading it, not while configuring a project, which is
-why the connections dialog under Projects setup does not offer it at all. Pressing it opens a dialog that
-asks for the listing and then stays open, polling until it is over, and says how it went: synced, or the
-reason it did not read.
+Two things are supplied on every invocation, and **only one of them can be overridden the way you would
+expect**. The committer identity can: `user.name` and `user.email` are single-valued, so a later
+`-c user.name=…` wins, as does `--author "Name <email>"` on the commit — which is also why `git commit` never
+fails with "please tell me who you are". The key cannot. It goes on as
+`http.https://github.com/.extraHeader`, and git treats that key as a **list**: a second `-c` for it *adds* a
+second `Authorization` header rather than replacing the first, and both go to github.com. Pushing under a
+different token means resetting the list first and then supplying one —
+`-c "http.https://github.com/.extraHeader="` followed by
+`-c "http.https://github.com/.extraHeader=Authorization: Basic <base64 of x-access-token:TOKEN>"`. The empty
+value is what git documents for exactly this; the order matters, because the reset only clears what came
+before it.
 
-The ask itself cannot report that, and must not try: it returns before the listing has run, because a
-repository can take half a minute to arrive and a request held open for that times out somewhere in
-between. So it hands back a receipt — `pull_no`, the number of listings that connection has **finished** —
-and a higher one coming back is that run ending. Nothing else on the wire can say it: a pull that finds the
-commit unmoved leaves every field exactly as it was, and a second failure looks precisely like the first.
-The count is bumped by the pull guard's `Drop` rather than at the three places a listing can end, for the
-same reason the guard exists at all — a run that panics still has to be counted, or the dialog waits for an
-end that never comes.
+**Conflicts are resolved the ordinary way** — `git pull` stopping on one leaves markers in the working
+tree, where `documents_get` shows them and `documents_edit` fixes them, then `git add` and `git commit`; or
+`git merge --abort` to undo the attempt.
 
-A refresh asked for while a listing is already running does not start a second one — the guard refuses it —
-and the watcher then simply watches the listing already under way, which is the answer it was asking for.
+A non-zero exit is reported as a result rather than as a failure, because most of them are answers: a push
+refused for non-fast-forward, a merge stopped on a conflict, a commit with nothing staged. Output is cut at a
+cap with a line saying so — a `git log` over a long history is megabytes and the caller is a model with a
+context window.
 
-**The cost of holding references is a request per read**, and it is worth being honest about where that
-bites. Anonymous reads share sixty an hour; a key raises it to five thousand. So a public repository is
-browsable without a key but a sync of two hundred files is not — a rate limit arrives per file, as a skip
-with GitHub's own sentence attached, so what got through is kept and the rest can be asked for again later.
-That is the one place this design is worse than downloading an archive would have been, and it is the price
-of the service never holding somebody else's content.
+#### What the clone changes about everything else
+
+**Reads cost nothing now.** The previous design held blob references and fetched a file from GitHub on every
+read, which made a public repository browsable and a sync of two hundred files impossible: anonymous reads
+share sixty an hour. A clone pays that budget once. `documents_get`, the viewer, a sync of the whole
+repository — all file reads.
+
+**A key that is gone is no longer a repository that is gone.** The token is still held in the process's
+memory and written to no table, no settings file and no log, so it still has to be typed in again after a
+restart — but the clone survives on the disk. A connection reading `needs-key` on Monday having worked all
+Friday now lists every file it has, reads them, edits them, commits them; only fetching and pushing wait.
+That was the trade's one real cost, and the disk paid it off.
+
+**The refresh may not destroy local work, so it is careful about when it merges.** A tick is always a `git
+fetch`, which touches nothing in the working tree. The fast-forward after it happens only when `git status
+--porcelain` is empty — nothing modified, nothing staged, nothing untracked — and it is `--ff-only`, so a
+branch that has diverged stops rather than opening a merge nobody asked for and leaving conflict markers in a
+file somebody is about to read. A refresh that declines to merge is not a failure and is not reported as
+one: what moves it then is a `git pull` or a `git merge` somebody runs on purpose.
+
+**And it only fast-forwards the branch it is FOR**, which is a check git will not do for you: `git merge
+--ff-only origin/dev` in a working copy sitting on `main` moves *main* onto dev's tip. It is a merge, and a
+merge does not care that the two names differ. Two ordinary things reach that state — somebody edits a
+connection's branch after it was cloned, or somebody takes the advice above and works on a branch of their
+own — and neither would report anything, because the merge succeeds. So the checked-out branch is compared
+with the connection's first, and a mismatch declines exactly as a dirty tree does. A detached HEAD declines
+too.
+
+**Editing a connection changes the row, not the clone.** The url and the branch are read when the clone is
+made and never again: `origin` keeps the address it was cloned from and the working copy stays on the branch
+it was checked out on, because there is no `git remote set-url` and no checkout anywhere on the refresh path.
+So re-pointing a connection at a different repository puts the new name on the connections screen and moves
+nothing — every file listed, every fetch and every push still belongs to the old one — and changing the
+branch simply stops the fast-forward, by the rule above. The folder inside the repository is the one field of
+the three that takes effect at once, because it is applied when the working copy is listed rather than when
+it is cloned.
+
+**Re-pointing is a git operation, so `github_git` is how it is done** — on a tree with nothing uncommitted in
+it, since the last line throws away whatever is:
+
+```
+git remote set-url origin https://github.com/<owner>/<repo>.git
+git fetch origin
+git reset --hard origin/<branch>
+```
+
+A branch change on its own is `git fetch origin` and then `git checkout <branch>`. What does **not** do it is
+detaching the connection and connecting it again under the same name: detaching leaves the folder on the
+volume, so the next pull finds a clone and goes on refreshing the old repository. A different name is a
+different folder and therefore a real re-clone.
+
+**Detaching does not reclaim the folder either.** Removing a connection deletes the row, the listing and the
+key, and leaves the clone exactly where it was — it may hold a file edited and never committed, or a commit
+nobody pushed, and one click on a settings dialog is not where work that exists nowhere else gets destroyed.
+Reclaiming the space is a deliberate act on the host, under `<git_repos_path>/<project id>/<connection
+name>`. The consequence worth knowing before it surprises somebody is the one above: a connection re-created
+under the same name adopts the folder that is already there, `origin` included.
+
+**A connected folder does not make a smaller clone.** The folder inside the repository roots what is *shown*;
+what is cloned is the whole repository at its full history, because that is what `git clone` is. Two things
+follow. The disk holds far more than the listing suggests — the five-thousand-file cap bounds
+`documents_list`, not the checkout. And every git command reaches the whole repository: `git log` covers
+files no connection shows, and a `git add -A` after editing one file stages anything else lying around in the
+working tree.
+
+**The listing is walked off the working copy**, with `git ls-files --cached --others --exclude-standard`, and
+each of the three flags earns its place: `--cached` is what git tracks, `--others` adds a file created
+through `documents_upload` that nobody has committed yet — so it appears in `documents_list` immediately
+rather than at the next tick — and `--exclude-standard` applies `.gitignore`, so a `target/` somebody built
+inside the clone does not become forty thousand rows. Every write re-walks that connection at once, for the
+same reason: a file created here that took ten minutes to appear would read as a write that did nothing.
+
+**The versions are git's, and this side stops pretending otherwise.** `documents_history`,
+`documents_diff` and `documents_restore` refuse a file in a connected repository — and each refusal names the
+git command that answers the same question: `git log --follow`, `git diff`, `git checkout --`. That is not a
+gap being apologised for. The history is complete, it is just kept by the thing that keeps histories.
+`expected_version` means nothing here for the same reason and a non-zero one is refused rather than ignored:
+every read reports version 0, so a lock that can never fail to match is worse than no lock at all.
+
+Deleting has no trash and needs none: a tracked file that is deleted is still in every commit that held it,
+and `git checkout -- <path>` brings it straight back. Only a file that was never committed is really lost,
+which is true of any working copy.
+
+**Moving is refused across the boundary**, in both directions. Out of a connection into the project's own
+documents is a *sync* — it produces a document with an id, a version and a history, and the file stays in the
+repository. In is an upload. Neither is what "move" means, and a move that quietly changed what a thing IS
+would be the kind of rename nobody could account for later.
+
+**Syncing is still a copy and still exists**, for the same reason it did: what lands is a document with an
+id, a version, an author and a full history that stops tracking the repository the moment it is written. The
+`override` checkbox still separates "bring in what I have not got" from "make mine match theirs". What
+changed is that it no longer runs out of rate limit halfway through two hundred files.
+
+#### What it costs
+
+**The disk is a mounted volume and has to be.** `git_repos_path` in settings says where, defaulting to the
+path the compose file mounts, and one folder per connection sits under it keyed by project id then
+connection name — two boards may each connect something called `specs`, and they are two working trees.
+Leaving that on the container's writable layer would mean a deploy silently throwing away everything
+uncommitted, which is the one thing on this stack nobody could reconstruct.
+
+**The image carries git.** The runtime Dockerfile installs `git` and `ca-certificates` on top of
+`ubuntu:22.04`; without them the service starts, serves the board, and fails on the first connected
+repository with "could not run git".
+
+The configuration is still durable and the key still is not: the repository, branch and folder are a `jsonb`
+column on the project row, and the token is memory only, so a database dump carries no credential. The key
+reaches GitHub as a scoped `http.https://github.com/.extraHeader` on one command line rather than in the
+remote's url — a token written into the url would be a token in `.git/config` on the volume, outliving the
+process it was typed into and landing in every backup of that disk.
 
 What the listing deliberately leaves out is counted rather than listed: a file over the single-document size
 limit, a path this product will not name, anything past five thousand files. A file too big to ever be read
-is left out rather than shown, because a row every read and every sync refuses is worse than an absence. One
-number answers the only question that matters — is the file I want missing because it was filtered, or
-because it is not there? A repository so large that GitHub cuts the listing off says so on the connection.
+is left out rather than shown, because a row every read refuses is worse than an absence. One number answers
+the only question that matters — is the file I want missing because it was filtered, or because it is not
+there?
 
 Two things it is worth knowing it does **not** do. `documents_search` does not reach into connected
-repositories — it searches the project's own texts out of Postgres, and a mirrored file has no text on this
-side to search. And a key supplied for a private repository serves every member of the project, so the access
-it grants is shared with them for as long as it is held.
+repositories — it searches the project's own texts out of Postgres, and `git grep` is the right tool for a
+repository, which `github_git` will run. And a key supplied for a connection serves every member of the
+project, so whatever that key is allowed to do is shared with them for as long as it is held.
+
+**What it is allowed to do is decided on GitHub rather than here, and the two kinds of token differ.** A
+classic token needs the `repo` scope to read a private repository at all, and `repo` is read *and* write —
+so on that path a key that can fetch really can push. A fine-grained token is the one that can be either:
+**Contents: Read** clones and fetches and has `git push` come back refused, **Contents: Read and write**
+pushes, and pushes for everybody on the board. A public repository is cloned and fetched with no key at all,
+so a key on one is only ever there in order to push.
 
 ## The session is a cookie
 
@@ -889,7 +1009,7 @@ next build.
 | Area | |
 |---|---|
 | **Home** (root URL) | The board. A project dropdown on top — only projects you may see; an admin sees all — and the choice is remembered in `localStorage`. Filters by task type and by assignee, plus a search box: free text narrows the board in place, while a task id (`RMS-42`) is looked up on the server and opens as a card, because the answer may be on another board or closed longer than seven days ago and therefore not drawn at all. **Read-only:** nothing is edited with a mouse, anywhere. |
-| **Projects setup** | Every project as one row — prefix, name, description, task count, which column template it follows, its task types, how many members. Editing is by dialog: **Edit** for what a project *is* (name, description, prefix, and which column template), then **Task types** and **Members**. Admin only. |
+| **Projects setup** | Every project as one row — prefix, name, description, task count, which column template it follows, its task types, how many members. Editing is by dialog: **Edit** for what a project *is* (name, description, prefix, and which column template), then **Task types**, **Members**, and **GitHub** — which is where a repository is connected, and the only place it can be: a connection is configuration, so no MCP tool creates one. Admin only. |
 | **Users** | The roster. Admin only. |
 | **Settings** | A menu of areas on the left, the chosen one on the right, with the area in the route (`/settings/column-templates`) so each is linkable and Back works between them. **Column templates** is where a board's columns are configured. **Diagnostics** is read-only: which `client_id` was picked up, which `redirect_uri` is expected, how many admins the settings list holds — the first thing worth reading when a sign-in fails. |
 

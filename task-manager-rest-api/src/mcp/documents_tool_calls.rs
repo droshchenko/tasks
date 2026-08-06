@@ -107,12 +107,16 @@ makes it disappear.\
 \
 PATHS UNDER `github/` ARE NOT THIS PROJECT'S DOCUMENTS. They are files in a GitHub repository somebody \
 connected, and they are listed beside the real ones because that is what makes reference material \
-reachable. This service holds only the LIST — a path, a size and a blob sha each — and fetches a file \
-from GitHub when you actually read it, so a read costs a request against an hourly budget: read what \
-you need rather than sweeping the folder. Read one with documents_get exactly as you would any other. \
-You cannot write one: they have no version and no history here, every write names them and refuses, and \
-the way to bring one into the project for real is to copy it into a folder of its own from the \
-Documents screen.";
+reachable. What is behind them is a real clone on this server's disk, so reading one is a file read that \
+costs nothing and needs no key — documents_get takes such a path exactly as it takes any other.\
+\
+YOU CAN WRITE THEM. documents_upload, documents_edit, documents_delete and documents_delete_folder all \
+act on a `github/` path, and documents_update_path moves a file to another path in the SAME connection — \
+moving a document of this project in, or a file of a repository out, is refused, because neither is a \
+move. A write lands in the WORKING TREE and stops there: nothing is staged, committed or pushed until \
+you run git yourself with github_git. What these files do not have is versions — every one reports \
+version 0, and documents_history, documents_diff and documents_restore refuse them, because their \
+history is the repository's and `git log` is how it is read.";
 }
 
 #[async_trait::async_trait]
@@ -202,7 +206,12 @@ CHANGED between two versions, documents_diff answers without either text.\
 \
 A path under `github/` is a file in a connected repository and reads exactly like anything else here — \
 but it has no versions, so `version`, documents_history and documents_diff all refuse it and say so. \
-What the mirror holds is what the repository holds now.";
+What you read is the WORKING COPY on this server, not the branch. It is fetched and fast-forwarded on a \
+ten-minute timer, and the fast-forward is skipped for as long as the working tree has uncommitted \
+changes in it — so it can sit behind the branch indefinitely, not merely for ten minutes. A file written \
+through documents_upload or documents_edit differs from the repository on purpose until somebody commits \
+and pushes it. github_git is what answers which: `git status` for what is uncommitted here, `git log` \
+for what has actually arrived from the remote.";
 }
 
 #[async_trait::async_trait]
@@ -450,10 +459,12 @@ pub struct DocumentsDeleteInput {
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentsDeleteResponse {
     #[property(
-        description = "The id, unchanged — this is what documents_restore takes, so it is worth keeping"
+        description = "The id, unchanged — for a document of this project's own it is what documents_restore takes, so it is worth keeping. A `github/` file has no trash to be taken back out of"
     )]
     pub id: String,
-    #[property(description = "The path it had, which is where a restore puts it back by default")]
+    #[property(
+        description = "The path it had, which is where a restore puts it back by default. For a `github/` file it is the path that was removed from the working copy"
+    )]
     pub path: String,
 }
 
@@ -480,7 +491,14 @@ REFERENCES TO IT ARE NOT REMOVED. A task or a goal pointing at a deleted documen
 on purpose: restoring is one call away, and a reference quietly dropped would not come back with the \
 document. A reader who cannot resolve one is told it is in the trash.\
 \
-The trash is not shown in the browser — documents_trash is how you see what is in it.";
+The trash is not shown in the browser — documents_trash is how you see what is in it.\
+\
+A PATH UNDER `github/` HAS NO TRASH, AND NONE OF THE ABOVE HOLDS FOR IT. It is a file in a connected \
+repository, and deleting one removes it from the working copy on this server: no trash row, no history \
+entry, and documents_restore refuses it and says so. Nothing is staged or committed either — the removal \
+is an uncommitted change, which `git status` shows. THE UNDO IS GIT'S: `git checkout -- <path>` through \
+github_git brings back anything that was committed, and `git restore --source <commit> -- <path>` takes \
+it from further back. A file that was never committed is really gone.";
 }
 
 #[async_trait::async_trait]
@@ -517,7 +535,7 @@ pub struct DocumentsDeleteFolderResponse {
     #[property(description = "The folder that was emptied, as it was read")]
     pub folder: String,
     #[property(
-        description = "What went, in path order. Each one is in the trash under its own id, and documents_restore takes them back one at a time — keep this list if any of them might be wanted back"
+        description = "What went, in path order. For the project's own documents each one is in the trash under its own id and documents_restore takes them back one at a time — keep this list if any of them might be wanted back. For a `github/` folder these are paths deleted from the working copy: there is no trash row behind them, and git is the only undo"
     )]
     pub documents: Vec<DeletedDocumentView>,
     #[property(description = "How many were deleted")]
@@ -543,11 +561,11 @@ of the documents in them, so a folder stops existing exactly when the last docum
 IT TAKES THE SUBTREE. `docs` takes `docs/design/system.md` as readily as `docs/notes.md`. What it does \
 NOT take is a document CALLED `docs` — a file sharing a folder's name is not inside it.\
 \
-Each document goes exactly as documents_delete sends it: its own history entry, its own trash row, its id \
-kept. So nothing here is more destructive than one deletion — it is the same one repeated, and every \
-document is restorable on its own with documents_restore. The response lists what went; keep it if \
-anything in there might be wanted back, because the trash is flat and a folder of forty is forty rows in \
-it.\
+Each of the project's own documents goes exactly as documents_delete sends it: its own history entry, its \
+own trash row, its id kept. So nothing here is more destructive than one deletion — it is the same one \
+repeated, and every document is restorable on its own with documents_restore. The response lists what \
+went; keep it if anything in there might be wanted back, because the trash is flat and a folder of forty \
+is forty rows in it.\
 \
 CALL documents_list FIRST when you are not certain what is under the folder. There is deliberately no way \
 to say 'all of them' — an empty folder argument is refused, because that is not a folder, it is the \
@@ -556,8 +574,18 @@ project's documents.\
 References on tasks and goals are NOT removed, on purpose, exactly as with a single deletion: restoring \
 is one call away, and a reference quietly dropped would not come back with the document.\
 \
-Paths under `github/` are refused. They are files in a connected repository, not this project's \
-documents, and there is nothing here to delete — detaching the repository is done in the browser.";
+A PATH UNDER `github/` IS NOT REFUSED, AND NOTHING ABOVE ABOUT THE TRASH APPLIES TO IT. It is a folder \
+in the working copy of a connected repository, and this call DELETES THE FILES OFF THE DISK: no history \
+entry, no trash row, and documents_restore cannot bring one back. `github/<connection>/<folder>` takes \
+that subtree; `github/<connection>` with no folder under it empties that whole working copy. Only what \
+documents_list shows goes — a file skipped for being over the size limit stays where it is.\
+\
+SO THE UNDO IS GIT, AND ONLY FOR WHAT WAS COMMITTED. github_git running `git checkout -- .` brings back \
+every file that was in a commit; a file that was never committed is gone for good. Run `git status` \
+through github_git before this call, not after.\
+\
+The one refusal is the bare `github` root: that is where every connected repository is shown, not a \
+folder in one, so name a connection.";
 }
 
 #[async_trait::async_trait]

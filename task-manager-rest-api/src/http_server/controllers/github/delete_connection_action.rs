@@ -13,7 +13,7 @@ use_my_http_server!();
     route: "/api/github/v1/connection/delete",
     controller: "GitHub",
     summary: "Detach a connected repository",
-    description: "Admin only. Takes the connection off the project, deletes its mirrored tree from the container's temp directory, and forgets the key being held for it. NOTHING THAT WAS SYNCED IS TOUCHED: a document copied out of the repository is a document of the project's own, with its own id and history, and disconnecting the repository it came from does not reach it. What disappears is the `github/<name>/` folder — the window, not what was carried through it.",
+    description: "Admin only. Takes the connection off the project and forgets the key being held for it. THE CLONE ON DISK IS NOT DELETED: it is a working copy that may hold commits nobody pushed, so nothing here throws it away — its folder stays under `git_repos_path` and reclaiming it is a deliberate act on the host. NOTHING THAT WAS SYNCED IS TOUCHED: a document copied out of the repository is a document of the project's own, with its own id and history, and disconnecting the repository it came from does not reach it. What disappears is the `github/<name>/` folder — the window, not what was carried through it.",
     input_data: "DeleteGithubConnectionInputModel",
     result: [
         {status_code: 200, description: "Detached"},

@@ -70,9 +70,26 @@
   min-width: 0;
 }
 
+/* A ROW only where there is a handle to put before the name — which is every goal, and not the Backlog.
+   Backlog is the one card whose head text is two STACKED lines, "Backlog" over "not part of any goal",
+   and a flex row would set them side by side. Baseline rather than centre, so `TM-G7` in a smaller
+   monospace face sits on the line the title is written on instead of floating above its middle. */
+.goal-card:not(.backlog) .goal-head-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* `min-width: 0` again here, on the child that is allowed to shrink: without it a long title refuses to
+   go below its content width and pushes the meta block off the right of the card. The handle never
+   shrinks — half an id is not an id. */
 .goal-name {
   font-weight: 600;
   color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The Backlog group's one-line label. There is no `.goal-description` any more: a goal's text is behind the
@@ -91,10 +108,13 @@
   flex-shrink: 0;
 }
 
+/* In the head text now, beside the name, rather than out in the meta — see `.goal-head-text`. Kept faint
+   and monospace so it reads as an identifier next to a title rather than as part of it. */
 .goal-id {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   color: var(--text-faint);
+  flex-shrink: 0;
 }
 
 .goal-closed-flag {

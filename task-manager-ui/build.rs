@@ -5,6 +5,13 @@ use std::path::Path;
 const TASK_ICONS_DIR: &str = "./public/assets/images/task-icons";
 
 fn main() {
+    // **Without this the stylesheet silently stops rebuilding.** `generate_task_icons_list` below emits a
+    // `cargo:rerun-if-changed` of its own, and the moment a build script emits ANY of those, cargo stops
+    // watching the crate wholesale and watches ONLY what was named — so an edit under `css/` is picked up
+    // on the next build something ELSE happens to trigger, and not before. That failure has the worst
+    // shape a build failure has: no error, a green build, and a browser served the previous stylesheet.
+    println!("cargo:rerun-if-changed=./css");
+
     ci_utils::css::CssCompiler::new("./css")
         .add_file("01-tokens.css")
         .add_file("02-shell.css")

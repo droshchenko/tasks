@@ -18,6 +18,12 @@
 # `admins` stays a literal list rather than a secret — it is a list rather than a scalar, and an admin
 # email is not a credential. It is still load-bearing: if it is empty AND the `users` table is empty,
 # nobody can sign in at all.
+#
+# `git_repos_path` is deliberately absent too, and for a different reason than `my_telemetry`: it has a
+# default on the model — `/root/git-repos` — which is byte for byte the container side of the volume that
+# `docker-compose.yaml` mounts connected repositories onto. Registering this template unchanged therefore
+# produces the right value with nothing to type. The two only have to be kept in step by somebody MOVING
+# the clones, and that person edits both: this key, and the container side of that mount.
 
 seq_conn_string: ${logger}
 postgres_conn_string: ${postgres-conn-string}

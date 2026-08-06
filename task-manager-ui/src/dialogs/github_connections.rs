@@ -172,9 +172,9 @@ fn render_list(
         div { class: "github-connections",
             if connections.is_empty() {
                 div { class: "empty-note",
-                    "No repository is connected. A connected one appears in this project's documents as the folder "
+                    "No repository is connected. A connected one is cloned onto this server and appears in this project's documents as the folder "
                     span { class: "mono", "github/<name>/" }
-                    " — read-only, refreshed every ten minutes, and copied in only when you sync it."
+                    " — refreshed every ten minutes, read-only in this browser, and copied into this project's own documents only when you sync it. Agents reach that folder through the documents tools and can WRITE in it: nothing is staged, committed or pushed until one of them runs git deliberately, and a push goes out under the key handed over here — so hand over one scoped to what you are willing to have changed."
                 }
             } else {
                 table { class: "table",
@@ -206,12 +206,12 @@ fn render_list(
                     label { "Key for {name}" }
                     input {
                         r#type: "password",
-                        placeholder: "a GitHub token with read access",
+                        placeholder: "a GitHub token — write access if agents are to push",
                         value: "{key_value}",
                         oninput: move |event| cs.write().key_value = event.value(),
                     }
                     div { class: "field-hint",
-                        "Held in this server's memory only — never written to the database, and gone when the service restarts. Leave it empty to forget the key being held."
+                        "Held in this server's memory only — never written to the database, and gone when the service restarts. The same key clones, fetches and pushes: Contents: Read on a fine-grained token keeps the copy current and has its pushes rejected, Contents: Read and write pushes, and a classic token's repo scope is both. It serves everyone on this project for as long as it is held, so whatever it can do to the repository, they can. Leave it empty to forget the key being held."
                     }
                     div { class: "page-actions",
                         button {
@@ -430,7 +430,7 @@ fn render_form(mut cs: Signal<ComponentState>, form: EditForm, error: &str) -> E
                     },
                 }
                 div { class: "field-hint",
-                    "Held in this server's memory and written to no table — so it has to be given again after a restart, and a database dump carries no credential. A public repository needs none."
+                    "Held in this server's memory and written to no table — so it has to be given again after a restart, and a database dump carries no credential. A public repository needs none to clone and fetch, but pushing to any repository needs a token that can write — Contents: Read and write on a fine-grained token, the repo scope on a classic one."
                 }
             }
 

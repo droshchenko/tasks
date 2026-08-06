@@ -130,6 +130,17 @@ impl DocumentBody {
         }
     }
 
+    /// The payload as bytes, whichever kind it is — what a filesystem takes.
+    ///
+    /// Beside `into_columns`, which is the same payload for the other destination: a document of the
+    /// project's own goes into two Postgres columns, and a file of a connected repository goes onto a
+    /// disk, where the distinction between text and bytes stops existing.
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Text(text) => text.into_bytes(),
+            Self::Binary(bytes) => bytes,
+        }
+    }
 }
 
 /// A document as a caller hands it over: what it holds, and what it is.
@@ -225,13 +236,18 @@ pub async fn upload_document(
     };
 
     let path = normalise_document_path(path)?;
-    // Nothing may be written under the root the connected repositories are shown at — see
-    // `super::refuse_reserved_path`. Checked after normalisation, so a path spelled `/github/a.md` is
-    // caught as readily as `github/a.md`.
-    super::refuse_reserved_path(&path)?;
     let who = require_author(who)?;
 
     content.body.validate()?;
+
+    // **A path under the reserved root is a FILE, and everything below this line is about versions.** A
+    // connected repository is a working copy on disk: writing there creates or replaces a real file, which
+    // git then sees as a change, and there is no row, no version and no history on this side to write.
+    // Checked after normalisation, so a path spelled `/github/a.md` is caught as readily as `github/a.md`.
+    if task_manager_shared::github::is_github_path(&path) {
+        return super::write_mirror_document(app, project_prefix, &path, &content.body.into_bytes())
+            .await;
+    }
 
     let content_type = content.resolve_content_type(&path);
     let size = content.body.size_bytes();
@@ -306,11 +322,18 @@ pub async fn update_document_path(
     who: &str,
 ) -> Result<DocumentDto, String> {
     let path = normalise_document_path(path)?;
-    // Both ends of the move: a mirrored file cannot be moved, and nothing can be moved into the root the
-    // mirrors are shown at.
-    super::refuse_reserved_id(id)?;
-    super::refuse_reserved_path(&path)?;
     let who = require_author(who)?;
+
+    // **Both ends decide together which side of the boundary this move is on.** A file of a connected
+    // repository is renamed inside its own working copy, where a rename is two filesystem operations and
+    // no history; a document of the project's own is renamed by writing a version that records the move.
+    // What is refused is a move that CROSSES between them, because that changes what the thing is rather
+    // than where it is — see `move_mirror_document`.
+    if let Some((project_prefix, from_path)) = super::parse_mirror_document_id(id) {
+        return super::move_mirror_document(app, project_prefix, from_path, &path).await;
+    }
+
+    super::refuse_move_into_mirror(&path)?;
 
     let ctx = MyTelemetryContext::create_empty();
     let existing = require_live(app, id, &ctx).await?;
@@ -360,7 +383,12 @@ pub async fn update_document_path(
 ///
 /// Returns the path it had, which is what a caller wants echoed back: it is what the document was called.
 pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<String, String> {
-    super::refuse_reserved_id(id)?;
+    // A file of a connected repository is removed from the working tree instead, where git is the trash:
+    // every commit that held it still holds it. See `delete_mirror_document`.
+    if let Some((project_prefix, mirror_path)) = super::parse_mirror_document_id(id) {
+        return super::delete_mirror_document(app, project_prefix, mirror_path).await;
+    }
+
     let who = require_author(who)?;
 
     let ctx = MyTelemetryContext::create_empty();
@@ -457,9 +485,14 @@ pub async fn delete_folder(
     who: &str,
 ) -> Result<Vec<DeletedDocument>, String> {
     let folder = normalise_folder(folder)?;
-    // The reserved root, by the same guard every other write goes through: a mirrored file is somebody
-    // else's, and there is nothing here to delete.
-    super::refuse_reserved_path(&folder)?;
+
+    // A folder under the reserved root is a folder in a working copy, and its files are files. Sent
+    // somewhere else entirely because everything below reads the documents index, which has never held
+    // them — see `delete_mirror_folder`.
+    if task_manager_shared::github::is_github_path(&folder) {
+        return super::delete_mirror_folder(app, project_prefix, &folder).await;
+    }
+
     let who = require_author(who)?;
 
     let project_id = {
@@ -550,10 +583,14 @@ pub async fn restore_document(
     path: Option<&str>,
     who: &str,
 ) -> Result<DocumentDto, String> {
-    super::refuse_reserved_id(id)?;
+    // Both ends, because neither has anything to do with this product's trash: a file of a connected
+    // repository never went into it, and a trashed document restored INTO a working copy would be a
+    // commit to somebody's repository dressed up as an undo. The refusal names the git command that
+    // really does undo the first one.
+    super::refuse_reserved_restore(id)?;
 
     if let Some(path) = path {
-        super::refuse_reserved_path(path)?;
+        super::refuse_reserved_restore(path)?;
     }
 
     let who = require_author(who)?;
@@ -728,16 +765,6 @@ pub async fn edit_document(
     expected_version: Option<i64>,
     who: &str,
 ) -> Result<(DocumentDto, Vec<i32>), String> {
-    // Before anything, and by both names: `resolve_document` below would happily HAND BACK a mirrored
-    // file, and the splice that follows would then try to write a row that never existed.
-    if let Some(id) = id {
-        super::refuse_reserved_id(id)?;
-    }
-
-    if let Some(path) = path {
-        super::refuse_reserved_path(path)?;
-    }
-
     let who = require_author(who)?;
 
     // Before the read, so an empty batch does not cost a database round trip to be told it is empty.
@@ -745,6 +772,16 @@ pub async fn edit_document(
         return Err(
             "no edits to make — pass at least one `{ old_string, new_string }` in `edits`".to_string(),
         );
+    }
+
+    // **A file of a connected repository takes the same splice to a different destination.** Everything
+    // that makes this tool worth reaching for — sending only what changes, refusing an ambiguous match,
+    // all-or-nothing — is in `apply_edits` and applies identically; what differs is that the result is
+    // written to a working copy rather than as a new version. Resolved by BOTH names, because a caller
+    // holds whichever one it was handed, and going through `resolve_document` first would read the file
+    // only to discover it cannot be written the ordinary way.
+    if let Some((prefix, mirror_path)) = mirror_named_by(id, project_prefix, path)? {
+        return super::edit_mirror_document(app, &prefix, &mirror_path, edits, expected_version).await;
     }
 
     let existing = resolve_document(app, id, project_prefix, path).await?;
@@ -804,6 +841,40 @@ pub async fn edit_document(
     app.documents_index.upsert(&row);
 
     Ok((row, replacements))
+}
+
+/// Whether a caller named a file of a connected repository, by either of the two names it has.
+///
+/// **The id wins when both arrive**, for the same reason it does in [`resolve_document`]: it is the
+/// identity, where a path is only where the file is sitting today. A path names one only with a project
+/// beside it, because a path is unique within one board and a connection's name is a folder on it.
+fn mirror_named_by(
+    id: Option<&str>,
+    project_prefix: Option<&str>,
+    path: Option<&str>,
+) -> Result<Option<(String, String)>, String> {
+    if let Some(id) = id.map(str::trim).filter(|itm| !itm.is_empty()) {
+        return Ok(super::parse_mirror_document_id(id)
+            .map(|(prefix, mirror_path)| (prefix.to_string(), mirror_path.to_string())));
+    }
+
+    let Some(path) = path.map(str::trim).filter(|itm| !itm.is_empty()) else {
+        return Ok(None);
+    };
+
+    if !task_manager_shared::github::is_github_path(path) {
+        return Ok(None);
+    }
+
+    let prefix = project_prefix
+        .map(str::trim)
+        .filter(|itm| !itm.is_empty())
+        .ok_or_else(|| {
+            "editing by `path` needs `project` beside it — a path is only unique within one board"
+                .to_string()
+        })?;
+
+    Ok(Some((prefix.to_string(), path.to_string())))
 }
 
 /// What a caller is looking for across a project's documents.

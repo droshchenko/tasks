@@ -2,6 +2,7 @@ use task_manager_shared::github::GithubMirrorState;
 
 use crate::app::AppContext;
 use crate::github::MirrorEntry;
+use crate::github::workdir;
 use crate::postgres::DocumentDto;
 
 use super::{NewDocumentContent, SkippedEntry, resolve_project_by_prefix};
@@ -70,6 +71,8 @@ pub async fn sync_github(
         );
     }
 
+    let clone_dir = workdir::connection_dir(&app.git_repos_path, &project_id, connection_name);
+
     let mut written: Vec<DocumentDto> = Vec::new();
     let mut skipped: Vec<SkippedEntry> = Vec::new();
 
@@ -88,22 +91,24 @@ pub async fn sync_github(
             continue;
         }
 
-        // ONE GITHUB REQUEST PER FILE, and this is the loop where that cost is felt: a sync of two
-        // hundred files is two hundred requests against an hourly budget of sixty anonymously and five
-        // thousand with a key. A rate limit arrives here as a skip with GitHub's own sentence attached
-        // rather than as a failed sync, so what did get through is kept and the rest can be asked for
-        // again in an hour.
-        let bytes =
-            match crate::github::read_mirror_file(app, &project_id, &connection, &entry.sha).await {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    skipped.push(SkippedEntry {
-                        name: entry.path.clone(),
-                        reason: err,
-                    });
-                    continue;
-                }
-            };
+        // Read straight off the working copy. **This loop used to be where the whole design's cost was
+        // felt** — one GitHub request per file, against an hourly budget of sixty anonymously, so a sync
+        // of two hundred files reliably hit a rate limit part way through. A clone pays that once, and a
+        // sync of the whole repository is now two hundred file reads.
+        let bytes = match workdir::file_path(&clone_dir, &connection.repo_path, &entry.path)
+            .and_then(|path| workdir::read_file(&path))
+        {
+            Ok(bytes) => bytes,
+            // Still a skip rather than a failed sync: a file that vanished between the listing and this
+            // read is one file's problem, and the rest are worth having.
+            Err(err) => {
+                skipped.push(SkippedEntry {
+                    name: entry.path.clone(),
+                    reason: err,
+                });
+                continue;
+            }
+        };
 
         // The same text-or-bytes rule the archive upload uses, and for the same reason: a repository of
         // Markdown has to arrive as documents that render and diff, not as a folder of downloads.
@@ -187,7 +192,6 @@ mod tests {
         MirrorEntry {
             path: path.to_string(),
             size: 1,
-            sha: format!("sha-{path}"),
             content_type: "text/markdown".to_string(),
             is_binary: false,
         }

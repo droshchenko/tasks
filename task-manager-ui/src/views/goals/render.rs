@@ -436,11 +436,16 @@ fn RenderGoal(
                 }
 
                 div { class: "goal-head-text",
+                    // Before the name rather than out in the meta, and the board is why: a task sticker
+                    // already reads `TM-G7` then the goal's title, in that order. A handle that sat at the
+                    // far right here would be the same identifier in two different places depending on
+                    // which screen you were looking at — and this is the one people copy into `goal` on a
+                    // tasks_create call, so it wants to be where the eye already is.
+                    span { class: "goal-id", "{goal.id}" }
                     div { class: "goal-name", "{goal.name}" }
                 }
 
                 div { class: "goal-meta",
-                    span { class: "goal-id", "{goal.id}" }
                     // Only when it was ranked, exactly as on a card: this screen is already in priority order,
                     // so the badge is here to say why a goal is where it is rather than to label every row.
                     if priority.is_worth_showing() {

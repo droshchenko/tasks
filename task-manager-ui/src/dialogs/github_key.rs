@@ -21,12 +21,12 @@ pub fn GithubKeyDialog(connection: String, on_submit: EventHandler<String>) -> E
             label { "Key for {connection}" }
             input {
                 r#type: "password",
-                placeholder: "a GitHub token with read access to this repository",
+                placeholder: "a GitHub token for this repository",
                 value: "{key}",
                 oninput: move |event| cs.set(event.value()),
             }
             div { class: "field-hint",
-                "Held in this server's memory and written to no table — so a database dump carries no credential, and the key has to be given again after every restart. It serves everyone on this project for as long as it is held."
+                "Held in this server's memory and written to no table — so a database dump carries no credential, and the key has to be given again after every restart. What a restart loses is the key, not the files: the clone is still on this server's disk, so listing and reading never stopped and only fetching and pushing wait. The same key does both: Contents: Read on a fine-grained token keeps the copy current and has its pushes rejected, Contents: Read and write pushes, and a classic token's repo scope is both. It serves everyone on this project for as long as it is held, so whatever it can do to the repository, they can."
             }
 
             if !feedback.error.is_empty() {
