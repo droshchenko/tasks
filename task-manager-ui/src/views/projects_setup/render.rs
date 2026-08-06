@@ -67,7 +67,7 @@ fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
                             th { "Column template" }
                             th { "Task-type template" }
                             th { class: "num", "Members" }
-                            th { style: "width: 160px" }
+                            th { style: "width: 280px" }
                         }
                     }
                     tbody {
@@ -101,6 +101,10 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
 
     let for_edit = project.clone();
     let for_members = project.clone();
+
+    // Composed by the shared crate, so this side and the route it points at cannot drift — there is no
+    // request builder in between to keep them honest.
+    let export_url = task_manager_shared::project_transfer::export_project_url(&project.prefix);
 
     rsx! {
         tr {
@@ -175,6 +179,39 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
                             }
                         },
                         "GitHub"
+                    }
+                    // A LINK rather than a button, and the only one on this screen. A download is a
+                    // navigation: the browser asks for the url, sees `Content-Disposition: attachment` and
+                    // saves the file without leaving the page — and the session rides along, because it is a
+                    // cookie. Doing it through `fetch` would mean holding the whole archive in the wasm heap
+                    // to hand it back to the browser, which is the one thing the streaming endpoint exists to
+                    // avoid.
+                    a {
+                        class: "btn btn-sm",
+                        title: "Download this whole project as a zip — tasks, goals, comments and documents",
+                        href: "{export_url}",
+                        download: "",
+                        "Export"
+                    }
+                    button {
+                        class: "btn btn-sm",
+                        title: "Pour an exported project into this one",
+                        onclick: {
+                            let prefix = project.prefix.clone();
+                            let name = project.name.clone();
+
+                            move |_| {
+                                let prefix = prefix.clone();
+                                let name = name.clone();
+
+                                open(data, |on_imported| DialogState::ImportProject {
+                                    project: prefix,
+                                    project_name: name,
+                                    on_imported,
+                                });
+                            }
+                        },
+                        "Import"
                     }
                 }
             }

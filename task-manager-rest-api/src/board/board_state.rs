@@ -96,6 +96,27 @@ impl Board {
         self.mutate(|inner| inner.put_user(Arc::new(user)));
     }
 
+    /// Put a whole batch of goals and tasks in, in ONE snapshot swap.
+    ///
+    /// The bulk counterpart of [`Self::upsert_goal`] and [`Self::upsert_task`], and it exists for the one
+    /// caller that writes hundreds of rows in a single request: importing a project. Done one at a time, that
+    /// is one clone of the board and one `rebuild_indexes` per card — quadratic in the size of the board for
+    /// no reason, since every screen only ever sees the snapshot at the end of it either way.
+    ///
+    /// Nothing about the semantics differs from calling the two singular methods in a loop: the batch is
+    /// applied in order, and the indexes are rebuilt once at the end, which is exactly what they would be.
+    pub fn upsert_goals_and_tasks(&self, goals: Vec<GoalModel>, tasks: Vec<TaskModel>) {
+        self.mutate(|inner| {
+            for goal in goals {
+                inner.put_goal(Arc::new(goal));
+            }
+
+            for task in tasks {
+                inner.put_task(Arc::new(task));
+            }
+        });
+    }
+
     /// Hand out the next task number for a project, moving its counter.
     ///
     /// This is the one place memory is written *before* Postgres, and it is safe because the counter
@@ -105,20 +126,37 @@ impl Board {
     ///
     /// `None` when the project does not exist — the caller reports that rather than inventing a task.
     pub fn reserve_task_number(&self, project_id: &str) -> Option<i64> {
+        self.reserve_task_numbers(project_id, 1)?.into_iter().next()
+    }
+
+    /// Hand out `amount` consecutive task numbers, moving the counter once.
+    ///
+    /// The same promise [`Self::reserve_task_number`] makes, kept for a batch: an import needs every number
+    /// before it can write anything — a task's dependencies and its goal are named by handles that may point
+    /// forwards in the file — and taking them one at a time would swap the snapshot once per card.
+    ///
+    /// `None` when the project does not exist, or when `amount` is not positive: a reservation of nothing is
+    /// a caller that has miscounted, and an empty `Vec` would let it carry on believing otherwise.
+    pub fn reserve_task_numbers(&self, project_id: &str, amount: i64) -> Option<Vec<i64>> {
+        if amount < 1 {
+            return None;
+        }
+
         let _guard = self.write_lock.lock();
 
         let mut next = self.inner.load().as_ref().clone();
 
         let project = next.get_project(project_id)?;
         let mut project = project.as_ref().clone();
-        project.last_task_number += 1;
-        let reserved = project.last_task_number;
+
+        let first = project.last_task_number + 1;
+        project.last_task_number += amount;
 
         next.put_project(Arc::new(project));
         next.rebuild_indexes();
         self.inner.store(Arc::new(next));
 
-        Some(reserved)
+        Some((first..first + amount).collect())
     }
 }
 

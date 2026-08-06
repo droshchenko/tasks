@@ -804,6 +804,90 @@ so on that path a key that can fetch really can push. A fine-grained token is th
 pushes, and pushes for everybody on the board. A public repository is cloned and fetched with no key at all,
 so a key on one is only ever there in order to push.
 
+## Moving a whole project — export and import
+
+A board can be poured into another board. Two controls on the projects setup row: **Export** downloads the
+project as a zip, **Import** takes one back.
+
+**The archive is four YAML files and a folder**, and the split is the point — one file per kind of thing, so
+each is readable on its own and a diff between two exports says which of the four changed:
+
+```
+project.yaml     the project's settings, plus what the archive holds
+goals.yaml       every goal
+tasks.yaml       every task
+comments.yaml    every comment, on tasks and goals alike, oldest first
+documents/       the project's documents, as themselves, at their own paths
+```
+
+`comments.yaml` being its own file rather than a list nested in each card is what makes an export worth
+opening: it is the project's whole conversation in the order it happened.
+
+**Prose travels base64, and nothing else does.** A task's text is Markdown written by a person or an agent —
+newlines, colons, leading dashes, `#`, quotes, tabs, every character YAML gives a meaning to. Encoding it
+means the file cannot be mis-parsed by a reader with a different idea of block scalars and cannot be silently
+re-indented by a hand edit. Ids, statuses, priorities, labels, emails, urls and moments stay legible, because
+they are vocabulary rather than prose and none of them can carry a newline. Every such field says so in its
+name: `text_base64`, `name_base64`, `title_base64`.
+
+The documents are **not** encoded and not nested — they are files in a `documents/` folder at their real
+paths, so the archive is also just a folder of the project's documents, openable by anything.
+
+**Every reference in the file is a handle, and every one is remapped on the way in.** A task is identified by
+`(project, number)` out of the receiving project's own counter, so `TM-42` lands as whatever this board hands
+out next. That is why `goal: TM-G7` and `depends_on: [TM-4]` are spelled the way a person writes them: a bare
+number would be indistinguishable from one this board already uses, and a handle can be checked. A reference
+to something the archive does not carry drops the edge and is reported — the work is real, and the grouping
+is not worth losing it over. A document reference is a **path** for the same reason, resolved against what
+actually arrived in `documents/`.
+
+Everything that is not a reference arrives unchanged: text, status, priority, kind, assignee, labels,
+checklists, build links, and the created / updated / closed / deleted moments. **A comment keeps its own
+author and its own moment** — the thread is a record of who said what, and re-signing it with whoever pressed
+Import would make it false. A document, by contrast, genuinely *is* being written now, so its version is
+signed by the importer.
+
+**Import is additive, except for the settings, which are replaced.** Nothing already on the board is touched
+or removed. But the statuses in the file are the source board's column ids and mean nothing unless this
+project follows the same template — so the name, description, archive window and the two template ids are
+replaced with the file's. Two of those replacements are conditional, and both because the data model forbids
+the result rather than the intent: a **template id** is taken only if a template with that id is on this
+instance, since pointing a project at one that is not here would empty its board rather than configure it;
+and the **prefix** is taken only if it is free, since two projects cannot share one and the common case for
+this feature is copying a board on the instance the original still lives on. Either one skipped is reported.
+
+A status that survives into a project whose template has no such column is **kept as it is** and reads as
+Todo, exactly as it would have here — which is what lets pointing the project at the right template
+afterwards bring every one of those tasks to where it belongs. Rewriting them on the way in would have made
+that impossible, permanently. The count is reported.
+
+**Deleted work is carried; a connected repository is not.** A deleted task is hidden from every screen and
+kept so that searching for its id still finds it — leaving it out would make exporting a quiet way of losing
+the record, and `tasks.yaml` is hand-editable for anybody who wants it gone. A document under the reserved
+`github/` root is a file in a working copy of a repository that is still there; the receiving board gets it
+by connecting the same repository, and an import that wrote there would be editing a git checkout.
+
+**The export never holds the archive in memory.** A project's documents are its real payload, so holding a
+zip of them to hand to a response would set this service's footprint by the largest board anybody exports.
+The archive is built into the temp directory one document at a time as it comes out of Postgres, and the
+response streams it back off disk — with `Content-Length` known before the first byte, because the file is
+already there, which is what gives the reader a progress bar instead of a spinner. The temp file is removed
+when the download finishes, when the reader closes the tab half way through it, and when a read fails.
+
+That is also why Export is a **link** and not a button — the only one on that screen. A download is a
+navigation: the browser asks for the url, sees `Content-Disposition: attachment` and saves the file without
+leaving the page, and the session rides along because it is a cookie. Doing it through `fetch` would mean
+pulling the whole archive into the wasm heap to hand it back to the browser, which is the one thing the
+streaming endpoint exists to avoid. Import is the mirror image and goes up as a **raw body** rather than
+base64 in JSON, for the same reason: it is the largest thing this API carries.
+
+Neither direction goes near `create_task` or `create_goal`. Those enforce the rules of *doing the work* — a
+task starts in Todo, moving one to Done owes a comment — and an import is not somebody doing work: it is the
+same board arriving somewhere else, and every one of those rules was already satisfied where it happened. So
+the models are built directly and written through the repos, exactly as the startup load does.
+
+Export needs membership of the board; import is admin only, like the rest of the setup screen it sits on.
+
 ## The session is a cookie
 
 `HttpOnly`, `Secure`, `SameSite`, `Path=/`, and it expires with the token inside it. It replaced a token in

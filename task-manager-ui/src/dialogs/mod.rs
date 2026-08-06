@@ -5,6 +5,7 @@ use task_manager_shared::column_templates::ColumnTemplateResponse;
 use task_manager_shared::documents::UploadArchiveResponse;
 use task_manager_shared::kind_templates::KindTemplateResponse;
 use task_manager_shared::goals::GoalResponse;
+use task_manager_shared::project_transfer::ImportProjectResponse;
 use task_manager_shared::projects::ProjectResponse;
 use task_manager_shared::tasks::FindTaskResponse;
 
@@ -24,6 +25,8 @@ mod github_connections;
 pub use github_connections::*;
 mod github_key;
 pub use github_key::*;
+mod import_project;
+pub use import_project::*;
 mod sync_github;
 pub use sync_github::*;
 mod land_task;
@@ -94,6 +97,14 @@ pub enum DialogState {
         initial_folder: String,
         folders: Vec<String>,
         on_uploaded: EventHandler<()>,
+    },
+    /// Pour an exported project into this one — the other half of the Export link beside it on the setup
+    /// screen. Carries the prefix and the name rather than the whole `ProjectResponse`: the dialog draws the
+    /// name so the reader can see which board they are about to change, and sends the prefix.
+    ImportProject {
+        project: String,
+        project_name: String,
+        on_imported: EventHandler<()>,
     },
     /// The GitHub repositories connected to one project, listed and edited in one place.
     ///
@@ -233,6 +244,36 @@ pub fn RenderDialog() -> Element {
                                     Err(err) => submit_failed(err.message),
                                 }
                             }
+                        }
+                    });
+                },
+            }
+        },
+        DialogState::ImportProject {
+            project,
+            project_name,
+            on_imported,
+        } => rsx! {
+            ImportProjectDialog {
+                project,
+                project_name,
+                on_submit: move |submit: ImportSubmit| {
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::import_project(&submit.project, submit.bytes).await {
+                            Ok(response) => {
+                                on_imported.call(());
+
+                                // Always a report, never a silent close — unlike every other save here. An
+                                // import is the one act on this screen whose result nobody can see by
+                                // looking: the board it changed is not the screen it was pressed on, and
+                                // "42 tasks arrived" is the only way to know it did what was meant.
+                                open(DialogState::Message {
+                                    title: "Imported".to_string(),
+                                    text: import_report(&response),
+                                });
+                            }
+                            Err(err) => submit_failed(err.message),
                         }
                     });
                 },
@@ -547,6 +588,55 @@ fn sync_report(response: &UploadArchiveResponse) -> Option<String> {
         response.skipped.len(),
         reasons.join("; ")
     ))
+}
+
+/// What to tell the reader after an import.
+///
+/// **Always something, even when everything landed** — which is what makes this different from the archive
+/// report above. An unpacked zip can be seen in the tree the reader is looking at; an import changes a board
+/// that is not on this screen, so the counts ARE the result. The skips and the notes come after them, capped
+/// the way a sync's are: forty identical lines are not forty pieces of information.
+fn import_report(response: &ImportProjectResponse) -> String {
+    const REASONS_SHOWN: usize = 5;
+
+    let mut text = format!(
+        "{}, {}, {} and {} imported.",
+        count_of(response.goals as usize, "goal"),
+        count_of(response.tasks as usize, "task"),
+        count_of(response.comments as usize, "comment"),
+        count_of(response.documents as usize, "document"),
+    );
+
+    // The notes first: they are about what landed, and they are the half somebody has to act on — a column
+    // this project has no template for is a setting to fix, not an entry to re-send.
+    for note in response.notes.iter() {
+        text.push_str(&format!(" {note}."));
+    }
+
+    if !response.skipped.is_empty() {
+        let reasons: Vec<String> = response
+            .skipped
+            .iter()
+            .take(REASONS_SHOWN)
+            .map(|itm| format!("{} — {}", itm.name, itm.reason))
+            .collect();
+
+        let rest = response.skipped.len().saturating_sub(reasons.len());
+
+        let tail = if rest > 0 {
+            format!("; and {rest} more")
+        } else {
+            String::new()
+        };
+
+        text.push_str(&format!(
+            " {} skipped: {}{tail}.",
+            response.skipped.len(),
+            reasons.join("; ")
+        ));
+    }
+
+    text
 }
 
 fn count_of(count: usize, noun: &str) -> String {

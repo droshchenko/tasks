@@ -359,6 +359,15 @@ input[readonly] {
   background: var(--surface-2);
 }
 
+/* A download is a navigation, so the one control that starts one is an `<a>` — see the Export link on the
+   projects setup screen. These three declarations are the whole difference between an anchor and a button:
+   everything else is already inherited from `.btn` above. */
+a.btn {
+  display: inline-block;
+  text-decoration: none;
+  line-height: normal;
+}
+
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);

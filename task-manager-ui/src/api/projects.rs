@@ -1,4 +1,5 @@
 use flurl::{EmptyRequestModel, HttpVerb};
+use task_manager_shared::project_transfer::{ImportProjectInputModel, ImportProjectResponse};
 use task_manager_shared::projects::*;
 
 use crate::models::RequestError;
@@ -90,6 +91,28 @@ pub async fn set_kind_template(
         .await,
     )
     .await
+}
+
+/// Pour an exported project into this one.
+///
+/// **The one call on this client that sends a file as itself.** A document upload base64s its bytes into a
+/// JSON body, which is right for one file somebody picked; this is a whole board — every task, every comment
+/// and every document — and base64 would cost a third more on the wire and hold the encoded copy beside the
+/// decoded one in a wasm heap. The shared model carries the zip as `#[http_body_raw]`, so the request builder
+/// puts the bytes in the body verbatim and the project rides in the query string.
+///
+/// There is no export counterpart here, and there is not meant to be: a download is a navigation, not a
+/// `fetch` — see `export_project_url` in the shared crate.
+pub async fn import_project(
+    project: &str,
+    bytes: Vec<u8>,
+) -> Result<ImportProjectResponse, RequestError> {
+    let request = ImportProjectInputModel {
+        project: project.to_string(),
+        content: bytes,
+    };
+
+    handle_http_response(authed("/api/projects/v1/import", HttpVerb::Post, request).await).await
 }
 
 /// Replaces the whole set — which is how the screen works, and means this side never has to diff.

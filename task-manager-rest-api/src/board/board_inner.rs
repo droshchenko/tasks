@@ -345,6 +345,20 @@ impl BoardInner {
         self.goals.get(project_id)?.get(&number).cloned()
     }
 
+    /// A project's goals, deleted ones included, in no particular order.
+    ///
+    /// The counterpart of [`Self::get_goal_including_deleted`], and it has exactly one caller for exactly the
+    /// same reason: an export carries the whole board, and a deleted goal left out of it would make exporting
+    /// a quiet way of losing the record. Every screen and every derived answer goes through
+    /// [`Self::goals_of_project`], which forgets them.
+    pub fn goals_of_project_including_deleted(&self, project_id: &str) -> Vec<Arc<GoalModel>> {
+        let Some(of_project) = self.goals.get(project_id) else {
+            return Vec::new();
+        };
+
+        of_project.values().cloned().collect()
+    }
+
     /// A project's goals, **most urgent first and oldest first within one priority** — the same order tasks
     /// come back in, because a screen that ranked one and not the other would be two different rules on one
     /// product. Within a priority, the number is the tiebreaker, which is also oldest-first since the counter
