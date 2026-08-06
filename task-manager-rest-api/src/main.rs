@@ -20,7 +20,7 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[tokio::main]
 async fn main() {
-    let settings_reader = settings::SettingsReader::new(".task-manager-rest-api").await;
+    let settings_reader = settings::SettingsReader::new("~/.task-manager-rest-api").await;
     let settings_reader = Arc::new(settings_reader);
 
     let mut service_context = service_sdk::ServiceContext::new(settings_reader.clone()).await;
