@@ -477,6 +477,17 @@ fn RenderGoal(
                     div { class: "goal-progress",
                         div { class: "goal-progress-fill", style: "width: {percent}%" }
                     }
+                    // Before the thread count, because the two answer different halves of "is there
+                    // anything to read before I start": a document is what the work is done AGAINST, a
+                    // comment is what somebody SAID about it. Drawn only when there is one — an epic
+                    // with neither would otherwise carry two zeroes down every row.
+                    if !goal.documents.is_empty() {
+                        span {
+                            class: "goal-documents",
+                            title: "{goal.documents.len()} document(s) attached — open the goal to read them",
+                            "📄 {goal.documents.len()}"
+                        }
+                    }
                     if goal.comments.len() > 0 {
                         span { class: "goal-comments", title: "{goal.comments.len()} notes on the thread",
                             "💬 {goal.comments.len()}"
