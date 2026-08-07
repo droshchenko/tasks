@@ -17,7 +17,7 @@ jobs:
     if: startsWith(github.event.release.tag_name, 'task-manager-ui-')
     runs-on: ubuntu-22.04
     container:
-      image: ghcr.io/myjettools/dioxus-docker:0.7.9
+      image: ghcr.io/myjettools/dioxus-docker:0.7.10
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions-rs/toolchain@v1
