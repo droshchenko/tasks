@@ -607,10 +607,25 @@ is not something the routing macro can express, which is why this one route is a
 action — and it is the same reason the project is a segment here while every other endpoint takes it as a
 parameter.
 
-A reference on a task or a goal is a row labelled by *id* — the honest shape of what the client knows, since
-the snapshot carries ids and not documents — and clicking it LEAVES the dialog for that screen rather than
-opening a window over it: a PDF wants the pane the browser's viewer needs, which a modal over a board cannot
-give it.
+A reference on a task or a goal is a row labelled by what the reference itself carries, since the snapshot
+carries references and not documents: a file in a connected repository is drawn by its **file name** with its
+path as the tooltip, because the reference spells both out, and a document of the project's own is still
+drawn by its id — its path is a row in a table this screen has not fetched. The two are marked differently on
+purpose. A repository's file is somebody else's — no history here, and an edit lands in a working copy rather
+than on this board — and a reader who cannot tell them apart on a card learns the difference at the worst
+possible moment.
+
+**Clicking one opens the document IN that dialog, with a back arrow in the header.** The reader is in the
+middle of a task and the document is the specification it is done against — sending them to another screen to
+read it means coming back to find the task, which is the trip nobody makes twice. The arrow restores the card
+exactly as it was: the state is carried rather than re-fetched, because re-opening by id would land on
+whatever that card looks like now rather than on what somebody was halfway through reading. The arrow is not a
+second close — the cross still closes the lot, which is why the two sit at opposite ends of the header.
+
+The document is drawn by the same `render_found` the Documents screen uses; a second rendering would be a
+second set of decisions about framing, sandboxing and content types to keep in step. What a modal cannot give
+is the full pane a PDF's viewer wants, so **Open in Documents** stays as a footnote under the document — that
+one does leave, and because the reference names its board it lands on the right one.
 
 Nothing on that screen is live, deliberately: the socket carries the board, and documents must not ride along,
 so Refresh is the answer to "an agent just uploaded something".
@@ -659,8 +674,11 @@ everything git can say about a repository is one command away.
 
 **It is served by the tools that serve the project's own documents, and that is the whole point of the
 design.** `documents_list` answers with the repository's files beside the real ones, sorted into the same path
-order; `documents_get` reads one by id or by path; `documents_outline` works on one. An agent needs to learn
-nothing new — it asks the same question and gets the reference material with the rest.
+order; `documents_get` reads one by reference, by id or by path; `documents_outline` works on one. An agent
+needs to learn nothing new — it asks the same question and gets the reference material with the rest. Such a
+file is referenced from a task or a goal exactly as one of the project's own is: `raw/{project}/github/…`,
+which is the half of [the reference vocabulary](#a-reference-is-a-url-and-it-names-either-kind-of-document)
+that exists because these files have no id to be named by.
 
 **And now it writes them too.** `documents_upload` creates or replaces a file, `documents_edit` splices one,
 `documents_delete` removes it, `documents_update_path` renames it inside the same connection. The same tools,
@@ -854,8 +872,8 @@ so a key on one is only ever there in order to push.
 A board can be poured into another board. Two controls on the projects setup row: **Export** downloads the
 project as a zip, **Import** takes one back.
 
-**The archive is four YAML files and a folder**, and the split is the point — one file per kind of thing, so
-each is readable on its own and a diff between two exports says which of the four changed:
+**The archive is five YAML files and a folder**, and the split is the point — one file per kind of thing, so
+each is readable on its own and a diff between two exports says which of them changed:
 
 ```
 project.yaml     the project's settings, plus what the archive holds
@@ -1208,8 +1226,9 @@ Tools:
 - `tasks_add_comment` / `tasks_get_comments`
 - `labels_list`
 - `documents_list` / `documents_get` / `documents_history` — the index without the texts, one document
-  with its text (by id, or by project and path, and optionally at an old `version`), and every version a
-  document has had. Split that way on purpose: a document can be a whole specification, and an agent that
+  with its text (by reference — `raw/{project}/document/{id}` or `raw/{project}/github/{repository}/{path}`,
+  which is also what a task or a goal stores and what survives being written down — or by project and path,
+  and optionally at an old `version`), and every version a document has had. Split that way on purpose: a document can be a whole specification, and an agent that
   pulled all of them in to find one would have spent the context it needed for the work.
 - `documents_search` / `documents_outline` / `documents_get`'s `from_line` / `to_line` / `max_bytes` —
   the three halves of reading a large document without reading it. See

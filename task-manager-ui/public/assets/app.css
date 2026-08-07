@@ -932,6 +932,24 @@ input[type="text"].board-search {
   font-weight: 600;
 }
 
+/* The way back to the dialog this one was opened from — a task, when the reader followed a document
+   reference off it. Before the title rather than after, because it is where every back control anybody has
+   ever used sits, and it is deliberately NOT next to the close cross: the two do different things, and a
+   reader who mixes them up loses the card they were reading. */
+.modal-back {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.modal-back:hover {
+  color: var(--text);
+}
+
 .modal-close {
   margin-left: auto;
   border: none;
@@ -2311,5 +2329,45 @@ button.task-view-check-row:hover {
 
 .refresh-done.failed {
   color: var(--danger);
+}
+
+/* A document read inside a dialog rather than on the Documents screen.
+
+   The height is the whole of what this adds. On the screen the viewer fills a pane the layout gives it; in
+   a modal there is no such pane, and an <iframe> with no height computes to zero — which renders as a
+   dialog that opened onto nothing. A viewport-relative box keeps a long specification scrollable and a
+   short one from leaving a hole. */
+.doc-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 40vh;
+}
+
+.doc-dialog .viewer-frame {
+  height: 65vh;
+  width: 100%;
+}
+
+.doc-dialog .viewer-image img {
+  max-height: 65vh;
+}
+
+.doc-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.doc-dialog-open {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.doc-dialog-open:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 

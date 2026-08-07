@@ -46,6 +46,24 @@
   font-weight: 600;
 }
 
+/* The way back to the dialog this one was opened from — a task, when the reader followed a document
+   reference off it. Before the title rather than after, because it is where every back control anybody has
+   ever used sits, and it is deliberately NOT next to the close cross: the two do different things, and a
+   reader who mixes them up loses the card they were reading. */
+.modal-back {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.modal-back:hover {
+  color: var(--text);
+}
+
 .modal-close {
   margin-left: auto;
   border: none;

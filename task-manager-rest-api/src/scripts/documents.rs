@@ -1577,6 +1577,49 @@ fn unwrap_named_reference(id: Option<&str>, path: Option<&str>) -> Option<String
     })
 }
 
+/// The reference for a document the caller NAMED, whatever they named it by.
+///
+/// **For the tools that answer about a document they were handed rather than one they read out** — a
+/// history, a deletion — so that the answer speaks the vocabulary the question could have been asked in.
+/// Everywhere else the row is in hand and the reference is built straight off it.
+///
+/// A mirrored file needs nothing looked up: its id carries its project. A document of the project's own is
+/// found in the index, and then in the trash — which is not a fallback but the common case here, since a
+/// history is most often asked for about something that has just been deleted.
+pub async fn reference_of(app: &AppContext, named: &str) -> String {
+    let id = unwrap_document_reference(named);
+
+    if let Some((project, path)) = task_manager_shared::github::parse_mirror_document_id(&id) {
+        return mirror_document_reference(project, path);
+    }
+
+    let project_id = match app.documents_index.get(&id) {
+        Some(entry) => Some(entry.project_id.clone()),
+        None => {
+            let ctx = MyTelemetryContext::create_empty();
+
+            app.documents_repo
+                .get_trashed(&id, &ctx)
+                .await
+                .map(|itm| itm.project_id)
+        }
+    };
+
+    let prefix = project_id.and_then(|project_id| {
+        app.board
+            .read()
+            .get_project(&project_id)
+            .map(|itm| itm.prefix.clone())
+    });
+
+    match prefix {
+        Some(prefix) => own_document_reference(&prefix, &id),
+        // Nothing knows where it is — which, for a caller who has just been answered about it, means the
+        // row moved between two reads. The id on its own is still a name this product answers to.
+        None => id,
+    }
+}
+
 /// Refuse a reference unless it names a live document of THIS board.
 ///
 /// **Checked against the in-memory index**, not Postgres: the index holds every live document's reference,

@@ -278,7 +278,13 @@ fn is_markdown_content_type(content_type: &str) -> bool {
     content_type == "text/markdown" || content_type.starts_with("text/markdown;")
 }
 
-fn render_found(project: &str, found: &FindDocumentResponse, show_source: bool) -> Element {
+/// One document as the viewer draws it, or the reason there is none.
+///
+/// **Public because the Documents screen is no longer the only place a document is read.** Following a
+/// reference from a task opens the document IN the task's dialog, and a second rendering of the same
+/// thing would be a second set of decisions about sandboxing, framing and content types to keep in step
+/// with these.
+pub fn render_found(project: &str, found: &FindDocumentResponse, show_source: bool) -> Element {
     let Some(document) = found.document.as_ref() else {
         let reason = if found.not_found.is_empty() {
             "Nothing found.".to_string()

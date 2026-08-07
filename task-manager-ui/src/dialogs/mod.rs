@@ -167,6 +167,20 @@ pub enum DialogState {
     ViewGoal {
         goal: GoalResponse,
     },
+    /// One document, opened from the task or the goal that references it.
+    ///
+    /// **`back` is the dialog to return to, carried whole.** Re-opening the card by id would be a request,
+    /// and it would land on whatever that card looks like now rather than on what the reader was reading —
+    /// which for a dialog somebody is halfway through is the wrong answer even when it is fresher. It is
+    /// boxed because a `DialogState` that contained itself by value would have no size.
+    ///
+    /// `project` is the board of the card it was opened from, and it is the fallback rather than the
+    /// answer: a reference names its own board, and only the legacy bare-id spelling names none.
+    ViewDocument {
+        project: String,
+        reference: String,
+        back: Box<DialogState>,
+    },
     /// A card was dragged into Done and the server will refuse the move without a resolution. Carries the
     /// column it is being dropped into rather than assuming `done`: a project can only have one Done, but
     /// spelling it out keeps the dialog from knowing which id that is.
@@ -205,6 +219,24 @@ pub fn RenderDialog() -> Element {
         DialogState::ViewGoal { goal } => rsx! {
             ViewGoalDialog { goal }
         },
+        DialogState::ViewDocument {
+            project,
+            reference,
+            back,
+        } => {
+            // Cloned per call rather than moved: an `EventHandler` is callable more than once, and a
+            // reader who goes back, follows a second reference and goes back again is the ordinary way
+            // this dialog is used.
+            let back = *back;
+
+            rsx! {
+                ViewDocumentDialog {
+                    project,
+                    reference,
+                    on_back: EventHandler::new(move |_| open(back.clone())),
+                }
+            }
+        }
         DialogState::UploadDocument {
             project,
             initial_folder,

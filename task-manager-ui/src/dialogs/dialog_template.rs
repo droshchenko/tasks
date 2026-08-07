@@ -24,7 +24,7 @@ pub fn dialog_template_ex(
         }
     };
 
-    render_modal(title, content, Some(footer), extra_class)
+    render_modal(title, content, Some(footer), extra_class, None)
 }
 
 /// A dialog with no footer at all — for one that only shows something.
@@ -37,7 +37,23 @@ pub fn dialog_template_read_only(
     content: Element,
     extra_class: Option<&str>,
 ) -> Element {
-    render_modal(title, content, None, extra_class)
+    render_modal(title, content, None, extra_class, None)
+}
+
+/// A read-only dialog that came from ANOTHER dialog, with the way back in its header.
+///
+/// **The back arrow is not a second close.** Following a document reference off a task opens the document
+/// here, and the reader has not left the task — the arrow puts it back exactly as it was, where the cross
+/// still closes the lot. Two different exits, which is why the arrow is in the header rather than the
+/// footer: a footer button beside Cancel would read as one of a pair of ways out of an edit, and there is
+/// no edit.
+pub fn dialog_template_with_back(
+    title: &str,
+    content: Element,
+    on_back: EventHandler<()>,
+    extra_class: Option<&str>,
+) -> Element {
+    render_modal(title, content, None, extra_class, Some(on_back))
 }
 
 fn render_modal(
@@ -45,6 +61,7 @@ fn render_modal(
     content: Element,
     footer: Option<Element>,
     extra_class: Option<&str>,
+    on_back: Option<EventHandler<()>>,
 ) -> Element {
     let modal_class = match extra_class {
         Some(extra) => format!("modal {extra}"),
@@ -63,6 +80,14 @@ fn render_modal(
                 class: "{modal_class}",
                 onclick: move |event| event.stop_propagation(),
                 div { class: "modal-header",
+                    if let Some(on_back) = on_back {
+                        button {
+                            class: "modal-back",
+                            title: "Back",
+                            onclick: move |_| on_back.call(()),
+                            "←"
+                        }
+                    }
                     div { class: "modal-title", "{title}" }
                     button { class: "modal-close", title: "Close", onclick: move |_| close(), "×" }
                 }

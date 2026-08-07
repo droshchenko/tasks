@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppContext;
 use crate::mcp::{DocumentHeadingView, DocumentSearchHitView, DocumentView};
 
-use super::documents_tool_calls::project_prefix_of;
+use super::documents_tool_calls::{project_prefix_named, project_prefix_of};
 
 // -------------------------------------------------------------------------------------------- edit
 
@@ -189,7 +189,7 @@ pub struct DocumentsSearchInput {
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentsSearchResponse {
     #[property(
-        description = "The documents that matched, by path — never their texts. Read one afterwards with documents_get, using a match's `line_number` as `from_line`"
+        description = "The documents that matched — never their texts. Each carries the `reference` that names it: hand that to documents_get, using a match's `line_number` as `from_line`, or to add_documents to put the document in front of a piece of work"
     )]
     pub documents: Vec<DocumentSearchHitView>,
     #[property(description = "How many documents matched")]
@@ -268,6 +268,11 @@ impl McpToolCall<DocumentsSearchInput, DocumentsSearchResponse> for DocumentsSea
 
         let outcome = crate::scripts::search_documents(&self.app, &model.project, &query).await?;
 
+        // After the search, which is what refuses an unknown project — and the board's CURRENT prefix
+        // rather than the one that was written, since a project answers to every prefix it has ever had
+        // and a reference must name the one it carries now.
+        let prefix = project_prefix_named(&self.app, &model.project);
+
         Ok(DocumentsSearchResponse {
             documents_amount: outcome.hits.len() as i32,
             matches_total: outcome.matches_total,
@@ -277,7 +282,7 @@ impl McpToolCall<DocumentsSearchInput, DocumentsSearchResponse> for DocumentsSea
             documents: outcome
                 .hits
                 .into_iter()
-                .map(DocumentSearchHitView::from_hit)
+                .map(|itm| DocumentSearchHitView::from_hit(itm, &prefix))
                 .collect(),
         })
     }
@@ -297,6 +302,10 @@ pub struct DocumentsOutlineInput {
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentsOutlineResponse {
+    #[property(
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
+    )]
+    pub reference: String,
     #[property(description = "The document's id")]
     pub id: String,
     #[property(description = "The prefix of the project it belongs to")]
@@ -363,9 +372,14 @@ impl McpToolCall<DocumentsOutlineInput, DocumentsOutlineResponse> for DocumentsO
         )
         .await?;
 
+        let project = project_prefix_of(&self.app, &row.project_id);
+
         Ok(DocumentsOutlineResponse {
+            reference: task_manager_shared::documents::canonical_document_reference(
+                &project, &row.id,
+            ),
             id: row.id.clone(),
-            project: project_prefix_of(&self.app, &row.project_id),
+            project,
             path: row.doc_path.clone(),
             version: row.version,
             size: row.content_size.unwrap_or(0),
@@ -406,6 +420,10 @@ pub struct DocumentsDiffInput {
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentsDiffResponse {
+    #[property(
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
+    )]
+    pub reference: String,
     #[property(description = "The document's id")]
     pub id: String,
     #[property(description = "The prefix of the project it belongs to")]
@@ -480,8 +498,13 @@ impl McpToolCall<DocumentsDiffInput, DocumentsDiffResponse> for DocumentsDiffHan
         )
         .await?;
 
+        let project = project_prefix_of(&self.app, &diff.project_id);
+
         Ok(DocumentsDiffResponse {
-            project: project_prefix_of(&self.app, &diff.project_id),
+            reference: task_manager_shared::documents::canonical_document_reference(
+                &project, &diff.id,
+            ),
+            project,
             id: diff.id,
             from_version: diff.from_version,
             to_version: diff.to_version,

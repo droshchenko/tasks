@@ -498,6 +498,10 @@ impl DocumentView {
 /// One document, with its text. What reading a document returns.
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentContentView {
+    #[property(
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
+    )]
+    pub reference: String,
     #[property(description = "The document's id — stable for the life of the document")]
     pub id: String,
     #[property(description = "The prefix of the project this document belongs to")]
@@ -555,6 +559,10 @@ impl DocumentContentView {
         let (content, content_base64, is_binary, size) = split_body(crate::scripts::body_of(src));
 
         Self {
+            reference: task_manager_shared::documents::canonical_document_reference(
+                project_prefix,
+                &src.id,
+            ),
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.doc_path.clone(),
@@ -585,6 +593,10 @@ impl DocumentContentView {
             split_body(crate::scripts::body_of_version(src));
 
         Self {
+            reference: task_manager_shared::documents::canonical_document_reference(
+                project_prefix,
+                &src.document_id,
+            ),
             id: src.document_id.clone(),
             project: project_prefix.to_string(),
             // The path AT THAT VERSION, not the current one — which is the whole reason a move is recorded
@@ -693,6 +705,10 @@ pub struct DocumentMatchView {
 /// One document a search found something in.
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentSearchHitView {
+    #[property(
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
+    )]
+    pub reference: String,
     #[property(description = "The document's id — what documents_get, documents_edit and documents_outline take")]
     pub id: String,
     #[property(description = "Where it lives")]
@@ -706,8 +722,12 @@ pub struct DocumentSearchHitView {
 }
 
 impl DocumentSearchHitView {
-    pub fn from_hit(src: crate::scripts::DocumentSearchHit) -> Self {
+    pub fn from_hit(src: crate::scripts::DocumentSearchHit, project_prefix: &str) -> Self {
         Self {
+            reference: task_manager_shared::documents::canonical_document_reference(
+                project_prefix,
+                &src.id,
+            ),
             id: src.id,
             path: src.path,
             matches_total: src.matches_total,
@@ -793,6 +813,10 @@ impl DocumentVersionView {
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DeletedDocumentView {
     #[property(
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
+    )]
+    pub reference: String,
+    #[property(
         description = "The document's id, unchanged by the deletion — this is what documents_restore takes"
     )]
     pub id: String,
@@ -803,8 +827,12 @@ pub struct DeletedDocumentView {
 }
 
 impl DeletedDocumentView {
-    pub fn from_dto(src: &crate::scripts::DeletedDocument) -> Self {
+    pub fn from_dto(src: &crate::scripts::DeletedDocument, project_prefix: &str) -> Self {
         Self {
+            reference: task_manager_shared::documents::canonical_document_reference(
+                project_prefix,
+                &src.id,
+            ),
             id: src.id.clone(),
             path: src.path.clone(),
         }
@@ -814,6 +842,10 @@ impl DeletedDocumentView {
 /// One document in the trash.
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct TrashedDocumentView {
+    #[property(
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
+    )]
+    pub reference: String,
     #[property(
         description = "The document's id — unchanged by the deletion, which is what makes restoring it put the same document back and every reference to it work again"
     )]
@@ -833,8 +865,12 @@ pub struct TrashedDocumentView {
 }
 
 impl TrashedDocumentView {
-    pub fn from_dto(src: &crate::postgres::DocumentTrashIndexDto) -> Self {
+    pub fn from_dto(src: &crate::postgres::DocumentTrashIndexDto, project_prefix: &str) -> Self {
         Self {
+            reference: task_manager_shared::documents::canonical_document_reference(
+                project_prefix,
+                &src.id,
+            ),
             id: src.id.clone(),
             path: src.doc_path.clone(),
             size: src.content_size.unwrap_or(0),

@@ -15,6 +15,20 @@ use crate::mcp::{
 /// translation happens once, here. A project that has vanished between the read and this call falls back to
 /// the raw id rather than failing: the document is what was asked for, and naming its board oddly is better
 /// than refusing to hand it over.
+/// The board's CURRENT prefix, from whichever prefix the caller named it by.
+///
+/// A project keeps every prefix it has ever had, so a caller working from an older conversation can name a
+/// board by one it no longer carries — and a reference built with that would name a board that is not
+/// there. Falls back to what was written when nothing resolves, which is the case where the call itself is
+/// about to fail anyway.
+pub(super) fn project_prefix_named(app: &AppContext, named: &str) -> String {
+    let board = app.board.read();
+
+    crate::scripts::resolve_project_by_prefix(&board, named)
+        .map(|itm| itm.prefix.clone())
+        .unwrap_or_else(|_| named.to_string())
+}
+
 pub(super) fn project_prefix_of(app: &AppContext, project_id: &str) -> String {
     app.board
         .read()
@@ -400,6 +414,10 @@ pub struct DocumentsHistoryInput {
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentsHistoryResponse {
+    #[property(
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
+    )]
+    pub reference: String,
     #[property(description = "Which document this is the history of")]
     pub id: String,
     #[property(
@@ -439,7 +457,12 @@ impl McpToolCall<DocumentsHistoryInput, DocumentsHistoryResponse> for DocumentsH
     ) -> Result<DocumentsHistoryResponse, String> {
         let rows = crate::scripts::document_history(&self.app, &model.id).await?;
 
+        // After the history, because it errors first when the id names nothing at all — that is the
+        // message a caller wants, rather than a reference to something that is not there.
+        let reference = crate::scripts::reference_of(&self.app, &model.id).await;
+
         Ok(DocumentsHistoryResponse {
+            reference,
             id: model.id,
             versions: rows.iter().map(DocumentVersionView::from_dto).collect(),
         })
@@ -458,6 +481,10 @@ pub struct DocumentsDeleteInput {
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentsDeleteResponse {
+    #[property(
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
+    )]
+    pub reference: String,
     #[property(
         description = "The id, unchanged — for a document of this project's own it is what documents_restore takes, so it is worth keeping. A `github/` file has no trash to be taken back out of"
     )]
@@ -507,9 +534,14 @@ impl McpToolCall<DocumentsDeleteInput, DocumentsDeleteResponse> for DocumentsDel
         &self,
         model: DocumentsDeleteInput,
     ) -> Result<DocumentsDeleteResponse, String> {
+        // Read before the deletion rather than after: the row is about to leave the index for the trash,
+        // and resolving it while it is still live is one lookup instead of two.
+        let reference = crate::scripts::reference_of(&self.app, &model.id).await;
+
         let path = crate::scripts::delete_document(&self.app, &model.id, &model.who).await?;
 
         Ok(DocumentsDeleteResponse {
+            reference,
             id: model.id,
             path,
         })
@@ -600,8 +632,12 @@ impl McpToolCall<DocumentsDeleteFolderInput, DocumentsDeleteFolderResponse>
             crate::scripts::delete_folder(&self.app, &model.project, &model.folder, &model.who)
                 .await?;
 
-        let documents: Vec<DeletedDocumentView> =
-            deleted.iter().map(DeletedDocumentView::from_dto).collect();
+        let prefix = project_prefix_named(&self.app, &model.project);
+
+        let documents: Vec<DeletedDocumentView> = deleted
+            .iter()
+            .map(|itm| DeletedDocumentView::from_dto(itm, &prefix))
+            .collect();
 
         Ok(DocumentsDeleteFolderResponse {
             folder: model.folder,
@@ -657,8 +693,12 @@ impl McpToolCall<DocumentsTrashInput, DocumentsTrashResponse> for DocumentsTrash
     ) -> Result<DocumentsTrashResponse, String> {
         let rows = crate::scripts::list_trash(&self.app, &model.project).await?;
 
-        let documents: Vec<TrashedDocumentView> =
-            rows.iter().map(TrashedDocumentView::from_dto).collect();
+        let prefix = project_prefix_named(&self.app, &model.project);
+
+        let documents: Vec<TrashedDocumentView> = rows
+            .iter()
+            .map(|itm| TrashedDocumentView::from_dto(itm, &prefix))
+            .collect();
 
         Ok(DocumentsTrashResponse {
             amount: documents.len() as i32,
