@@ -1078,18 +1078,24 @@ input[type="text"].board-search {
   object-fit: contain;
 }
 
-/* One task, shown in full. The board is a list of titles now, so this is where the whole thing is read —
-   which is why it takes 95% of the window rather than a column in the middle of it. */
-.modal.modal-task {
+/* One task, or one document, shown in full. The board is a list of titles now, so this is where the whole
+   thing is read — which is why it takes 95% of the window rather than a column in the middle of it.
+
+   ONE SIZE FOR BOTH, and that is the point rather than a saving. Following a document reference off a task
+   keeps the reader in the same dialog, so a document that opened narrower than the task it came from would
+   make the window jump on every click and jump back on every press of the back arrow. */
+.modal.modal-task,
+.modal.modal-document {
   width: 95vw;
   max-width: 95vw;
   height: 95vh;
   max-height: 95vh;
 }
 
-/* The backdrop's padding and top alignment are for a dialog that grows with its content. This one is
-   already as big as it means to be, so the padding would only push it off the bottom of the window. */
-.modal-backdrop:has(.modal-task) {
+/* The backdrop's padding and top alignment are for a dialog that grows with its content. These are already
+   as big as they mean to be, so the padding would only push them off the bottom of the window. */
+.modal-backdrop:has(.modal-task),
+.modal-backdrop:has(.modal-document) {
   padding: 0;
   align-items: center;
   overflow: hidden;
@@ -1101,7 +1107,8 @@ input[type="text"].board-search {
    `flex: 1` and not just `overflow: hidden`: a flex item's default is to size to its content, so without it
    the body would be as tall as the task happens to be and the halves below would be halves of that rather
    than of the dialog. */
-.modal-task .modal-body {
+.modal-task .modal-body,
+.modal-document .modal-body {
   flex: 1;
   overflow: hidden;
   display: flex;
@@ -2340,24 +2347,17 @@ button.task-view-check-row:hover {
 
 /* A document read inside a dialog rather than on the Documents screen.
 
-   The height is the whole of what this adds. On the screen the viewer fills a pane the layout gives it; in
-   a modal there is no such pane, and an <iframe> with no height computes to zero — which renders as a
-   dialog that opened onto nothing. A viewport-relative box keeps a long specification scrollable and a
-   short one from leaving a hole. */
+   It gives the viewer a HEIGHT to fill and nothing else. Every viewer child — the frame, the markdown, the
+   source, the image — is already `flex: 1 1 auto; min-height: 0`, written for the pane the Documents screen
+   gives it; all this has to do is be that pane. Fixed heights here were the earlier version and were wrong
+   twice over: an <iframe> in a box shorter than the dialog left a band of dead space under it, and the same
+   box in a dialog that is 95vh tall wasted a third of the window. */
 .doc-dialog {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 40vh;
-}
-
-.doc-dialog .viewer-frame {
-  height: 65vh;
-  width: 100%;
-}
-
-.doc-dialog .viewer-image img {
-  max-height: 65vh;
 }
 
 .doc-dialog-foot {

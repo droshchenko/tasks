@@ -615,7 +615,10 @@ purpose. A repository's file is somebody else's — no history here, and an edit
 than on this board — and a reader who cannot tell them apart on a card learns the difference at the worst
 possible moment.
 
-**Clicking one opens the document IN that dialog, with a back arrow in the header.** The reader is in the
+**Clicking one opens the document IN that dialog, at the same 95% of the window the task was read at, with
+a back arrow in the header.** One size for both is the point rather than a saving: a document that opened
+narrower than the task it came from would make the window jump on every click and jump back on every press of
+the arrow. The reader is in the
 middle of a task and the document is the specification it is done against — sending them to another screen to
 read it means coming back to find the task, which is the trip nobody makes twice. The arrow restores the card
 exactly as it was: the state is carried rather than re-fetched, because re-opening by id would land on

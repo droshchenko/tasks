@@ -414,24 +414,17 @@
 
 /* A document read inside a dialog rather than on the Documents screen.
 
-   The height is the whole of what this adds. On the screen the viewer fills a pane the layout gives it; in
-   a modal there is no such pane, and an <iframe> with no height computes to zero — which renders as a
-   dialog that opened onto nothing. A viewport-relative box keeps a long specification scrollable and a
-   short one from leaving a hole. */
+   It gives the viewer a HEIGHT to fill and nothing else. Every viewer child — the frame, the markdown, the
+   source, the image — is already `flex: 1 1 auto; min-height: 0`, written for the pane the Documents screen
+   gives it; all this has to do is be that pane. Fixed heights here were the earlier version and were wrong
+   twice over: an <iframe> in a box shorter than the dialog left a band of dead space under it, and the same
+   box in a dialog that is 95vh tall wasted a third of the window. */
 .doc-dialog {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 40vh;
-}
-
-.doc-dialog .viewer-frame {
-  height: 65vh;
-  width: 100%;
-}
-
-.doc-dialog .viewer-image img {
-  max-height: 65vh;
 }
 
 .doc-dialog-foot {

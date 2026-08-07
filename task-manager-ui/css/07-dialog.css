@@ -192,18 +192,24 @@
   object-fit: contain;
 }
 
-/* One task, shown in full. The board is a list of titles now, so this is where the whole thing is read —
-   which is why it takes 95% of the window rather than a column in the middle of it. */
-.modal.modal-task {
+/* One task, or one document, shown in full. The board is a list of titles now, so this is where the whole
+   thing is read — which is why it takes 95% of the window rather than a column in the middle of it.
+
+   ONE SIZE FOR BOTH, and that is the point rather than a saving. Following a document reference off a task
+   keeps the reader in the same dialog, so a document that opened narrower than the task it came from would
+   make the window jump on every click and jump back on every press of the back arrow. */
+.modal.modal-task,
+.modal.modal-document {
   width: 95vw;
   max-width: 95vw;
   height: 95vh;
   max-height: 95vh;
 }
 
-/* The backdrop's padding and top alignment are for a dialog that grows with its content. This one is
-   already as big as it means to be, so the padding would only push it off the bottom of the window. */
-.modal-backdrop:has(.modal-task) {
+/* The backdrop's padding and top alignment are for a dialog that grows with its content. These are already
+   as big as they mean to be, so the padding would only push them off the bottom of the window. */
+.modal-backdrop:has(.modal-task),
+.modal-backdrop:has(.modal-document) {
   padding: 0;
   align-items: center;
   overflow: hidden;
@@ -215,7 +221,8 @@
    `flex: 1` and not just `overflow: hidden`: a flex item's default is to size to its content, so without it
    the body would be as tall as the task happens to be and the halves below would be halves of that rather
    than of the dialog. */
-.modal-task .modal-body {
+.modal-task .modal-body,
+.modal-document .modal-body {
   flex: 1;
   overflow: hidden;
   display: flex;

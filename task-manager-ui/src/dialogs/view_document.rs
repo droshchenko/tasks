@@ -174,7 +174,10 @@ pub fn ViewDocumentDialog(
         }
     };
 
-    super::dialog_template_with_back(&title, content, on_back, Some("modal-xl"))
+    // The size a task is read at, not a column in the middle of the window: this dialog IS the task dialog
+    // for as long as the reader is on the document, and a width that changed under the back arrow would
+    // make the window jump on every click.
+    super::dialog_template_with_back(&title, content, on_back, Some("modal-document"))
 }
 
 /// What the header says: the document's path for a repository's file, and the id otherwise.
