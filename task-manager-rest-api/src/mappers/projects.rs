@@ -112,6 +112,7 @@ impl From<&ProjectDto> for ProjectModel {
             members: BTreeSet::new(),
             last_task_number: src.last_task_number,
             archive_days: src.archive_days,
+            archived_moment: src.archived_moment,
             // NULL is a project that has never connected a repository, which is every row written before
             // the column existed.
             github_connections: src
@@ -143,6 +144,7 @@ impl From<&ProjectModel> for ProjectDto {
             kinds: Vec::new(),
             last_task_number: src.last_task_number,
             archive_days: src.archive_days,
+            archived_moment: src.archived_moment,
             // Always written as a list, never as NULL: NULL is what an older build left behind, not
             // something this one produces. An empty list and NULL read the same way coming back.
             github_connections: Some(
@@ -198,7 +200,12 @@ pub fn project_to_response(
             .collect(),
         members: src.members.iter().cloned().collect(),
         tasks_amount: tasks_amount as i32,
-            archive_days: src.archive_days,
+        archive_days: src.archive_days,
+        // The flag travels even though one of this endpoint's two readers must hide it. `/api/projects/v1/list`
+        // feeds both the pickers, which leave archived projects out, and the setup table, which shows them
+        // under a toggle — so the server sends everything and each reader decides. Filtering here would mean
+        // a second endpoint or a refetch on every click of that toggle.
+        archived: src.is_archived(),
         column_template_id: src.column_template_id.clone(),
         // The NAME as well as the id, so the setup screen can say which template a project follows
         // without holding the whole template list to look it up. `None` covers both "follows none" and

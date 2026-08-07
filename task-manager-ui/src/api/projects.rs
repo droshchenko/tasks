@@ -115,6 +115,19 @@ pub async fn import_project(
     handle_http_response(authed("/api/projects/v1/import", HttpVerb::Post, request).await).await
 }
 
+/// Put a project away, or bring it back. Admin only on the far side.
+///
+/// An archived project still answers every other call here — including this one, which is how it comes
+/// back — so there is nothing to guard against on this side.
+pub async fn set_project_archived(project: &str, archived: bool) -> Result<(), RequestError> {
+    let request = SetProjectArchivedInputModel {
+        project: project.to_string(),
+        archived,
+    };
+
+    handle_http_empty(authed("/api/projects/v1/archived/set", HttpVerb::Post, request).await).await
+}
+
 /// Replaces the whole set — which is how the screen works, and means this side never has to diff.
 pub async fn set_members(project: &str, members: Vec<String>) -> Result<(), RequestError> {
     let request = SetProjectMembersInputModel {

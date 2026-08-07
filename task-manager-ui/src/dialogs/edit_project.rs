@@ -397,6 +397,7 @@ mod tests {
             members: Vec::new(),
             tasks_amount: 0,
             archive_days: None,
+            archived: false,
         }
     }
 

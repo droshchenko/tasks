@@ -152,7 +152,9 @@ pub fn RenderDocuments(selected: String) -> Element {
                             // nothing in the new one.
                             navigator().push(crate::AppRoute::Documents { selected: String::new() });
                         },
-                        for project in projects.iter() {
+                        // Archived boards are left out, except the one currently open — that one stays, or
+                        // the control would display the first project while the tree below showed another.
+                        for project in projects.iter().filter(|itm| !itm.archived || itm.prefix == selected_prefix) {
                             // Valued by PREFIX: this screen speaks prefixes to the api and puts one in every
                             // raw url, so carrying an id here would only be a translation waiting to be
                             // forgotten.
@@ -393,8 +395,21 @@ fn get_projects<'s>(
                         let remembered = crate::web::storage::get_last_project();
 
                         let initial = remembered
-                            .filter(|prefix| response.projects.iter().any(|itm| &itm.prefix == prefix))
-                            .or_else(|| response.projects.first().map(|itm| itm.prefix.clone()))
+                            .filter(|prefix| {
+                                response.projects.iter().any(|itm| &itm.prefix == prefix)
+                            })
+                            .or_else(|| {
+                                // A live board is preferred when nothing named one: a project somebody put
+                                // away should not be what a fresh browser opens on. An archived one is still
+                                // taken when every board is archived, since leaving the screen on nothing
+                                // would be worse — and the picker keeps an option for whatever is open.
+                                response
+                                    .projects
+                                    .iter()
+                                    .find(|itm| !itm.archived)
+                                    .or_else(|| response.projects.first())
+                                    .map(|itm| itm.prefix.clone())
+                            })
                             .unwrap_or_default();
 
                         // The project and the folders it was left open at, decided in one write before any row

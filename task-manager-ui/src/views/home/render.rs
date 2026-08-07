@@ -438,8 +438,25 @@ fn initial_project(
     remembered
         .and_then(|prefix| project_by_prefix(projects, &prefix))
         .map(|project| project.prefix.clone())
-        .or_else(|| projects.first().map(|itm| itm.prefix.clone()))
+        .or_else(|| first_to_open(projects))
         .unwrap_or_default()
+}
+
+/// The board to open when nothing named one — no handle in the box, nothing remembered, or what was
+/// remembered is gone.
+///
+/// **A live board is preferred, and an archived one is still taken when every board is archived.** Both
+/// halves matter. Landing a fresh browser on a project somebody deliberately put away is the one way
+/// archiving could fail to hide it; but refusing to pick at all would leave the screen on nothing while the
+/// render-time fallback below still drew the first project — the state and the control telling two stories,
+/// which is exactly what the `selected`-on-the-option comments warn about. Taking an archived board here is
+/// safe because the picker keeps an option for whatever is open.
+fn first_to_open(projects: &[ProjectResponse]) -> Option<String> {
+    projects
+        .iter()
+        .find(|itm| !itm.archived)
+        .or_else(|| projects.first())
+        .map(|itm| itm.prefix.clone())
 }
 
 /// One box, two ways of narrowing, decided by the shape of what is in it.
@@ -699,7 +716,13 @@ fn RenderHeader(
                     onchange: move |event| cs.write().select(event.value()),
                     // Valued by PREFIX, like every other project-shaped control in this client and like the
                     // api underneath it — there is no id on this side to carry instead.
-                    for project in projects.iter() {
+                    //
+                    // Archived boards are left out, which is the whole of what archiving does — except for
+                    // the one currently open, which stays. That exception is not politeness: by the comment
+                    // above, the control shows whichever option carries `selected`, so an open board with no
+                    // option would leave the dropdown displaying the FIRST project while the state held a
+                    // different one. A board reached by link stays visible in the control that named it.
+                    for project in projects.iter().filter(|itm| !itm.archived || itm.prefix == selected_prefix) {
                         option {
                             value: "{project.prefix}",
                             selected: project.prefix == selected_prefix,
@@ -1349,6 +1372,7 @@ mod tests {
             members: Vec::new(),
             tasks_amount: 0,
             archive_days: None,
+            archived: false,
         }
     }
 
@@ -1379,6 +1403,44 @@ mod tests {
         );
 
         assert!(project_by_prefix(&projects, "NOPE").is_none());
+    }
+
+    /// Nothing named a board, so one gets picked — and archiving is what decides which.
+    #[test]
+    fn the_board_picked_by_default_is_a_live_one() {
+        let mut put_away = project("AAA", &[]);
+        put_away.archived = true;
+
+        let projects = vec![put_away, project("BBB", &[])];
+
+        assert_eq!(
+            initial_project(&projects, "", None),
+            "BBB",
+            "an archived board sorting first must not become the one a fresh browser opens on"
+        );
+
+        // A remembered board still wins outright, archived or not: somebody chose it, and a board reached
+        // deliberately is exactly the case archiving is not meant to interfere with.
+        assert_eq!(
+            initial_project(&projects, "", Some("AAA".to_string())),
+            "AAA"
+        );
+
+        // And so does a handle in the box, which is what a link carrying one is for.
+        assert_eq!(initial_project(&projects, "AAA-42", None), "AAA");
+    }
+
+    /// The other half of the rule, and the reason it is not a plain filter: with every board archived there
+    /// is still a board to open, or the screen would sit on nothing while the picker drew a project.
+    #[test]
+    fn a_board_is_still_picked_when_every_one_is_archived() {
+        let mut first = project("AAA", &[]);
+        first.archived = true;
+        let mut second = project("BBB", &[]);
+        second.archived = true;
+
+        assert_eq!(initial_project(&[first, second], "", None), "AAA");
+        assert_eq!(initial_project(&[], "", None), "");
     }
 
     /// Which board a page load lands on. A handle in the URL beats the remembered board — the handle is what

@@ -125,6 +125,17 @@ pub struct ProjectModel {
     // seven days, which is what every project did before this was configurable — so a row that has never
     // been told otherwise keeps behaving exactly as it did.
     pub archive_days: Option<i32>,
+    // When this project was archived — put away, not deleted — and `None` for one that is not.
+    //
+    // Archiving takes a project out of every picker and out of NOTHING else. It still answers
+    // `get_project_by_prefix`, its tasks and documents still open by direct link, it still follows its
+    // templates, and it still holds its prefix against a new project taking it. That last one is the cost
+    // worth naming out loud: archiving does not free `RMS` for reuse, because if it did, the archived
+    // board's links would silently start landing on somebody else's.
+    //
+    // Not a second reading of `archive_days` above — that one is a finished TASK ageing off the board, and
+    // the two have nothing to do with each other.
+    pub archived_moment: Option<DateTimeAsMicroseconds>,
     // The GitHub repositories mirrored into this project's documents. Ordered as they were configured
     // and unique by `name`, which is enforced on the write path — the name is a folder, and two folders
     // with one name is a tree nobody can read.
@@ -177,6 +188,15 @@ impl ProjectModel {
     /// Whether this email may see the project. Admins bypass this entirely — they are not members.
     pub fn is_member(&self, email: &str) -> bool {
         self.members.contains(&email.trim().to_lowercase())
+    }
+
+    /// Whether this project has been put away.
+    ///
+    /// **Read the receiver.** `BoardInner::is_archived(&TaskModel)`, a few hundred lines away in the same
+    /// crate, is the finished-task window and answers an entirely different question. The two share a word
+    /// and nothing else.
+    pub fn is_archived(&self) -> bool {
+        self.archived_moment.is_some()
     }
 
     /// How long finished work stays on this board before it counts as archived.

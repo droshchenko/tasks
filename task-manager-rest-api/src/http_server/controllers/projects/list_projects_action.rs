@@ -13,7 +13,7 @@ use_my_http_server!();
     route: "/api/projects/v1/list",
     controller: "Projects",
     summary: "The projects I may see",
-    description: "Feeds the project dropdown on Home and the list in Projects setup. Membership decides what comes back; an admin sees every project without being a member of any. Someone who is a member of nothing gets an empty list rather than a 403 — the UI shows them a note to ask an admin.",
+    description: "Feeds the project dropdown on Home and the list in Projects setup. Membership decides what comes back; an admin sees every project without being a member of any. Someone who is a member of nothing gets an empty list rather than a 403 — the UI shows them a note to ask an admin. Archived projects come back too, carrying `archived: true`: this one list feeds both a dropdown that must hide them and a setup table that must show them under a toggle, so the flag travels and each reader decides.",
     result: [
         {status_code: 200, description: "The visible projects", model: "ProjectsResponse"},
         {status_code: 401, description: "Not authenticated"},

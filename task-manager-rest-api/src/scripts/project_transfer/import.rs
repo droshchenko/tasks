@@ -1065,6 +1065,7 @@ mod tests {
             members: std::collections::BTreeSet::new(),
             last_task_number: 40,
             archive_days: None,
+            archived_moment: None,
             github_connections: Vec::new(),
             created: DateTimeAsMicroseconds::new(0),
         }

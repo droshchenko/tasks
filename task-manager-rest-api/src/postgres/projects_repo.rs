@@ -108,6 +108,19 @@ pub struct ProjectDto {
     #[sql_type("jsonb")]
     #[json]
     pub github_connections: Option<Vec<ProjectGithubConnectionJsonModel>>,
+    // When the project was archived — put away, not deleted; NULL for one that is not.
+    //
+    // A moment rather than a flag, for the same reason `deleted_moment` on a task is one: "archived" and
+    // "archived when" are one fact, and two columns for it can disagree. Nothing reads the moment today,
+    // and that is fine — a flag can never become a moment afterwards, whereas a moment is already both.
+    //
+    // Nullable, and it has to be: `TableSchema` can add a column to a live table but cannot tighten NULL
+    // to NOT NULL, so this is the only shape that deploys without a backfill — and NULL is exactly what
+    // every row written before this column means anyway.
+    //
+    // Not to be confused with `archive_days` above, which is about a finished TASK ageing off the board.
+    #[sql_type("timestamp")]
+    pub archived_moment: Option<DateTimeAsMicroseconds>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
 }

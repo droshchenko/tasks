@@ -72,6 +72,8 @@ fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
         last_task_number: 0,
         // No window of its own, so the tests measure the seven-day default.
         archive_days: None,
+        // Live. The archiving tests below put one away by hand — everything else wants a live project.
+        archived_moment: None,
         github_connections: Vec::new(),
         created: DateTimeAsMicroseconds::new(0),
     }
@@ -288,6 +290,55 @@ fn a_prefix_only_in_history_is_free_to_take() {
     assert!(!read.is_prefix_free("TM", None));
     // A project renaming itself does not collide with its own current prefix.
     assert!(read.is_prefix_free("TM", Some("a")));
+}
+
+/// Archiving a project takes it out of the pickers and out of NOTHING the board does.
+///
+/// Every assertion here is a link that must keep working, written down so a later filter added in the
+/// wrong place fails a test instead of silently 404-ing somebody's bookmark. The board deliberately has no
+/// opinion about archiving at all: it is the readers — the three dropdowns and the MCP listing — that
+/// leave an archived project out, and each of them does it at the point of display.
+#[test]
+fn an_archived_project_is_hidden_by_its_readers_and_by_nothing_on_the_board() {
+    let board = board();
+
+    let mut put_away = project("a", "TM", &["OLD"]);
+    put_away.archived_moment = Some(DateTimeAsMicroseconds::new(0));
+    put_away.members.insert("yuri@mxtm.ai".to_string());
+    board.upsert_project(put_away);
+
+    let read = board.read();
+
+    let found = read.get_project_by_prefix("TM").expect("still resolves");
+    assert!(found.is_archived());
+    // The direct link by internal id, which is what every per-request auth gate goes through.
+    assert!(read.get_project("a").is_some());
+    // And the old handle: archiving must not cost `OLD-42` its answer.
+    assert_eq!(read.projects_ever_holding_prefix("OLD").len(), 1);
+
+    // THE PREFIX IS STILL HELD. If archiving freed it, a new project could take `TM`, and every link into
+    // the archived board would quietly start landing on somebody else's.
+    assert!(!read.is_prefix_free("TM", None));
+
+    // Membership is unchanged, so the list endpoint keeps returning it — carrying `archived: true` for the
+    // readers to act on. Hiding it here would take it off the setup screen too, which is the one place it
+    // can be brought back from.
+    assert_eq!(read.projects_visible_to("yuri@mxtm.ai", false).len(), 1);
+    assert_eq!(read.projects_visible_to("nobody@mxtm.ai", true).len(), 1);
+
+    // It still follows its template, so the template still cannot be deleted out from under it — a board a
+    // link still opens must not lose its columns.
+    assert_eq!(read.count_projects_using_template(TEMPLATE_ID), 1);
+}
+
+/// A live project answers `is_archived` with false whatever else is true of it — the pairing test for the
+/// one above, so neither direction can rot on its own.
+#[test]
+fn a_project_that_was_never_put_away_is_not_archived() {
+    let board = board();
+    board.upsert_project(project("a", "TM", &[]));
+
+    assert!(!board.read().get_project("a").unwrap().is_archived());
 }
 
 #[test]
@@ -876,7 +927,10 @@ fn a_deleted_goal_disappears_and_its_tasks_do_not() {
 
     assert!(read.goals_of_project("p").is_empty());
     assert!(read.get_goal("p", 1).is_none());
-    assert!(read.get_goal_including_deleted("p", 1).is_some(), "still findable by id");
+    assert!(
+        read.get_goal_including_deleted("p", 1).is_some(),
+        "still findable by id"
+    );
 
     assert!(
         read.effective_goal(&orphan).is_none(),

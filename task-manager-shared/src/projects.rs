@@ -95,6 +95,17 @@ pub struct ProjectResponse {
     // How many days finished work stays on the board here. Absent means the default of seven, which is what
     // every project did before this was configurable — so "not set" is a real answer and not a missing one.
     pub archive_days: Option<i32>,
+    // Whether the project has been archived — put away, not deleted. An archived project is left out of
+    // every picker, and out of nothing else: it still resolves by prefix, its tasks and its documents
+    // still open by direct link, and it still holds its prefix against a new project taking it.
+    //
+    // Nothing to do with `archive_days` two lines up, which is about a finished TASK ageing off the board.
+    // Two different subjects wearing one word — these comments are the only thing keeping them apart.
+    //
+    // On the wire this is a bool and not the moment it was archived at, because nothing on this side has
+    // ever wanted to show the moment. The moment is what gets stored.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
@@ -165,4 +176,15 @@ pub struct SetProjectMembersInputModel {
     pub project: String,
     #[http_body(name: "members", description: "Emails of every user who may see this project")]
     pub members: Vec<String>,
+}
+
+// Putting a project away, and bringing it back. Its own endpoint rather than a field on
+// `UpdateProjectInputModel`: that one is the setup form's Save — a name, a description and a prefix
+// written together — and archiving is a different act at a different moment, pressed from a row.
+#[derive(MyHttpInput)]
+pub struct SetProjectArchivedInputModel {
+    #[http_body(name: "project", description: "Which project, by prefix — RMS")]
+    pub project: String,
+    #[http_body(name: "archived", description: "True to archive it, false to bring it back")]
+    pub archived: bool,
 }

@@ -76,6 +76,7 @@ The unit of everything. A task cannot exist outside one.
 | `columns` | Ordered. See below. |
 | `kinds` | See below. |
 | `members` | Users with access. Edited here, from the project's side. |
+| `archived_moment` | When the project was put away, or absent for one that is not. See **Archiving a project is a flag too**. |
 
 **Two projects may not hold the same prefix at the same time** — the second is refused. A prefix is
 renameable, and one that has been renamed away from is free for another project to take. Every
@@ -93,8 +94,10 @@ another project takes `RMS` over.
 For the same reason **`depends_on` holds task numbers, not id strings** — a rename would otherwise
 break every dependency in the project at once.
 
-Deleting a project is not implemented — see `TODO.md`, including why prefix history does not
-protect against it.
+Deleting a project is not implemented, and is not going to be — prefix history does not protect
+against it, and a board's tasks, goals, comments and documents all hang off it. What exists instead
+is **archiving**: a project is put away rather than removed. See **Archiving a project is a flag
+too** for exactly what that hides and what it deliberately does not.
 
 ### Columns
 
@@ -855,6 +858,8 @@ the result rather than the intent: a **template id** is taken only if a template
 instance, since pointing a project at one that is not here would empty its board rather than configure it;
 and the **prefix** is taken only if it is free, since two projects cannot share one and the common case for
 this feature is copying a board on the instance the original still lives on. Either one skipped is reported.
+Membership is not in the file at all, and neither is whether the source project was archived: both are facts
+about a board on *this* instance, and a file must not be able to hide the project it was poured into.
 
 A status that survives into a project whose template has no such column is **kept as it is** and reads as
 Todo, exactly as it would have here — which is what lets pointing the project at the right template
@@ -1042,6 +1047,48 @@ nothing to record about work that was never real. A goal can be deleted whether 
 Both undo cleanly: `deleted: false` on `tasks_update` or `goals_update`. Deleting twice does not move the
 moment.
 
+## Archiving a project is a flag too
+
+A project carries an `archived_moment`, shaped for the same reason a task's `deleted_moment` is: "archived"
+and "archived when" are one fact. Nothing reads the moment today, and it is still a moment — a bool can never
+become one afterwards, whereas a moment is already both.
+
+**Archiving takes a project out of the pickers and out of nothing else.** It is not a deletion with a nicer
+name and it is not a freeze: an archived board still resolves by prefix, still serves its tasks, goals,
+comments and documents, still follows its templates, still pushes over the WebSocket to anybody watching it,
+and still accepts writes. Somebody with the link is not meant to notice.
+
+So the split is: `get_project`, `get_project_by_prefix`, `projects_ever_holding_prefix`,
+`resolve_project_by_prefix`, `require_project_by_prefix`, `projects_visible_to` and the template follower
+counts all **keep** an archived project. Only the display forgets it — the three project dropdowns on Home,
+Goals and Documents, and the unnamed branch of `projects_list`.
+
+Two of those are worth reading closely.
+
+* **The dropdowns hide archived projects except the one currently open.** Not politeness: HTML picks a
+  `select`'s shown item from the option carrying `selected`, so an open board with no option at all would
+  leave the control displaying the *first* project while the screen below showed a different one. A board
+  reached by link stays visible in the control that names it.
+* **`projects_list` filters only when nothing was named.** Listing is what an agent is told exists, and a
+  board somebody put away is not work to pick up; but `projects_list(project: "RMS")` still returns it, so an
+  id from an older conversation keeps resolving. Same rule as a direct link in the browser.
+
+`projects_visible_to` deliberately does not filter, and that is load-bearing: `/api/projects/v1/list` feeds
+both a dropdown that must hide archived projects and the setup table that must show them under a toggle. The
+server sends everything with `archived` on it and each reader decides. Filtering server-side would need a
+second endpoint, or a refetch on every click of that toggle.
+
+**The cost, stated out loud: an archived project keeps holding its prefix.** `is_prefix_free` still refuses
+`RMS` to a new project, so archiving does not recycle a prefix. It cannot: if it did, a new project could
+take `RMS` over, and every link into the archived board would quietly start landing on somebody else's — the
+one failure mode the whole prefix-history arrangement exists to prevent. Freeing a prefix by archiving is a
+much larger feature and is not this one.
+
+Archiving is admin-only, lives at `/api/projects/v1/archived/set`, and has no MCP tool — the MCP surface has
+no authorization at all, and this is configuration. It undoes cleanly with `archived: false` from the same
+button, and archiving twice does not move the moment. Import does not carry it: a project's archived state
+belongs to this instance's board, like membership, so pouring a file into a project cannot put it away.
+
 ## Who is who
 
 **Authentication is Google OAuth.** `client_id`, `client_secret` and `redirect_uri` come from the
@@ -1156,8 +1203,8 @@ next build.
 
 | Area | |
 |---|---|
-| **Home** (root URL) | The board. A project dropdown on top — only projects you may see; an admin sees all — and the choice is remembered in `localStorage`. Filters by task type and by assignee, plus a search box: free text narrows the board in place, while a task id (`RMS-42`) is looked up on the server and opens as a card, because the answer may be on another board or closed longer than seven days ago and therefore not drawn at all. **Read-only:** nothing is edited with a mouse, anywhere. |
-| **Projects setup** | Every project as one row — prefix, name, description, task count, which column template it follows, its task types, how many members. Editing is by dialog: **Edit** for what a project *is* (name, description, prefix, and which column template), then **Task types**, **Members**, and **GitHub** — which is where a repository is connected, and the only place it can be: a connection is configuration, so no MCP tool creates one. Admin only. |
+| **Home** (root URL) | The board. A project dropdown on top — only projects you may see, and not archived ones unless the archived board is the one currently open; an admin sees all — and the choice is remembered in `localStorage`. Filters by task type and by assignee, plus a search box: free text narrows the board in place, while a task id (`RMS-42`) is looked up on the server and opens as a card, because the answer may be on another board or closed longer than seven days ago and therefore not drawn at all. **Read-only:** nothing is edited with a mouse, anywhere. |
+| **Projects setup** | Every project as one row — prefix, name, description, task count, which column template it follows, its task types, how many members. Editing is by dialog: **Edit** for what a project *is* (name, description, prefix, and which column template), then **Task types**, **Members**, and **GitHub** — which is where a repository is connected, and the only place it can be: a connection is configuration, so no MCP tool creates one. **Archive** puts a project away and is the row action that is not a dialog — nothing is destroyed and the same button brings it back, so a confirm step would only teach people to click through confirms. Archived projects are hidden here too until **Show archived** is pressed, and then carry an `archived` label beside their prefix. This screen is the only place one can be seen and brought back. Admin only. |
 | **Users** | The roster. Admin only. |
 | **Settings** | A menu of areas on the left, the chosen one on the right, with the area in the route (`/settings/column-templates`) so each is linkable and Back works between them. **Column templates** is where a board's columns are configured. **Diagnostics** is read-only: which `client_id` was picked up, which `redirect_uri` is expected, how many admins the settings list holds — the first thing worth reading when a sign-in fails. |
 

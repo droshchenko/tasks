@@ -15,8 +15,12 @@ use crate::dialogs::DialogState;
 #[component]
 pub fn RenderProjectsSetup() -> Element {
     let data = use_signal(DataState::<Vec<ProjectResponse>>::default);
+    // Client state, not a second request: the list already arrives carrying `archived` on every project, so
+    // the toggle filters what is already in hand and flips without a round trip. It also means an archive
+    // press and this toggle cannot disagree — they read the same `Vec`.
+    let show_archived = use_signal(|| false);
 
-    render_table(data)
+    render_table(data, show_archived)
 }
 
 /// Opening the editor and reloading afterwards are the same two lines everywhere, so they live in one
@@ -31,7 +35,10 @@ fn open(
     crate::dialogs::open(make(EventHandler::new(move |_| data.write().reset())));
 }
 
-fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
+fn render_table(
+    data: Signal<DataState<Vec<ProjectResponse>>>,
+    show_archived: Signal<bool>,
+) -> Element {
     let data_ra = data.read();
 
     let projects = match get_projects(data, &data_ra) {
@@ -39,10 +46,31 @@ fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
         Err(element) => return element,
     };
 
+    let show = *show_archived.read();
+
+    // Narrowed before the rsx rather than inside the loop, so the "nothing here" note below reads the list
+    // that is actually drawn — filtering in the loop would leave a table with a header and no rows.
+    let visible: Vec<&ProjectResponse> = projects
+        .iter()
+        .filter(|itm| show || !itm.archived)
+        .collect();
+
     rsx! {
         div { class: "page-header",
             h1 { class: "page-title", "Projects setup" }
             div { class: "page-actions",
+                button {
+                    class: "btn",
+                    title: "Archived projects are hidden from every project picker. This screen is the one place they can be seen and brought back",
+                    // The label carries the state rather than a pressed style: there is no `.btn.active` rule
+                    // in the stylesheet, and the source/rendered switch on Documents already reads this way.
+                    onclick: move |_| {
+                        let mut show_archived = show_archived;
+                        let now = *show_archived.read();
+                        show_archived.set(!now);
+                    },
+                    if show { "Hide archived" } else { "Show archived" }
+                }
                 button {
                     class: "btn btn-primary",
                     onclick: move |_| {
@@ -53,8 +81,14 @@ fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
             }
         }
 
-        if projects.is_empty() {
-            div { class: "empty-note", "No projects yet. Create the first one." }
+        if visible.is_empty() {
+            // Two different facts, and telling them apart is the point: a first run with nothing in it, and a
+            // board full of projects that have all been put away. The second one has a way out on screen.
+            if projects.is_empty() {
+                div { class: "empty-note", "No projects yet. Create the first one." }
+            } else {
+                div { class: "empty-note", "Every project here is archived. Press Show archived to see them." }
+            }
         } else {
             div { class: "table-responsive",
                 table { class: "table",
@@ -67,14 +101,14 @@ fn render_table(data: Signal<DataState<Vec<ProjectResponse>>>) -> Element {
                             th { "Column template" }
                             th { "Task-type template" }
                             th { class: "num", "Members" }
-                            th { style: "width: 280px" }
+                            th { style: "width: 340px" }
                         }
                     }
                     tbody {
-                        for project in projects.iter() {
+                        for project in visible.iter() {
                             // Keyed by prefix: it is unique, it is what this side knows a project by, and it
                             // is stable for as long as the row is — a rename re-reads the whole list anyway.
-                            RenderRow { key: "{project.prefix}", project: project.clone(), data }
+                            RenderRow { key: "{project.prefix}", project: (*project).clone(), data }
                         }
                     }
                 }
@@ -108,7 +142,19 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
 
     rsx! {
         tr {
-            td { class: "mono", "{project.prefix}" }
+            td { class: "mono",
+                "{project.prefix}"
+                // Only ever visible with the toggle on, since an archived row is not drawn otherwise — so
+                // it is the answer to "which of these did I put away", not a decoration on a normal table.
+                if project.archived {
+                    span {
+                        class: "tag",
+                        style: "margin-left: 6px",
+                        title: "Put away: hidden from every project picker, and still reachable by link",
+                        "archived"
+                    }
+                }
+            }
             td { "{project.name}" }
             td { class: "muted", "{project.description}" }
             td { class: "num", "{project.tasks_amount}" }
@@ -212,6 +258,40 @@ fn RenderRow(project: ProjectResponse, data: Signal<DataState<Vec<ProjectRespons
                             }
                         },
                         "Import"
+                    }
+                    // No confirm step, and that is the point of a soft delete: nothing is destroyed, the
+                    // same button puts it back, and a dialog in front of a reversible act only teaches
+                    // people to click through dialogs.
+                    button {
+                        class: if project.archived { "btn btn-sm" } else { "btn btn-sm btn-danger" },
+                        title: if project.archived {
+                            "Bring this project back into the pickers"
+                        } else {
+                            "Put this project away. Nothing is deleted: its links keep working, its tasks and documents stay, and it keeps holding its prefix"
+                        },
+                        onclick: {
+                            let prefix = project.prefix.clone();
+                            let archived = project.archived;
+
+                            move |_| {
+                                let prefix = prefix.clone();
+                                let mut data = data;
+
+                                spawn(async move {
+                                    match crate::api::set_project_archived(&prefix, !archived).await {
+                                        // Re-read rather than patch the row in place: the server is the only
+                                        // thing that says what was actually stored, which is the same rule
+                                        // every dialog on this screen already follows.
+                                        Ok(()) => data.write().reset(),
+                                        Err(err) => crate::dialogs::open(DialogState::Message {
+                                            title: "Could not change that".to_string(),
+                                            text: err.message,
+                                        }),
+                                    }
+                                });
+                            }
+                        },
+                        if project.archived { "Unarchive" } else { "Archive" }
                     }
                 }
             }

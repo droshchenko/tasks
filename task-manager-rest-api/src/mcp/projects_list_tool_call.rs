@@ -38,7 +38,9 @@ impl ToolDefinition for ProjectsListHandler {
 that reveals which projects exist, and it returns the four things every other call needs: the \
 project prefixes that name a board, the column ids a task's status must be one of, the kind ids and \
 what each one means on this particular board, and the people who may be assigned work on it. \
-Everything after this is named by an id that came from here.";
+Everything after this is named by an id that came from here. Projects that have been archived are \
+not listed — a board somebody put away is not work to pick up — but naming one by its prefix still \
+returns it, so an id from an older conversation keeps resolving.";
 }
 
 #[async_trait::async_trait]
@@ -59,6 +61,12 @@ impl McpToolCall<ProjectsListInput, ProjectsListResponse> for ProjectsListHandle
             None => board
                 .projects()
                 .iter()
+                // Archived projects are left out of the LISTING and only of the listing, which is the same
+                // deal the browser's dropdown gets: this is what an agent is told exists, and a board
+                // somebody deliberately put away is not work to pick up. The named branch above does not
+                // filter, so `RMS` from an older conversation still resolves and still answers — exactly
+                // like a direct link in the browser.
+                .filter(|project| !project.is_archived())
                 .map(|project| ProjectView::from_model(project, &board))
                 .collect(),
         };

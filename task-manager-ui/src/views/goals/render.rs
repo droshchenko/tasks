@@ -246,7 +246,18 @@ fn get_projects(
                                     .iter()
                                     .any(|itm| itm.prefix.eq_ignore_ascii_case(prefix))
                             })
-                            .or_else(|| response.projects.first().map(|itm| itm.prefix.clone()))
+                            .or_else(|| {
+                                // A live board is preferred when nothing named one: a project somebody put
+                                // away should not be what a fresh browser opens on. An archived one is still
+                                // taken when every board is archived, since leaving the screen on nothing
+                                // would be worse — and the picker keeps an option for whatever is open.
+                                response
+                                    .projects
+                                    .iter()
+                                    .find(|itm| !itm.archived)
+                                    .or_else(|| response.projects.first())
+                                    .map(|itm| itm.prefix.clone())
+                            })
                             .unwrap_or_default();
 
                         let mut write = cs.write();
@@ -356,7 +367,10 @@ fn RenderHeader(projects: Vec<ProjectResponse>, cs: Signal<ComponentState>) -> E
                 // restored into the state and not shown in the control.
                 select {
                     onchange: move |event| cs.write().select(event.value()),
-                    for project in projects.iter() {
+                    // Archived boards are left out, except the one currently open — which by the comment
+                    // above is exactly the case that would otherwise display the wrong project, since the
+                    // control follows `selected` and an open board with no option has none to follow.
+                    for project in projects.iter().filter(|itm| !itm.archived || itm.prefix == selected_prefix) {
                         option {
                             value: "{project.prefix}",
                             selected: project.prefix == selected_prefix,

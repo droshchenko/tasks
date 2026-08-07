@@ -29,6 +29,7 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
     http_server_builder.register_post_action(projects::SetColumnTemplateAction::new(app.clone()));
     http_server_builder.register_post_action(projects::SetKindTemplateAction::new(app.clone()));
     http_server_builder.register_post_action(projects::SetMembersAction::new(app.clone()));
+    http_server_builder.register_post_action(projects::SetArchivedAction::new(app.clone()));
     // Moving a whole board between projects. The export is a GET so it can be an ordinary download link —
     // the session is a cookie, which a navigation carries — and it streams the archive off disk rather than
     // building it in memory. The import is the same archive back the other way, as a raw body.

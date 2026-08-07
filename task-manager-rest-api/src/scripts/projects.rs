@@ -105,6 +105,8 @@ pub async fn create_project(
         // No window of its own: `None` is the seven-day default, which is what a project setting up its
         // board has no opinion about yet.
         archive_days: None,
+        // Live. Archiving is something done to a project later, from the setup screen.
+        archived_moment: None,
         // Nothing connected. A repository is attached afterwards, from the setup screen.
         github_connections: Vec::new(),
         created: DateTimeAsMicroseconds::now(),
@@ -258,6 +260,39 @@ pub(super) fn parse_kind_color(color: &str) -> Result<KindColor, String> {
                     .join(", ")
             )
         })
+}
+
+/// Put a project away, or bring it back.
+///
+/// Its own function rather than a field on `update_project`, because it is its own act — and because
+/// `update_project` is the setup form's Save, which would then archive a project as a side effect of
+/// renaming it.
+///
+/// **Nothing else changes.** The project keeps its prefix, keeps answering `get_project_by_prefix`, keeps
+/// serving its tasks and its documents, keeps following its templates, and keeps counting against those
+/// templates' delete guard. Archiving takes a project out of the pickers and out of nothing else — which
+/// is the whole of what a soft delete is here, and why there is no hard one.
+///
+/// Archiving an already archived project leaves the original moment alone: when it was put away is the
+/// fact worth keeping, and pressing the same button twice is not a new one.
+pub async fn set_project_archived(
+    app: &AppContext,
+    project_id: &str,
+    archived: bool,
+) -> Result<(), String> {
+    let board = app.board.read();
+    let mut project = load(&board, project_id)?;
+
+    if archived {
+        if project.archived_moment.is_none() {
+            project.archived_moment = Some(DateTimeAsMicroseconds::now());
+        }
+    } else {
+        project.archived_moment = None;
+    }
+
+    save(app, project).await;
+    Ok(())
 }
 
 /// Replace a project's membership wholesale.
