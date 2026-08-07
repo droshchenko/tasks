@@ -6,6 +6,7 @@ use task_manager_shared::documents::UploadArchiveResponse;
 use task_manager_shared::kind_templates::KindTemplateResponse;
 use task_manager_shared::goals::GoalResponse;
 use task_manager_shared::project_transfer::ImportProjectResponse;
+use task_manager_shared::templates_transfer::ImportTemplatesResponse;
 use task_manager_shared::projects::ProjectResponse;
 use task_manager_shared::tasks::FindTaskResponse;
 
@@ -27,6 +28,8 @@ mod github_key;
 pub use github_key::*;
 mod import_project;
 pub use import_project::*;
+mod import_templates;
+pub use import_templates::*;
 mod sync_github;
 pub use sync_github::*;
 mod land_task;
@@ -104,6 +107,11 @@ pub enum DialogState {
     ImportProject {
         project: String,
         project_name: String,
+        on_imported: EventHandler<()>,
+    },
+    /// Apply a templates YAML file — the other half of the Export link beside it on Settings. Carries
+    /// nothing: templates are instance-wide, so there is nothing to scope it to.
+    ImportTemplates {
         on_imported: EventHandler<()>,
     },
     /// The GitHub repositories connected to one project, listed and edited in one place.
@@ -271,6 +279,29 @@ pub fn RenderDialog() -> Element {
                                 open(DialogState::Message {
                                     title: "Imported".to_string(),
                                     text: import_report(&response),
+                                });
+                            }
+                            Err(err) => submit_failed(err.message),
+                        }
+                    });
+                },
+            }
+        },
+        DialogState::ImportTemplates { on_imported } => rsx! {
+            ImportTemplatesDialog {
+                on_submit: move |bytes: Vec<u8>| {
+                    begin_submit();
+                    spawn(async move {
+                        match crate::api::import_templates(bytes).await {
+                            Ok(response) => {
+                                on_imported.call(());
+
+                                // Always a report, never a silent close — same reason the project import
+                                // gives one: what changed is configuration every board follows, and the
+                                // counts are the only place "it replaced two templates in use" is said.
+                                open(DialogState::Message {
+                                    title: "Templates imported".to_string(),
+                                    text: templates_report(&response),
                                 });
                             }
                             Err(err) => submit_failed(err.message),
@@ -609,6 +640,74 @@ fn import_report(response: &ImportProjectResponse) -> String {
 
     // The notes first: they are about what landed, and they are the half somebody has to act on — a column
     // this project has no template for is a setting to fix, not an entry to re-send.
+    for note in response.notes.iter() {
+        text.push_str(&format!(" {note}."));
+    }
+
+    if !response.skipped.is_empty() {
+        let reasons: Vec<String> = response
+            .skipped
+            .iter()
+            .take(REASONS_SHOWN)
+            .map(|itm| format!("{} — {}", itm.name, itm.reason))
+            .collect();
+
+        let rest = response.skipped.len().saturating_sub(reasons.len());
+
+        let tail = if rest > 0 {
+            format!("; and {rest} more")
+        } else {
+            String::new()
+        };
+
+        text.push_str(&format!(
+            " {} skipped: {}{tail}.",
+            response.skipped.len(),
+            reasons.join("; ")
+        ));
+    }
+
+    text
+}
+
+/// What to tell the reader after a templates import.
+///
+/// **Created and replaced are said apart**, because they are not the same event: creating a template
+/// affects nothing, where replacing one changes every project that follows it. The `notes` that follow say
+/// how many projects that was, per template — which is the sentence somebody needs before they go looking
+/// at a board that suddenly has different columns.
+fn templates_report(response: &ImportTemplatesResponse) -> String {
+    const REASONS_SHOWN: usize = 5;
+
+    let mut parts: Vec<String> = Vec::new();
+
+    for (created, replaced, noun) in [
+        (
+            response.column_templates_created,
+            response.column_templates_replaced,
+            "column template",
+        ),
+        (
+            response.kind_templates_created,
+            response.kind_templates_replaced,
+            "task-type template",
+        ),
+    ] {
+        if created > 0 {
+            parts.push(format!("{} created", count_of(created as usize, noun)));
+        }
+
+        if replaced > 0 {
+            parts.push(format!("{} replaced", count_of(replaced as usize, noun)));
+        }
+    }
+
+    let mut text = if parts.is_empty() {
+        "Nothing was applied.".to_string()
+    } else {
+        format!("{}.", parts.join(", "))
+    };
+
     for note in response.notes.iter() {
         text.push_str(&format!(" {note}."));
     }

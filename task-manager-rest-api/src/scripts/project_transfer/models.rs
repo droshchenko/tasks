@@ -1,6 +1,9 @@
-use rust_extensions::base64::{FromBase64, IntoBase64};
-use rust_extensions::date_time::DateTimeAsMicroseconds;
 use serde::{Deserialize, Serialize};
+
+// Prose and moments are spelled the same way in both of this product's transfer formats — see the module
+// for why that is deliberate. Re-exported rather than imported so every `use super::models::*;` in this
+// folder keeps reaching them under the names it already uses.
+pub use crate::scripts::transfer_encoding::{decode_moment, decode_text, encode_moment, encode_text};
 
 /// What the file says it is, written into `project.yaml` and checked on the way back in.
 ///
@@ -20,41 +23,6 @@ pub const GOALS_FILE: &str = "goals.yaml";
 pub const TASKS_FILE: &str = "tasks.yaml";
 pub const COMMENTS_FILE: &str = "comments.yaml";
 pub const DOCUMENTS_FOLDER: &str = "documents/";
-
-/// Prose, carried as base64.
-///
-/// **Every field a person wrote goes through this, and nothing else does.** A task's text is Markdown written
-/// by a person or an agent: it holds newlines, colons, leading dashes, `#`, quotes and tabs — every character
-/// YAML gives a meaning to. Encoding it means the file cannot be mis-parsed by a reader with a different idea
-/// of block scalars, and cannot be silently re-indented by a hand edit. Ids, statuses, labels, emails, urls
-/// and timestamps stay legible: they are vocabulary, not prose, and none of them can carry a newline.
-///
-/// The `_base64` suffix on every such field is the other half — the file says what it is doing.
-pub fn encode_text(src: &str) -> String {
-    src.as_bytes().into_base64()
-}
-
-/// The other direction. A field that is not valid base64 is a corrupt file rather than an empty string, so
-/// this says so instead of guessing.
-pub fn decode_text(src: &str, what: &str) -> Result<String, String> {
-    let bytes = src
-        .from_base64()
-        .map_err(|err| format!("{what} is not valid base64: {err}"))?;
-
-    String::from_utf8(bytes).map_err(|_| format!("{what} did not decode as UTF-8"))
-}
-
-/// A moment on the wire: RFC 3339 in UTC, fixed to microseconds — `2026-08-06T09:00:00.000000Z`.
-///
-/// `to_rfc3339_utc` rather than `to_rfc3339` because the width is fixed, which makes the file sort the way it
-/// reads. It is parsed back by `DateTimeAsMicroseconds::from_str`, which accepts exactly this spelling.
-pub fn encode_moment(src: DateTimeAsMicroseconds) -> String {
-    src.to_rfc3339_utc()
-}
-
-pub fn decode_moment(src: &str, what: &str) -> Result<DateTimeAsMicroseconds, String> {
-    DateTimeAsMicroseconds::from_str(src).ok_or_else(|| format!("{what} is not a date: '{src}'"))
-}
 
 /// `project.yaml` — what was exported, and the settings of the board it came from.
 ///

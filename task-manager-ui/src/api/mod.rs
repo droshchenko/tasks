@@ -7,6 +7,7 @@ mod kind_templates;
 mod projects;
 mod system;
 mod tasks;
+mod templates_transfer;
 mod users;
 
 pub use auth::*;
@@ -18,6 +19,7 @@ pub use kind_templates::*;
 pub use projects::*;
 pub use system::*;
 pub use tasks::*;
+pub use templates_transfer::*;
 pub use users::*;
 
 use flurl::{FlUrl, FlUrlError, FlUrlResponse, HttpVerb};

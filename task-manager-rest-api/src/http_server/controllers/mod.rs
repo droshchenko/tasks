@@ -7,4 +7,5 @@ pub mod kind_templates;
 pub mod projects;
 pub mod system;
 pub mod tasks;
+pub mod templates;
 pub mod users;

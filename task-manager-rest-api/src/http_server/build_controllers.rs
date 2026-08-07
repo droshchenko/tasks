@@ -12,7 +12,7 @@ use crate::app::AppContext;
 pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpServerBuilder) {
     use super::controllers::{
         auth, column_templates, documents, github, goals, kind_templates, projects, system, tasks,
-        users,
+        templates, users,
     };
 
     http_server_builder.register_get_action(system::PingAction::new(app.clone()));
@@ -48,6 +48,12 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
         .register_post_action(kind_templates::SaveKindTemplateAction::new(app.clone()));
     http_server_builder
         .register_post_action(kind_templates::DeleteKindTemplateAction::new(app.clone()));
+
+    // Both kinds of template in one file, because a board needs both and they are configured together.
+    // The export is a GET so it can be a download link; the import takes the YAML as a raw body, so what
+    // the reader picked is what the server parses.
+    http_server_builder.register_get_action(templates::ExportTemplatesAction::new(app.clone()));
+    http_server_builder.register_post_action(templates::ImportTemplatesAction::new(app.clone()));
 
     // Reads only, like everything else the browser calls. Documents are written through /mcp, and the trash
     // is not exposed here at all — it is not a place a person browses.

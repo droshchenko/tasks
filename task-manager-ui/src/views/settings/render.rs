@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::AppRoute;
+use crate::dialogs::DialogState;
 
 /// Where a bare `/settings` lands.
 const DEFAULT_SECTION: &str = SECTION_COLUMN_TEMPLATES;
@@ -20,9 +21,38 @@ pub fn RenderSettings() -> Element {
         _ => DEFAULT_SECTION.to_string(),
     };
 
+    // Bumped by an import, and the panels are keyed on it. A panel owns its own `DataState` and loads on
+    // mount, so there is nothing here to reset — changing the key remounts it, which re-reads. That is why
+    // this is a number rather than a signal handed down: the panels stay unaware they can be refreshed.
+    let mut revision = use_signal(|| 0usize);
+    let revision_now = *revision.read();
+
     rsx! {
         div { class: "page-header",
             h1 { class: "page-title", "Settings" }
+            div { class: "page-actions",
+                // A LINK rather than a button — a download is a navigation, and the session is a cookie
+                // the browser attaches to one. Same reason the project export is a link.
+                a {
+                    class: "btn btn-sm",
+                    title: "Download every column and task-type template as one YAML file",
+                    href: "{task_manager_shared::templates_transfer::export_templates_url()}",
+                    download: "",
+                    "Export templates"
+                }
+                button {
+                    class: "btn btn-sm",
+                    title: "Apply a templates YAML file to this instance",
+                    onclick: move |_| {
+                        crate::dialogs::open(DialogState::ImportTemplates {
+                            on_imported: EventHandler::new(move |_| {
+                                revision.set(revision_now + 1);
+                            }),
+                        });
+                    },
+                    "Import templates"
+                }
+            }
         }
 
         div { class: "settings-layout",
@@ -46,9 +76,9 @@ pub fn RenderSettings() -> Element {
 
             div { class: "settings-content",
                 if section == SECTION_COLUMN_TEMPLATES {
-                    super::ColumnTemplatesPanel {}
+                    super::ColumnTemplatesPanel { key: "{revision_now}" }
                 } else if section == SECTION_KIND_TEMPLATES {
-                    super::KindTemplatesPanel {}
+                    super::KindTemplatesPanel { key: "{revision_now}" }
                 } else if section == SECTION_DIAGNOSTICS {
                     super::DiagnosticsPanel {}
                 } else {

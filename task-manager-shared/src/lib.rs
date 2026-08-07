@@ -29,5 +29,6 @@ pub mod subtasks;
 pub mod system;
 pub mod task_title;
 pub mod tasks;
+pub mod templates_transfer;
 pub mod users;
 pub mod ws;

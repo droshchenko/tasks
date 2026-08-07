@@ -888,6 +888,62 @@ the models are built directly and written through the repos, exactly as the star
 
 Export needs membership of the board; import is admin only, like the rest of the setup screen it sits on.
 
+### The templates move separately
+
+A project export carries the **id** of the templates it follows, not the templates themselves — so pouring
+a board onto a fresh instance leaves it pointing at configuration that is not there, which is exactly what
+the import reports. **Export templates** / **Import templates** on the Settings page are the other half of
+that move, and they are deliberately a separate act: templates are shared by every project on the
+instance, so installing them is not something that should happen as a side effect of importing one board.
+
+**One plain YAML file, not an archive.** Templates are a handful of ids, names and colours — nothing to
+stream, nothing to put in a folder — and a single document is the artefact somebody actually wants: it
+reviews in a diff, edits by hand, and keeps in a repository next to whatever else describes how a team
+works. Both kinds are in it, because a board needs both:
+
+```yaml
+format: task-manager-templates/1
+exported: 2026-08-06T20:00:00.000000Z
+column_templates:
+- id: default
+  name_base64: …
+  columns:
+  - id: review
+    name_base64: …
+    order: 2
+kind_templates:
+- id: work
+  name_base64: …
+  kinds:
+  - id: bug
+    name_base64: …
+    color: red
+    icon: bug
+```
+
+Prose is base64 and everything else stays legible, the same rule the project format follows — one decision
+made once, in `scripts/transfer_encoding.rs`, rather than twice slightly differently. Both lists are
+sorted by id, so two exports of an unchanged instance are byte-identical and a diff shows only what
+actually moved.
+
+**A template id is never re-minted**, and that is the difference from every other id in a transfer. A
+task's number is re-issued because it belongs to a project's counter; a template id is typed in by a
+person, never renamed, and is what a project's `column_template_id` points at — so an id in the file *is*
+the identity, and a template arriving without one is refused rather than generated. Generating one would
+make the import create a second copy of every template on every run.
+
+**A template already here is REPLACED**, which is the point and also the sharp edge: a template is
+followed by projects, and replacing one changes every board that follows it in the same write. Nothing is
+deleted by it — a task parked in a column the new version does not have keeps its stored status and reads
+as Todo, and putting the column back brings it home — but the change is instant and wide, so the count of
+affected projects comes back per template and the dialog puts the button behind a checkbox. Created and
+replaced are counted apart for the same reason: creating a template affects nothing.
+
+Validation is the same code the Settings screen goes through — `validate_column_id`,
+`validate_task_type_id`, `parse_kind_color`, `is_anchor_column` — so a file cannot install something the UI
+would refuse to save. Partial by design, like every import here: a template that fails validation is
+reported with the reason and the rest still arrives. Admin only, both directions.
+
 ## The session is a cookie
 
 `HttpOnly`, `Secure`, `SameSite`, `Path=/`, and it expires with the token inside it. It replaced a token in

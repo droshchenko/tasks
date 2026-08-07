@@ -16,6 +16,8 @@ mod projects;
 mod resolve;
 mod subtasks;
 mod tasks;
+mod templates_transfer;
+mod transfer_encoding;
 mod users;
 
 pub use archives::*;
@@ -36,4 +38,5 @@ pub use projects::*;
 pub use resolve::*;
 pub use subtasks::*;
 pub use tasks::*;
+pub use templates_transfer::*;
 pub use users::*;
