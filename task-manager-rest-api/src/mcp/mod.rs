@@ -177,6 +177,21 @@ it into their own text. That is the point: one place that is edited, rather than
 apart in silence. Write one with documents_upload, find one with documents_list, read one with \
 documents_get, and attach it with add_documents on a task or a goal.\
 \
+A REFERENCE IS A URL, AND IT NAMES EITHER KIND OF DOCUMENT. What a task or a goal stores, and what \
+every tool here accepts wherever it takes a document's `id`, is one of two forms:\
+\
+* `raw/{project}/document/{id}` — a document of the project's own, by the id that survives it being \
+moved;\
+* `raw/{project}/github/{repository}/{path}` — a file in a connected repository, by its path.\
+\
+BOTH ARE ATTACHABLE, which is the half that used to be missing: a specification living in a connected \
+repository is attached to the work exactly as an uploaded one is, with no copying it in first. A url \
+rather than a bare id because a file in a repository HAS no id — it is a working copy on disk, not a row \
+— and because a reference then survives being written down: paste one into a CLAUDE.md, an issue or a \
+message, hand it back to documents_get, and it reads. It is also the live address of the bytes, give or \
+take a leading slash. You may still pass a bare id or the `id` and `path` a listing reports; what comes \
+back is always the url.\
+\
 A LARGE DOCUMENT IS WORKED ON IN PIECES, AND FOUR TOOLS EXIST FOR NOTHING ELSE. A specification can be \
 tens of kilobytes; reading one whole to change a line, or reading five to find which mentions a thing, \
 spends the context the work needed. So:\

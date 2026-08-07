@@ -165,7 +165,7 @@ pub struct GoalView {
     )]
     pub subtasks: Vec<SubtaskView>,
     #[property(
-        description = "Ids of the documents this goal points at. Ids only — resolve them with documents_get, or documents_list to see what they are called. A goal is where a decision gets written down, so this is where the specification behind an epic is usually attached. An id here may be in the trash: documents are deleted by moving them there, and a reference is never quietly dropped, because restoring is one call away"
+        description = "References to the documents this goal points at, each a url: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. Read one by handing it to documents_get, which takes a reference wherever it takes an id. A goal is where a decision gets written down, so this is where the specification behind an epic is usually attached. A reference here may have gone stale: documents are deleted by moving them to the trash and a repository's file can go upstream, and a reference is never quietly dropped, because restoring one is a call away"
     )]
     pub documents: Vec<String>,
     #[property(
@@ -408,7 +408,11 @@ impl GhActionOps {
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentView {
     #[property(
-        description = "The document's id, and the ONLY stable way to name it. It is minted when the document is created and never changes — not when the text is rewritten, not when the path moves — which is what makes the history complete and what makes a reference from a task survive a tidy-up. This is what goes into add_documents on a task or a goal"
+        description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — a url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, it is taken by documents_get wherever an id is, and it survives being pasted into a CLAUDE.md or an issue, because it names its own board. It is also the live address of the bytes, give or take a leading slash"
+    )]
+    pub reference: String,
+    #[property(
+        description = "The document's id. For one of the project's own it is minted at creation and never changes — not when the text is rewritten, not when the path moves — which is what makes the history complete. For a file in a connected repository it is derived from where the file IS, so it changes when the file moves and is gone when the file is: such a file has no id of its own, because it is a working copy rather than a row. Prefer `reference` for anything you are storing or writing down"
     )]
     pub id: String,
     #[property(description = "The prefix of the project this document belongs to")]
@@ -447,6 +451,10 @@ impl DocumentView {
         let body = crate::scripts::body_of(src);
 
         Self {
+            reference: task_manager_shared::documents::canonical_document_reference(
+                project_prefix,
+                &src.id,
+            ),
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.doc_path.clone(),
@@ -466,6 +474,13 @@ impl DocumentView {
         project_prefix: &str,
     ) -> Self {
         Self {
+            // Off the ID rather than off the path, because the id is what says which KIND this is: a
+            // mirrored file carries a `github:` one and becomes a `raw/{project}/github/…` reference, and
+            // everything else is a row and becomes `raw/{project}/document/{id}`.
+            reference: task_manager_shared::documents::canonical_document_reference(
+                project_prefix,
+                &src.id,
+            ),
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.path.clone(),
@@ -987,7 +1002,7 @@ pub struct TaskView {
     )]
     pub subtasks: Vec<SubtaskView>,
     #[property(
-        description = "Ids of the documents this task points at. Ids only — read one with documents_get, or documents_list to see what they are called. Read them BEFORE starting the task: a document attached to a piece of work is usually the specification for it. An id here may be in the trash, since deleting a document moves it there and a reference is never quietly dropped"
+        description = "References to the documents this task points at, each a url: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. Read one by handing it to documents_get, which takes a reference wherever it takes an id. Read them BEFORE starting the task: a document attached to a piece of work is usually the specification for it. A reference here may have gone stale, since deleting a document moves it to the trash and a reference is never quietly dropped"
     )]
     pub documents: Vec<String>,
     #[property(

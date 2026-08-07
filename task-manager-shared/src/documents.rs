@@ -370,6 +370,212 @@ pub fn is_html_content_type(content_type: &str) -> bool {
 /// Where the raw bytes of every document live: `/raw/{prefix}/{path}`.
 pub const RAW_ROUTE_PREFIX: &str = "/raw/";
 
+/// The segment that says a raw url names one of the project's OWN documents, by id.
+///
+/// It sits where a mirrored path's [`crate::github::GITHUB_ROOT`] sits, and the pair is the whole of the
+/// reference vocabulary: after the project comes the word for which KIND of document this is, and after
+/// that comes whatever names one of that kind.
+pub const RAW_OWN_SEGMENT: &str = "document";
+
+/// What a task or a goal stores when it points at a document.
+///
+/// **A reference is a url, and it says which of the two kinds of document it names.** That is the point of
+/// the shape: a board holds documents of its own — rows with an id, a history and a trash — beside files
+/// in repositories somebody connected, which have none of those things and are not this project's to
+/// version. Both are documents to a reader, and only one of them has an id, so an id alone could not name
+/// the other. A url can name either.
+///
+/// ```text
+/// raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8   one of the project's own, by id
+/// raw/TM/github/specs/design/system.md       a file in a connected repository, by path
+/// ```
+///
+/// **A repository's file is named by its PATH and never by which folder we filed it under.** `specs` there
+/// is the connection's name — the folder the mirror appears as — and everything after it is the tree
+/// inside the repository, exactly as it is spelled everywhere else in this product. Nothing else could be
+/// used: there is no id to use, and the path is what `documents_list` reports, what `documents_get` reads
+/// and what the raw route already serves.
+///
+/// **A reference IS the address its bytes are at**, give or take the leading slash — `/raw/TM/…` is a live
+/// url, which is what makes a reference openable rather than a token only this product understands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentReference {
+    /// One of the project's own documents, by the id that never changes when it moves.
+    Own { project: String, id: String },
+    /// A file in a connected repository, by its full path under the reserved root — `github/<connection>/…`,
+    /// the same string the documents tools name it by.
+    Mirror { project: String, path: String },
+}
+
+impl DocumentReference {
+    /// Which board this names. A reference carries it because a reference is followed on its own: an id is
+    /// unique everywhere, but a mirrored path is only unique within one project.
+    pub fn project(&self) -> &str {
+        match self {
+            Self::Own { project, .. } => project,
+            Self::Mirror { project, .. } => project,
+        }
+    }
+
+    /// The reference as it is stored and as it is written down.
+    ///
+    /// No leading slash and no percent-encoding: this is the canonical SPELLING, which is what two
+    /// references are compared by. The address is [`Self::url`], which is this with a `/` in front and its
+    /// segments escaped.
+    pub fn as_string(&self) -> String {
+        // The route spelled from the same constant the url uses, so a reference and the address it
+        // resolves to cannot drift apart.
+        let route = RAW_ROUTE_PREFIX.trim_start_matches('/');
+
+        match self {
+            Self::Own { project, id } => format!("{route}{project}/{RAW_OWN_SEGMENT}/{id}"),
+            Self::Mirror { project, path } => format!("{route}{project}/{path}"),
+        }
+    }
+
+    /// The address the bytes are at, escaped so a name with a `?` or a space in it cannot change what the
+    /// url means.
+    pub fn url(&self) -> String {
+        match self {
+            Self::Own { project, id } => {
+                raw_document_url(project, &format!("{RAW_OWN_SEGMENT}/{id}"))
+            }
+            Self::Mirror { project, path } => raw_document_url(project, path),
+        }
+    }
+
+    /// What a reader sees on a card: the file's name for a mirrored path, and the id for a document of the
+    /// project's own — which is all the client has until it fetches one.
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Own { id, .. } => id,
+            Self::Mirror { path, .. } => document_file_name(path),
+        }
+    }
+}
+
+/// Read a reference back, or `None` for a string that is not one.
+///
+/// **Lenient about the three things that differ between where a reference is written and where it is
+/// read**, and about nothing else: a leading slash (a url and a stored reference differ by exactly that),
+/// surrounding space, and percent-escapes (what comes out of an address bar is escaped, what is stored is
+/// not).
+///
+/// `None` rather than an error, because "this is not a url" is the answer that makes the caller try the
+/// other reading — a bare document id, which is what every reference stored before this vocabulary existed
+/// still is.
+pub fn parse_document_reference(src: &str) -> Option<DocumentReference> {
+    let rest = src
+        .trim()
+        .trim_start_matches('/')
+        .strip_prefix(RAW_ROUTE_PREFIX.trim_start_matches('/'))?;
+
+    let (project, rest) = rest.split_once(PATH_SEPARATOR)?;
+    let project = percent_decode(project);
+
+    if project.is_empty() {
+        return None;
+    }
+
+    let (kind, rest) = rest.split_once(PATH_SEPARATOR)?;
+
+    if rest.is_empty() {
+        return None;
+    }
+
+    let decoded: Vec<String> = rest.split(PATH_SEPARATOR).map(percent_decode).collect();
+
+    // The kind segment decides how the rest is read, and it is the ONE place the two kinds of document
+    // are told apart — everything downstream branches on the variant rather than on the shape of a string.
+    match kind {
+        RAW_OWN_SEGMENT => Some(DocumentReference::Own {
+            project,
+            // An id holds no separator, so anything deeper is a path that happens to start with the word —
+            // which is a document of the project's own at `document/…`, not a reference at all.
+            id: match decoded.len() {
+                1 => decoded.into_iter().next()?,
+                _ => return None,
+            },
+        }),
+        // The reserved root stays IN the path: `github/specs/a.md` is what the documents tools call this
+        // file, and a reference that dropped the root would have to put it back at every use.
+        crate::github::GITHUB_ROOT => Some(DocumentReference::Mirror {
+            project,
+            path: format!("{}/{}", crate::github::GITHUB_ROOT, decoded.join("/")),
+        }),
+        _ => None,
+    }
+}
+
+/// Read whatever spelling of a document's name you hold as the reference it means.
+///
+/// **Four spellings, one meaning each, and the leniency is deliberate**: a caller holds whichever of them
+/// the call it last made handed back, and refusing three of the four would make pointing at a document a
+/// question of which listing you read it from.
+///
+/// * `raw/TM/document/<id>` and `raw/TM/github/<repository>/<file>` — the canonical references, which is
+///   what is stored and what every read hands back;
+/// * `github:TM:github/<repository>/<file>` — the `id` a mirrored file carries in a listing;
+/// * `github/<repository>/<file>` — the `path` from that same listing;
+/// * anything else — a bare document id, which is what every reference written before this vocabulary
+///   existed still is, and is why this cannot fail: an unrecognised string IS the legacy spelling.
+///
+/// `project_prefix` is the board being read, and it is what a spelling that names no project falls back
+/// to. A spelling that DOES name one keeps it, so that a reference across boards can be refused by
+/// whoever cares rather than silently adopted here.
+///
+/// Here in `shared` because both sides spell references: the server stores them and the browser has to
+/// recognise the row a stored one points at.
+pub fn read_document_reference(project_prefix: &str, src: &str) -> DocumentReference {
+    let src = src.trim();
+
+    if let Some(reference) = parse_document_reference(src) {
+        return reference;
+    }
+
+    if let Some((project, path)) = crate::github::parse_mirror_document_id(src) {
+        return DocumentReference::Mirror {
+            project: project.to_string(),
+            path: path.to_string(),
+        };
+    }
+
+    if crate::github::is_github_path(src) {
+        return DocumentReference::Mirror {
+            project: project_prefix.to_string(),
+            path: src.trim_start_matches('/').to_string(),
+        };
+    }
+
+    DocumentReference::Own {
+        project: project_prefix.to_string(),
+        id: src.to_string(),
+    }
+}
+
+/// The canonical spelling of whatever name you hold — what two references are compared by.
+pub fn canonical_document_reference(project_prefix: &str, src: &str) -> String {
+    read_document_reference(project_prefix, src).as_string()
+}
+
+/// The reference for one of the project's own documents.
+pub fn own_document_reference(project_prefix: &str, id: &str) -> String {
+    DocumentReference::Own {
+        project: project_prefix.to_string(),
+        id: id.to_string(),
+    }
+    .as_string()
+}
+
+/// The reference for one file of a connected repository, by its `github/<connection>/<file>` path.
+pub fn mirror_document_reference(project_prefix: &str, mirror_path: &str) -> String {
+    DocumentReference::Mirror {
+        project: project_prefix.to_string(),
+        path: mirror_path.trim().trim_start_matches('/').to_string(),
+    }
+    .as_string()
+}
+
 /// The url that serves a document's raw bytes.
 ///
 /// Built rather than fetched, because the two tags that use it — `<img>` and `<iframe>` — make the request
@@ -687,6 +893,85 @@ mod tests {
                 parse_raw_document_url(&url),
                 Some((prefix.to_string(), path.to_string())),
                 "{url} does not round-trip"
+            );
+        }
+    }
+
+    /// A reference is written where a task is updated and read where a card is drawn, so the two spellings
+    /// have to be the same one.
+    #[test]
+    fn a_reference_round_trips() {
+        let own = own_document_reference("TM", "01K2C4Q0S1T2U3V4W5X6Y7Z8");
+        assert_eq!(own, "raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8");
+        assert_eq!(
+            parse_document_reference(&own),
+            Some(DocumentReference::Own {
+                project: "TM".to_string(),
+                id: "01K2C4Q0S1T2U3V4W5X6Y7Z8".to_string(),
+            })
+        );
+
+        let mirror = mirror_document_reference("TM", "github/specs/design/system.md");
+        assert_eq!(mirror, "raw/TM/github/specs/design/system.md");
+        assert_eq!(
+            parse_document_reference(&mirror),
+            Some(DocumentReference::Mirror {
+                project: "TM".to_string(),
+                // The reserved root stays in the path: this is the string the documents tools name it by.
+                path: "github/specs/design/system.md".to_string(),
+            })
+        );
+    }
+
+    /// A url and a stored reference differ by exactly one character, and a reader must not care which one
+    /// it was handed — a person copying out of the address bar produces the escaped form of the first.
+    #[test]
+    fn a_reference_is_read_as_written_or_as_an_address() {
+        let expected = DocumentReference::Mirror {
+            project: "TM".to_string(),
+            path: "github/specs/a b.md".to_string(),
+        };
+
+        for spelling in [
+            "raw/TM/github/specs/a b.md",
+            "/raw/TM/github/specs/a b.md",
+            "  raw/TM/github/specs/a b.md  ",
+            "/raw/TM/github/specs/a%20b.md",
+        ] {
+            assert_eq!(
+                parse_document_reference(spelling),
+                Some(expected.clone()),
+                "'{spelling}' did not read as the file it names"
+            );
+        }
+
+        // And the address it resolves to is the escaped one, whichever way it arrived.
+        assert_eq!(expected.url(), "/raw/TM/github/specs/a%20b.md");
+    }
+
+    /// `None` is what makes the caller try the other reading — a bare id, which is what every reference
+    /// written before this vocabulary existed still is.
+    #[test]
+    fn what_is_not_a_reference_reads_as_none() {
+        for not_one in [
+            // A bare id, which is the legacy spelling and the reason this returns an Option at all.
+            "01K2C4Q0S1T2U3V4W5X6Y7Z8",
+            // A mirrored path with no project in front of it names nothing on its own.
+            "github/specs/a.md",
+            "raw/TM",
+            "raw/TM/",
+            "raw//github/a.md",
+            // A word in the kind's place that is neither kind. A document of the project's own at
+            // `notes/a.md` is not a reference, and reading it as one would invent a board called `notes`.
+            "raw/TM/notes/a.md",
+            // An id holds no separator, so this is a document at the path `document/spec/a.md` rather than
+            // a reference — read as one it would name an id that cannot exist.
+            "raw/TM/document/spec/a.md",
+        ] {
+            assert_eq!(
+                parse_document_reference(not_one),
+                None,
+                "'{not_one}' should not read as a reference"
             );
         }
     }

@@ -1,8 +1,11 @@
 use std::io::Read;
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use service_sdk::my_telemetry::MyTelemetryContext;
+use task_manager_shared::documents::{
+    DocumentReference, mirror_document_reference, own_document_reference, read_document_reference,
+};
 use task_manager_shared::kind_color::KindColor;
 use task_manager_shared::priority::Priority;
 
@@ -125,9 +128,16 @@ pub async fn import_project(
     let mut skipped: Vec<SkippedImport> = Vec::new();
     let mut notes: Vec<String> = Vec::new();
 
-    // Documents first, because the cards point at them: a task's `documents` list is paths in this same
-    // archive, and it can only become a list of ids once those ids exist.
+    // Documents first, because the cards point at them: a reference on a task names a document by the id
+    // it had on the other board, and that id has to be ON this board before a card can be built pointing
+    // at it.
     let documents = write_documents(app, &mut archive, &project, who, &mut skipped).await?;
+
+    let targets = DocumentTargets {
+        arrived: documents.values().cloned().collect(),
+        source_prefix: source_prefix.clone(),
+        target_prefix: project.prefix.clone(),
+    };
 
     // Then the numbers — every one of them, before a single card is built. A task's goal and its dependencies
     // can name anything in the file, including something further down it, so the whole map has to exist first.
@@ -138,7 +148,7 @@ pub async fn import_project(
     let mut goals: Vec<GoalModel> = Vec::with_capacity(goals_file.goals.len());
 
     for goal in &goals_file.goals {
-        match build_goal(&project, goal, &numbers, &mut comments_by_target, &documents) {
+        match build_goal(&project, goal, &numbers, &mut comments_by_target, &targets) {
             Ok(model) => goals.push(model),
             Err(err) => skipped.push(SkippedImport::new(goal.id.clone(), err)),
         }
@@ -152,7 +162,7 @@ pub async fn import_project(
             task,
             &numbers,
             &mut comments_by_target,
-            &documents,
+            &targets,
             &mut skipped,
         ) {
             Ok(model) => tasks.push(model),
@@ -305,6 +315,16 @@ async fn write_documents(
     who: &str,
     skipped: &mut Vec<SkippedImport>,
 ) -> Result<AHashMap<String, String>, String> {
+    // What each file IS, keyed by path — above all the id it had on the board it came from, which is what
+    // the references on the cards name it by. An archive without this file, or with a path missing from
+    // it, still imports: that document simply gets a fresh id, exactly as it did before the file existed.
+    let declared: AHashMap<String, DocumentFileModel> = archive
+        .read_yaml_or_default::<DocumentsFile>(DOCUMENTS_FILE)?
+        .documents
+        .into_iter()
+        .map(|itm| (itm.path.trim().to_string(), itm))
+        .collect();
+
     let mut written: AHashMap<String, String> = AHashMap::new();
 
     for name in archive.document_names() {
@@ -343,14 +363,30 @@ async fn write_documents(
             continue;
         }
 
+        let declared = declared.get(&path);
+
         // Text or bytes decided from the path and confirmed against the content — the same call the zip
         // upload makes, so a `.md` arrives as a document that renders and diffs rather than as a download.
+        // The content type is the one the source DECLARED when it declared one, because re-deriving it here
+        // would overwrite a deliberate answer with a guess from the extension.
         let content = super::super::NewDocumentContent {
             body: super::super::body_for_entry(&path, bytes),
-            content_type: None,
+            content_type: declared.and_then(|itm| itm.content_type.clone()),
         };
 
-        match super::super::upload_document(app, &project.prefix, &path, content, who).await {
+        // The id it had on the other board, so that every reference pointing at it keeps pointing at it.
+        // A path the archive did not describe gets a fresh one — a hand-made archive is still an archive.
+        let written_row = match declared
+            .map(|itm| itm.id.trim())
+            .filter(|itm| !itm.is_empty())
+        {
+            Some(id) => {
+                super::super::import_document(app, &project.prefix, &path, content, who, id).await
+            }
+            None => super::super::upload_document(app, &project.prefix, &path, content, who).await,
+        };
+
+        match written_row {
             Ok(row) => {
                 written.insert(path, row.id);
             }
@@ -496,7 +532,7 @@ fn build_goal(
     src: &GoalFileModel,
     numbers: &Numbering,
     comments: &mut AHashMap<String, Vec<CommentModel>>,
-    documents: &AHashMap<String, String>,
+    documents: &DocumentTargets,
 ) -> Result<GoalModel, String> {
     let handle = normalise_handle(&src.id);
 
@@ -536,7 +572,7 @@ fn build_task(
     src: &TaskFileModel,
     numbers: &Numbering,
     comments: &mut AHashMap<String, Vec<CommentModel>>,
-    documents: &AHashMap<String, String>,
+    documents: &DocumentTargets,
     skipped: &mut Vec<SkippedImport>,
 ) -> Result<TaskModel, String> {
     let handle = normalise_handle(&src.id);
@@ -657,22 +693,51 @@ fn build_subtasks(src: &[SubtaskFileModel]) -> Result<Vec<SubtaskModel>, String>
     Ok(result)
 }
 
-/// Document references: paths in the file -> ids on this board.
+/// What a reference on an imported card is rewritten against.
+struct DocumentTargets {
+    /// The ids that actually landed on this board.
+    arrived: AHashSet<String>,
+    /// The prefix the archive's references were written with.
+    source_prefix: String,
+    /// The prefix they have to read as now.
+    target_prefix: String,
+}
+
+/// Document references, as the receiving board has to spell them.
 ///
-/// A path that did not arrive — skipped as noise, refused, or simply not in the archive — drops out of the
-/// list. A reference to a document that is not here would resolve to nothing on the screen that draws it,
-/// which is a worse answer than one fewer reference.
-fn resolve_documents(paths: &[String], documents: &AHashMap<String, String>) -> Vec<String> {
-    let mut ids: Vec<String> = paths
+/// **Only the project prefix changes, and that is the whole point of preserving ids.** A reference is
+/// `raw/{project}/document/{id}` or `raw/{project}/github/{repository}/{path}`; the id is carried over by
+/// `documents.yaml` and the repository path means the same thing wherever the repository is connected, so
+/// the one part that is about WHICH BOARD is the one part rewritten.
+///
+/// A reference to a document that did not arrive — skipped as noise, refused, or simply not in the
+/// archive — drops out. One that resolves to nothing would read as a broken link on the screen that draws
+/// it, which is a worse answer than one fewer reference.
+///
+/// **A file in a connected repository is kept regardless**, because there is nothing here that could have
+/// made it arrive: an export deliberately does not carry a repository, since the repository is still there
+/// and the receiving board gets those files by connecting it. Dropping the reference would throw away the
+/// only record of which file the work was done against.
+fn resolve_documents(references: &[String], targets: &DocumentTargets) -> Vec<String> {
+    let mut resolved: Vec<String> = references
         .iter()
-        .filter_map(|path| documents.get(path.trim()).cloned())
+        .filter_map(
+            |reference| match read_document_reference(&targets.source_prefix, reference) {
+                DocumentReference::Own { id, .. } => targets
+                    .arrived
+                    .contains(&id)
+                    .then(|| own_document_reference(&targets.target_prefix, &id)),
+                DocumentReference::Mirror { path, .. } => {
+                    Some(mirror_document_reference(&targets.target_prefix, &path))
+                }
+            },
+        )
         .collect();
 
-    // Sorted and de-duplicated, which for a sortable id is also oldest first — the shape every other writer
-    // of this list leaves it in.
-    ids.sort();
-    ids.dedup();
-    ids
+    // Sorted and de-duplicated — the shape every other writer of this list leaves it in.
+    resolved.sort();
+    resolved.dedup();
+    resolved
 }
 
 /// Lower-case, trim, drop blanks, de-duplicate, sort — the same normalisation a label gets on every other
@@ -847,25 +912,64 @@ mod tests {
         assert_eq!(normalise_handle("TM-G7"), "TM-G7");
     }
 
+    /// The ids that landed on this board, as the reference rewriter sees them.
+    fn targets(arrived: &[&str]) -> DocumentTargets {
+        DocumentTargets {
+            arrived: arrived.iter().map(|itm| itm.to_string()).collect(),
+            source_prefix: "TM".to_string(),
+            target_prefix: "RMS".to_string(),
+        }
+    }
+
+    /// **The id survives the crossing and the prefix does not** — which is the whole reason `documents.yaml`
+    /// exists. A reference is rewritten onto the receiving board's prefix and otherwise left exactly as it
+    /// was, so it goes on naming the same document it named before the move.
+    #[test]
+    fn a_reference_keeps_its_document_and_changes_its_board() {
+        let resolved =
+            resolve_documents(&["raw/TM/document/id-a".to_string()], &targets(&["id-a"]));
+
+        assert_eq!(resolved, vec!["raw/RMS/document/id-a".to_string()]);
+    }
+
     /// A reference to a document that did not arrive drops out rather than pointing at nothing — and what
     /// does arrive comes out sorted and unique, the shape every other writer of this list leaves it in.
     #[test]
     fn a_reference_to_a_document_that_did_not_arrive_is_dropped() {
-        let mut documents = AHashMap::new();
-        documents.insert("docs/a.md".to_string(), "id-b".to_string());
-        documents.insert("docs/b.md".to_string(), "id-a".to_string());
-
-        let ids = resolve_documents(
+        let resolved = resolve_documents(
             &[
-                "docs/b.md".to_string(),
-                "docs/missing.md".to_string(),
-                " docs/a.md ".to_string(),
-                "docs/b.md".to_string(),
+                "raw/TM/document/id-b".to_string(),
+                "raw/TM/document/id-missing".to_string(),
+                "  raw/TM/document/id-a  ".to_string(),
+                "raw/TM/document/id-b".to_string(),
             ],
-            &documents,
+            &targets(&["id-a", "id-b"]),
         );
 
-        assert_eq!(ids, vec!["id-a".to_string(), "id-b".to_string()]);
+        assert_eq!(
+            resolved,
+            vec![
+                "raw/RMS/document/id-a".to_string(),
+                "raw/RMS/document/id-b".to_string()
+            ]
+        );
+    }
+
+    /// **A file in a connected repository is kept even though nothing carried it**, because nothing could:
+    /// an export does not include a repository, since the repository is still there and the receiving board
+    /// gets those files by connecting it. Dropping the reference would throw away the only record of which
+    /// file the work was done against.
+    #[test]
+    fn a_reference_into_a_repository_survives_with_nothing_to_resolve_it_against() {
+        let resolved = resolve_documents(
+            &["raw/TM/github/specs/design/system.md".to_string()],
+            &targets(&[]),
+        );
+
+        assert_eq!(
+            resolved,
+            vec!["raw/RMS/github/specs/design/system.md".to_string()]
+        );
     }
 
     /// Labels arrive in whatever shape the file has them and leave in the one every other write produces,
@@ -966,7 +1070,7 @@ mod tests {
                     text_base64: encode_text(""),
                     done: true,
                 }],
-                documents: vec!["docs/a.md".to_string()],
+                documents: vec!["raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8".to_string()],
                 gh_actions: vec![GhActionFileModel {
                     url: "https://github.com/o/r/actions/runs/1".to_string(),
                     title_base64: encode_text("build #1"),
@@ -979,11 +1083,23 @@ mod tests {
             }],
         };
 
+        let documents = DocumentsFile {
+            documents: vec![DocumentFileModel {
+                id: "01K2C4Q0S1T2U3V4W5X6Y7Z8".to_string(),
+                path: "docs/a.md".to_string(),
+                content_type: Some("text/markdown".to_string()),
+            }],
+        };
+
         let archive = zip_of(&[
             (PROJECT_FILE, &a_project_file()),
             (
                 TASKS_FILE,
                 serde_yaml::to_string(&tasks).unwrap().as_bytes(),
+            ),
+            (
+                DOCUMENTS_FILE,
+                serde_yaml::to_string(&documents).unwrap().as_bytes(),
             ),
             ("documents/docs/a.md", b"# hello"),
         ]);
@@ -1010,11 +1126,36 @@ mod tests {
         assert_eq!(task.status, "review");
         assert_eq!(task.goal.as_deref(), Some("TM-G7"));
         assert_eq!(task.depends_on, vec!["TM-4".to_string()]);
-        assert_eq!(task.documents, vec!["docs/a.md".to_string()]);
+        assert_eq!(
+            task.documents,
+            vec!["raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8".to_string()]
+        );
         assert_eq!(task.gh_actions.len(), 1);
 
         assert_eq!(read.document_names(), vec!["documents/docs/a.md".to_string()]);
         assert_eq!(read.read_entry("documents/docs/a.md").unwrap(), b"# hello");
+
+        // **The half that used to be missing.** The folder is keyed by path and carries no id, so without
+        // this file the receiving board mints a fresh one for `docs/a.md` — and the reference on TM-42,
+        // which names the document by id, arrives pointing at nothing.
+        let listed = read.read_yaml::<DocumentsFile>(DOCUMENTS_FILE).unwrap();
+
+        assert_eq!(listed.documents[0].id, "01K2C4Q0S1T2U3V4W5X6Y7Z8");
+        assert_eq!(listed.documents[0].path, "docs/a.md");
+        assert_eq!(
+            listed.documents[0].content_type.as_deref(),
+            Some("text/markdown")
+        );
+
+        // And the two halves meet: the reference on the card names the document the file describes.
+        assert_eq!(
+            resolve_documents(
+                &task.documents,
+                &targets(&[listed.documents[0].id.clone().as_str()])
+            ),
+            vec!["raw/RMS/document/01K2C4Q0S1T2U3V4W5X6Y7Z8".to_string()],
+            "the reference has to survive the crossing and land on the receiving board's prefix"
+        );
     }
 
     /// The three list files are the ones a hand-made archive may leave out, and an absent one means "none of
@@ -1126,7 +1267,7 @@ mod tests {
             &src,
             &numbers,
             &mut comments,
-            &AHashMap::new(),
+            &targets(&[]),
             &mut skipped,
         )
         .expect("the task should build");
@@ -1153,7 +1294,7 @@ mod tests {
             &src,
             &numbers,
             &mut AHashMap::new(),
-            &AHashMap::new(),
+            &targets(&[]),
             &mut Vec::new(),
         )
         .expect("the task should build");
@@ -1192,7 +1333,7 @@ mod tests {
             &src,
             &numbers,
             &mut AHashMap::new(),
-            &AHashMap::new(),
+            &targets(&[]),
             &mut skipped,
         )
         .expect("the task itself is still worth having");
@@ -1227,7 +1368,7 @@ mod tests {
             &a_task_file_model("TM-42"),
             &numbers,
             &mut comments,
-            &AHashMap::new(),
+            &targets(&[]),
             &mut Vec::new(),
         )
         .expect("the task should build");
@@ -1251,7 +1392,7 @@ mod tests {
                 &a_task_file_model(id),
                 &numbers,
                 &mut AHashMap::new(),
-                &AHashMap::new(),
+                &targets(&[]),
                 &mut Vec::new(),
             )
             .unwrap_err();

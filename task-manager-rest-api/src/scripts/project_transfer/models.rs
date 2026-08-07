@@ -22,7 +22,38 @@ pub const PROJECT_FILE: &str = "project.yaml";
 pub const GOALS_FILE: &str = "goals.yaml";
 pub const TASKS_FILE: &str = "tasks.yaml";
 pub const COMMENTS_FILE: &str = "comments.yaml";
+pub const DOCUMENTS_FILE: &str = "documents.yaml";
 pub const DOCUMENTS_FOLDER: &str = "documents/";
+
+/// `documents.yaml` — what each file in `documents/` IS, beside the bytes themselves.
+///
+/// **It exists so that a document keeps its id across instances**, which is what a reference on a task
+/// names it by. The bytes in `documents/` are keyed by path and a path is all they can carry; without this
+/// file the receiving board mints a fresh id for every document, and every reference on every card arrives
+/// pointing at nothing. That is exactly what used to happen.
+///
+/// Safe to carry because a `SortableId` is `{unix_micros}-{uuid}` — unique across instances rather than
+/// within one — so the same document on two boards is the same id on purpose, and two different documents
+/// cannot collide by accident.
+///
+/// The content type rides along for the same reason: it is what somebody DECLARED, and re-deriving it from
+/// the extension on the other side would quietly overwrite that with a guess.
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct DocumentsFile {
+    #[serde(default)]
+    pub documents: Vec<DocumentFileModel>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocumentFileModel {
+    pub id: String,
+    // Where it lives, and the key into the `documents/` folder beside this file: `docs/design/system.md`
+    // is the entry `documents/docs/design/system.md`. An entry with no line here is still imported — it
+    // just gets a fresh id, which is what a hand-made archive gets.
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+}
 
 /// `project.yaml` — what was exported, and the settings of the board it came from.
 ///
@@ -116,9 +147,10 @@ pub struct GoalFileModel {
     pub priority: String,
     #[serde(default)]
     pub subtasks: Vec<SubtaskFileModel>,
-    // Documents this goal points at, by PATH rather than by id — the path is what the `documents/` folder
-    // beside this file is keyed by, so a reference resolves against what actually arrived. Ids are minted per
-    // document per project and mean nothing on another board.
+    // Documents this goal points at, as the references the board stores — `raw/{project}/document/{id}`
+    // and `raw/{project}/github/{repository}/{path}`. Carried verbatim: the ids in them are preserved by
+    // `documents.yaml`, so the only thing the import rewrites is the project prefix, which is the one part
+    // of a reference that is about WHICH board rather than which document.
     #[serde(default)]
     pub documents: Vec<String>,
     pub created: String,

@@ -180,6 +180,24 @@ async fn build(
     )?;
     write_yaml(&mut writer, COMMENTS_FILE, &comments)?;
 
+    // Beside the bytes rather than in place of them: `documents/` stays a plain folder of the project's
+    // files, openable by anything, and this says what each of those files IS — above all which id it has,
+    // which is what every reference on every card names it by.
+    write_yaml(
+        &mut writer,
+        DOCUMENTS_FILE,
+        &DocumentsFile {
+            documents: documents
+                .iter()
+                .map(|itm| DocumentFileModel {
+                    id: itm.id.clone(),
+                    path: itm.path.clone(),
+                    content_type: Some(itm.content_type.clone()),
+                })
+                .collect(),
+        },
+    )?;
+
     let telemetry = MyTelemetryContext::create_empty();
     let mut written: u64 = 0;
 

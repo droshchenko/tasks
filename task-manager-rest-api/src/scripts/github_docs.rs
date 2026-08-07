@@ -2,6 +2,10 @@ use std::path::PathBuf;
 
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use task_manager_shared::github::{GITHUB_ROOT, github_mirror_path, parse_github_mirror_path};
+// Minted here on every listing and read in the browser to open the file one names, so the spelling lives
+// in `shared` beside the reference vocabulary that carries it. Re-exported because this module is where
+// the rest of the service has always reached for it.
+pub use task_manager_shared::github::{mirror_document_id, parse_mirror_document_id};
 
 use crate::app::AppContext;
 use crate::board::{GithubConnectionModel, ProjectModel};
@@ -11,41 +15,12 @@ use crate::postgres::DocumentDto;
 
 use super::resolve_project_by_prefix;
 
-/// What every file of a connected repository is named by, on this side.
-///
-/// **It is derived from where the file is, and it is honest about that.** A document's id is a
-/// `SortableId` minted once and never changed, which is what makes its history complete and what a task
-/// stores when it references one. A file in a repository has none of that: this id changes when the file
-/// moves and disappears when the file does. The prefix is what stops it being mistaken for the other
-/// kind — nothing that starts with this is ever looked for in Postgres.
-pub const MIRROR_ID_PREFIX: &str = "github:";
-
 /// Who a file of a connected repository is attributed to in a listing.
 ///
 /// Not a person, and deliberately not an email: what a listing can honestly say is "this came from the
 /// repository". Who wrote a particular line is a question for `git log`, which knows, and this side does
 /// not — nothing here records an author, because nothing here keeps versions.
 pub const MIRROR_AUTHOR: &str = "github";
-
-/// The id a file of a connected repository is named by.
-///
-/// It carries the project because an id is looked up on its own — `documents_get` takes one without a
-/// project beside it — and a path is only unique within a board.
-pub fn mirror_document_id(project_prefix: &str, mirror_path: &str) -> String {
-    format!("{MIRROR_ID_PREFIX}{project_prefix}:{mirror_path}")
-}
-
-/// Split such an id back into the project and the path it names.
-pub fn parse_mirror_document_id(id: &str) -> Option<(&str, &str)> {
-    let rest = id.strip_prefix(MIRROR_ID_PREFIX)?;
-    let (project_prefix, mirror_path) = rest.split_once(':')?;
-
-    if project_prefix.is_empty() || mirror_path.is_empty() {
-        return None;
-    }
-
-    Some((project_prefix, mirror_path))
-}
 
 /// Every file of every connection of one project, as index entries indistinguishable in shape from a
 /// document's.

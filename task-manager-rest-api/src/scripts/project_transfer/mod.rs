@@ -1,9 +1,11 @@
 //! Moving a whole project between boards: out as a zip, and back in.
 //!
 //! **The file is the contract**, which is why the shape of it lives in [`models`] with the reasoning on
-//! every field rather than being implied by the code that writes it. An export is four YAML files and a
-//! folder — `project.yaml`, `goals.yaml`, `tasks.yaml`, `comments.yaml`, and `documents/` holding the
-//! project's documents as themselves, at their own paths. Prose travels base64-encoded so that a task's
+//! every field rather than being implied by the code that writes it. An export is five YAML files and a
+//! folder — `project.yaml`, `goals.yaml`, `tasks.yaml`, `comments.yaml`, `documents.yaml`, and `documents/`
+//! holding the project's documents as themselves, at their own paths. The fifth file is what makes the
+//! references on the cards survive the crossing: it carries each document's ID, which the folder cannot,
+//! since a folder is keyed by path. Prose travels base64-encoded so that a task's
 //! Markdown cannot be re-interpreted by a YAML reader or silently re-indented by a hand edit; ids, statuses,
 //! labels, emails and moments stay legible.
 //!

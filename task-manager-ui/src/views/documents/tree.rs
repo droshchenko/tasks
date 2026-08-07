@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
-use task_manager_shared::documents::{DocumentIndexEntryResponse, document_file_name, render_size};
+use task_manager_shared::documents::{
+    DocumentIndexEntryResponse, canonical_document_reference, document_file_name, render_size,
+};
 use task_manager_shared::github::{GITHUB_ROOT, GithubMirrorState, is_github_path};
 
 use super::{
@@ -440,7 +442,16 @@ pub fn DocumentTreeRow(
         }
         DocumentNode::Document { name, entry } => {
             let icon = file_icon(&name);
-            let is_selected = selected == entry.id;
+
+            // **Compared as references rather than as strings**, because the url may spell this row's
+            // document any of the ways one can be spelled: a reference followed from a task, the bare id
+            // this tree used to navigate by, or the `github:` id a mirrored file carries in the index.
+            // All of them are the same document, and a row that failed to highlight for one of them would
+            // leave the reader looking at a document the tree says they are not on.
+            let reference = canonical_document_reference(&entry.project, &entry.id);
+
+            let is_selected = !selected.is_empty()
+                && canonical_document_reference(&entry.project, &selected) == reference;
 
             let row_class = if is_selected {
                 "tree-row selected"
@@ -448,7 +459,6 @@ pub fn DocumentTreeRow(
                 "tree-row"
             };
 
-            let id = entry.id.clone();
             let size = render_size(entry.size);
 
             rsx! {
@@ -456,11 +466,15 @@ pub fn DocumentTreeRow(
                     class: "{row_class}",
                     style: "{indent}",
                     title: "{entry.path}",
-                    // Selecting is navigating: the id goes into the url and the viewer follows from there.
-                    // Nothing about the selection is written to the state — which is what makes a document
-                    // linkable and the back button work.
+                    // Selecting is navigating: the reference goes into the url and the viewer follows from
+                    // there. Nothing about the selection is written to the state — which is what makes a
+                    // document linkable and the back button work.
+                    //
+                    // The REFERENCE rather than the bare id, so that the url somebody copies out of the
+                    // address bar is the same string a task stores and an agent can be handed. It also
+                    // names the board, which is what makes such a link open on the right one.
                     onclick: move |_| {
-                        navigator().push(crate::AppRoute::Documents { selected: id.clone() });
+                        navigator().push(crate::AppRoute::Documents { selected: reference.clone() });
                     },
 
                     img { class: "tree-icon", src: "{icon}" }

@@ -118,7 +118,7 @@ pub struct GoalsCreateInput {
     )]
     pub subtasks: Option<Vec<SubtaskInput>>,
     #[property(
-        description = "Ids of documents to point this goal at, from documents_list. A goal is where a decision is written down, so this is where the specification behind an epic belongs. Every id must be a live document of THIS project — a reference does not cross boards"
+        description = "References to the documents this goal points at, from documents_list. A goal is where a decision is written down, so this is where the specification behind an epic belongs. A reference is a url and names either kind of document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository — so an existing spec in a repository is attached without copying it in. A bare id or a listing's `path` is accepted too. Every one must be on THIS project — a reference does not cross boards"
     )]
     pub documents: Option<Vec<String>>,
 }
@@ -208,11 +208,11 @@ pub struct GoalsUpdateInput {
     )]
     pub remove_subtasks: Option<Vec<String>>,
     #[property(
-        description = "Ids of documents to attach to this goal, from documents_list. Added to whatever it already references. Every id must be a live document of this project; one in the trash is refused with the path it had"
+        description = "Documents to attach to this goal, from documents_list. Added to whatever it already references. Each is a reference url — `raw/{project}/document/{id}` or `raw/{project}/github/{repository}/{path}` — and a bare id or a listing's `path` is accepted too. A document of this project's own must be live: one in the trash is refused with the path it had. A file in a repository must be one the mirror actually holds"
     )]
     pub add_documents: Option<Vec<String>>,
     #[property(
-        description = "Ids of documents to detach. Applied after add_documents. Detaching is not deleting — the document is untouched, only this goal stops pointing at it"
+        description = "Documents to detach, by reference or by any spelling of one. Applied after add_documents. Detaching is not deleting — the document is untouched, only this goal stops pointing at it"
     )]
     pub remove_documents: Option<Vec<String>>,
     #[property(

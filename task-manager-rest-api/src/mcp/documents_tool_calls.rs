@@ -145,7 +145,7 @@ impl McpToolCall<DocumentsListInput, DocumentsListResponse> for DocumentsListHan
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct DocumentsGetInput {
     #[property(
-        description = "Which document, by id — the stable one from documents_list, or from the `documents` list on a task or a goal. Either this or `project` + `path`"
+        description = "Which document. A reference url — `raw/{project}/document/{id}` or `raw/{project}/github/{repository}/{path}` — is what a task, a goal or somebody's notes hand you, and it is taken here as it is written; so is the bare `id` documents_list reports. Either this or `project` + `path`"
     )]
     pub id: Option<String>,
     #[property(

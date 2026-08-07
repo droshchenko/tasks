@@ -43,10 +43,16 @@ async fn handle_request(
     let project_id = project.id.as_str();
 
     let telemetry = service_sdk::my_telemetry::MyTelemetryContext::create_empty();
-    let id = input_data.id.trim();
+
+    // A reference off a task or a goal is a url — `raw/TM/document/<id>` or `raw/TM/github/<path>` — and it
+    // is what the browser has in hand when somebody clicks one. Unwrapped here rather than at the caller,
+    // so that following a reference and opening a row from the tree are one request and not two shapes of
+    // one.
+    let unwrapped = crate::scripts::unwrap_document_reference(&input_data.id);
+    let id = unwrapped.as_str();
 
     // A file in a connected repository is named by an id of its own shape and has NO ROW IN POSTGRES —
-    // see `crate::scripts::MIRROR_ID_PREFIX`. Intercepted before the repository, which would otherwise
+    // see `task_manager_shared::github::MIRROR_ID_PREFIX`. Intercepted before the repository, which would otherwise
     // miss and report "No document github:PROP:…", a sentence that reads as a bug rather than as an
     // answer. This is the same interception `resolve_document` makes for MCP; the two doors must agree.
     if let Some((id_prefix, mirror_path)) = crate::scripts::parse_mirror_document_id(id) {

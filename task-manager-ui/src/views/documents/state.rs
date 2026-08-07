@@ -137,6 +137,37 @@ impl DocumentsState {
         }
     }
 
+    /// Point this screen at whatever a selection names, WITHOUT losing the folders somebody left open.
+    ///
+    /// **A reference carries its own board, and following one has to land on that board.** Before it did
+    /// not: the screen opened on whichever project was remembered, so a document reference followed from a
+    /// task on another one landed on a tree the document was not in — and the reader was told the document
+    /// did not exist. Nothing about that was visible, because both halves looked right on their own.
+    ///
+    /// A selection naming no project — a bare id, which is what a reference stored before this vocabulary
+    /// was one — leaves the project alone, since it names nothing better than what is already open.
+    pub fn follow(&mut self, selected: &str) {
+        let reference = task_manager_shared::documents::parse_document_reference(selected);
+
+        if let Some(reference) = reference.as_ref()
+            && !reference
+                .project()
+                .eq_ignore_ascii_case(&self.selected_project)
+        {
+            self.select_project(reference.project().to_string());
+        }
+
+        // A mirrored path is what the tree is drawn from, so revealing it is what opens the repository and
+        // the folders inside it. An id reveals nothing and never did — a document of the project's own has
+        // its folder opened by `enter_folder_of` once the read comes back and its path is known.
+        match reference {
+            Some(task_manager_shared::documents::DocumentReference::Mirror { path, .. }) => {
+                self.reveal(&path)
+            }
+            _ => self.reveal(selected),
+        }
+    }
+
     /// Whether `content` holds this document rather than one read before it.
     pub fn content_is_for(&self, id: &str) -> bool {
         self.content_id.as_deref() == Some(id)

@@ -516,26 +516,68 @@ folder, it is the project's documents. And there is no transaction across the do
 tables of its own — so a failure part way through is *reported as itself*, with how many went and which one
 stopped it, rather than rolled back. What went is in the trash and re-running finishes the job.
 
-**A reference is a list of ids in a `jsonb` column** on the task or goal row — `add_documents` /
+### A reference is a url, and it names either kind of document
+
+**A reference is a list of urls in a `jsonb` column** on the task or goal row — `add_documents` /
 `remove_documents`, the same shape as labels and for the same reason: a caller attaching one document must
-not have to resend the four already there. Ids and never paths, which is the whole reason the id is stable.
+not have to resend the four already there. Two forms, one per kind of document:
+
+```
+raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8   a document of the project's own, by id
+raw/TM/github/specs/design/system.md       a file in a connected repository, by path
+```
+
+**A url rather than a bare id, because half of what a board points at has no id.** A file in a connected
+repository is a working copy on disk, not a row: it has no `SortableId`, no version and no trash, and there
+was no way to attach one — which meant a specification that already existed in a repository had to be copied
+into the project before the work could point at it, and the copy started drifting the same afternoon. The
+path is what those files *are* named by everywhere else in this product, so the reference names them by it.
+
+Three more things fall out of the shape, and each of them was a reason on its own:
+
+- **it says which board it is on**, so following one lands on that board. The Documents screen used to open
+  on whichever project the browser remembered, which meant a reference followed from a task on another one
+  drew a tree the document was not in and reported it missing — with nothing on screen to say why;
+- **it survives being written down.** Paste one into a `CLAUDE.md`, an issue or a message and hand it back to
+  `documents_get`, which takes a reference wherever it takes an id, as do `documents_edit`,
+  `documents_update_path`, `documents_delete`, `documents_outline` and `documents_diff`. That is the point of
+  a vocabulary an agent can be *told* rather than has to look up;
+- **it is the address of the bytes**, give or take the leading slash. `/raw/TM/github/specs/design/system.md`
+  is the route that has always served a mirrored file; `/raw/TM/document/<id>` is the same route reading by
+  id instead of by path, which is what makes a reference survive the document being moved. The one ambiguity
+  it introduces is narrow and settled in favour of what was there first: `document/` plus exactly one segment
+  is an id, and `document/spec/a.md` is a document of the project's own in a folder called `document`.
+
+**The four spellings of one document all resolve to the same reference**, because a caller holds whichever
+one the call it last made handed back: the reference itself, the `id` a listing reports, the `path` a listing
+reports, and — for a document of the project's own — the bare id, which is what every reference stored before
+this vocabulary existed still is. What is *stored* is always the url, and `documents_list` reports it as
+`reference` beside the id. Detaching compares canonical spellings, so a reference comes off with whichever
+name you have for it.
+
 Two departures from how labels behave:
 
-- an id naming **no** document is refused, and one naming a *trashed* document is refused with the path it
-  had. A label is a word; a document id is minted by the system, so one that resolves nowhere means the
-  caller is working from a stale read, and a reference a reader cannot open is worse than a refusal;
+- a reference naming **nothing** is refused. For a document of the project's own that means no such id, and a
+  *trashed* one is refused with the path it had; for a file in a repository it means the mirror does not hold
+  that path — and "the repository has not been read yet" is said as itself, because that is a different
+  problem with a different fix. A label is a word; a reference is supposed to point at something a reader can
+  open, and a dead link is worse than a refusal;
 - a reference is **never cleaned up** when a document is deleted. Restoring is one call away, and a reference
   quietly dropped would not come back with the document. A reader that cannot resolve one is told it is in
   the trash.
 
-Validating an added id is the one piece of validation in `scripts/` that reads Postgres — documents are not
-in memory. It happens before a task number is reserved, like everything else, so a refused reference does not
-burn an id.
+Validating an added reference is the one piece of validation in `scripts/` that reads Postgres — documents
+are not in memory. A file in a repository is cheaper: it is checked against the same listing `documents_list`
+answered with, so what can be attached is exactly what the caller was offered, without a directory walk or a
+request to GitHub. Either way it happens before a task number is reserved, like everything else, so a refused
+reference does not burn an id.
 
 In the browser: a **Documents** screen with the tree on the left and the selected document on the right,
 modelled on the file browser in `remote-development-mcp` down to the class names — it is the same problem, and
 a second design for it would be a second thing to maintain. The selection lives in the URL
-(`/documents?selected=<id>`), so a document is linkable, survives a reload and works with the back button;
+(`/documents?selected=<reference>`), so a document is linkable, survives a reload and works with the back
+button — and because a reference names its board, such a link opens the right one rather than whichever was
+last browsed;
 which folders are open is remembered per project in local storage, and every folder down to a linked document
 is opened so a link lands ON it. How a document is drawn is decided by its **content type**, not by which column it came out of — html is text,
 and a viewer that framed only binary payloads showed a web page as a wall of markup. Markdown is rendered with
@@ -820,6 +862,7 @@ project.yaml     the project's settings, plus what the archive holds
 goals.yaml       every goal
 tasks.yaml       every task
 comments.yaml    every comment, on tasks and goals alike, oldest first
+documents.yaml   what each of those files is: its ID, its path, its declared content type
 documents/       the project's documents, as themselves, at their own paths
 ```
 
@@ -841,8 +884,22 @@ paths, so the archive is also just a folder of the project's documents, openable
 out next. That is why `goal: TM-G7` and `depends_on: [TM-4]` are spelled the way a person writes them: a bare
 number would be indistinguishable from one this board already uses, and a handle can be checked. A reference
 to something the archive does not carry drops the edge and is reported — the work is real, and the grouping
-is not worth losing it over. A document reference is a **path** for the same reason, resolved against what
-actually arrived in `documents/`.
+is not worth losing it over.
+
+**A document is the exception: its ID crosses with it, and that is what `documents.yaml` is for.** A card
+names a document by a reference — `raw/TM/document/<id>` — so the only part that has to be remapped is the
+project prefix, the one part of a reference that is about which board rather than which document. Carrying
+the id is safe because a `SortableId` is `{unix_micros}-{uuid}`: unique across instances, not merely within
+one, so the same document on two boards is deliberately the same id and two different documents cannot
+collide. The `documents/` folder cannot carry it — a folder is keyed by path — which is exactly why there is
+a fifth file. Without it the receiving board minted a fresh id for every document and every reference on
+every card arrived pointing at nothing, while the documents themselves sat right there.
+
+A reference into a **connected repository** — `raw/TM/github/<repository>/<path>` — is carried across
+untouched but for the prefix, and is never dropped. Nothing here could have made it arrive: an export
+deliberately does not carry a repository, because the repository is still there and the receiving board gets
+those files by connecting it. Dropping the reference would throw away the only record of which file the work
+was done against.
 
 Everything that is not a reference arrives unchanged: text, status, priority, kind, assignee, labels,
 checklists, build links, and the created / updated / closed / deleted moments. **A comment keeps its own

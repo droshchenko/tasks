@@ -257,6 +257,38 @@ pub fn parse_github_mirror_path(path: &str) -> Option<(&str, &str)> {
     Some((connection, relative_path))
 }
 
+/// What every file of a connected repository is named by, on this side.
+///
+/// **It is derived from where the file is, and it is honest about that.** A document's id is a
+/// `SortableId` minted once and never changed, which is what makes its history complete. A file in a
+/// repository has none of that: this id changes when the file moves and disappears when the file does.
+/// The prefix is what stops it being mistaken for the other kind — nothing that starts with this is ever
+/// looked for in Postgres.
+///
+/// Here in `shared` rather than beside the mirror, because both sides read it now: the server mints these
+/// ids into every listing, and the browser has to recognise one to open the file it names.
+pub const MIRROR_ID_PREFIX: &str = "github:";
+
+/// The id a file of a connected repository is named by.
+///
+/// It carries the project because an id is looked up on its own — `documents_get` takes one without a
+/// project beside it — and a path is only unique within a board.
+pub fn mirror_document_id(project_prefix: &str, mirror_path: &str) -> String {
+    format!("{MIRROR_ID_PREFIX}{project_prefix}:{mirror_path}")
+}
+
+/// Split such an id back into the project and the path it names.
+pub fn parse_mirror_document_id(id: &str) -> Option<(&str, &str)> {
+    let rest = id.trim().strip_prefix(MIRROR_ID_PREFIX)?;
+    let (project_prefix, mirror_path) = rest.split_once(':')?;
+
+    if project_prefix.is_empty() || mirror_path.is_empty() {
+        return None;
+    }
+
+    Some((project_prefix, mirror_path))
+}
+
 /// Check a connection's name, or say why it is not one.
 ///
 /// It is a folder name in every path the mirror produces, so the rules are the rules a path segment lives

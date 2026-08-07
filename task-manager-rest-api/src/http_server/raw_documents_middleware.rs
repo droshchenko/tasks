@@ -71,6 +71,8 @@ async fn serve(
     // image in a repository draws in the viewer exactly as one of the project's own does.
     let (content_type, content) = if task_manager_shared::github::is_github_path(path) {
         serve_from_mirror(app, prefix, path).await?
+    } else if let Some(id) = document_id_in(path) {
+        serve_by_id(app, &project_id, id, path).await?
     } else {
         serve_from_documents(app, &project_id, path).await?
     };
@@ -129,6 +131,59 @@ fn with_charset(content_type: String) -> String {
     }
 
     format!("{content_type}; charset=utf-8")
+}
+
+/// The document id a `document/<id>` path names, or `None` for a path that names a document instead.
+///
+/// **The second half of the reference vocabulary, and the only part of it this route did not already
+/// serve.** A file in a connected repository is named by its path, which this route has always taken; a
+/// document of the project's own has an ID that survives it being moved, and a reference that stored the
+/// path would go stale the moment somebody reorganised a folder.
+///
+/// Exactly one segment after the word, because an id holds no separator. That is also what keeps the
+/// ambiguity narrow: `document/spec/a.md` is a document of the project's own in a folder called
+/// `document`, reads as one, and is served as one.
+fn document_id_in(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix(task_manager_shared::documents::RAW_OWN_SEGMENT)?;
+    let id = rest.strip_prefix('/')?;
+
+    match id.is_empty() || id.contains('/') {
+        true => None,
+        false => Some(id),
+    }
+}
+
+/// One of the project's own documents, named by its id.
+///
+/// **Falls back to the path when the id names nothing**, which is not leniency for its own sake: a project
+/// that already had a document at `document/<something>` had a working url for it before this branch
+/// existed, and that url has to keep working. A miss on both is the same "No such document" either way.
+async fn serve_by_id(
+    app: &Arc<AppContext>,
+    project_id: &str,
+    id: &str,
+    path: &str,
+) -> Result<(String, Vec<u8>), HttpFailResult> {
+    let telemetry = service_sdk::my_telemetry::MyTelemetryContext::create_empty();
+
+    let Some(row) = app.documents_repo.get_by_id(id, &telemetry).await else {
+        return serve_from_documents(app, project_id, path).await;
+    };
+
+    // The id found the row, so the project it belongs to has to be checked against the one the url named —
+    // the access check above is about the project that was NAMED, not the one the document is on.
+    if row.project_id != project_id {
+        return Err(not_found("No such document"));
+    }
+
+    let content_type = content_type_of(row.content_type.as_deref(), &row.doc_path);
+
+    let content = match body_of(&row) {
+        DocumentBody::Text(text) => text.into_bytes(),
+        DocumentBody::Binary(bytes) => bytes,
+    };
+
+    Ok((content_type, content))
 }
 
 /// One of the project's own documents, as a content type and bytes.
@@ -218,6 +273,25 @@ mod tests {
             with_charset("application/octet-stream".to_string()),
             "application/octet-stream"
         );
+    }
+
+    /// The word plus ONE segment is an id; anything else is a path that happens to start with it, and a
+    /// project that already had a folder called `document` keeps every url it had.
+    #[test]
+    fn only_one_segment_after_the_word_is_an_id() {
+        assert_eq!(
+            document_id_in("document/01K2C4Q0S1T2U3V4W5X6Y7Z8"),
+            Some("01K2C4Q0S1T2U3V4W5X6Y7Z8")
+        );
+
+        // A folder called `document`, which is a document of the project's own and is served by path.
+        assert_eq!(document_id_in("document/spec/a.md"), None);
+        assert_eq!(document_id_in("document"), None);
+        assert_eq!(document_id_in("document/"), None);
+
+        // A folder whose name merely starts with the same letters is nothing to do with this.
+        assert_eq!(document_id_in("documents/a.md"), None);
+        assert_eq!(document_id_in("docs/a.md"), None);
     }
 
     /// One a caller already spelled out is left exactly as it is — a second parameter would be malformed,

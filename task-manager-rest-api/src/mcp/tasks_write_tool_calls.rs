@@ -67,7 +67,7 @@ pub struct TasksCreateInput {
     )]
     pub subtasks: Option<Vec<SubtaskInput>>,
     #[property(
-        description = "Ids of documents to point this task at, from documents_list. A document is the specification the work is done against; attaching it here is what puts it in front of whoever picks the task up. Every id must be a live document of THIS project — a reference does not cross boards, and an id that names nothing is refused rather than stored as a dead link"
+        description = "References to the documents this task is done against, from documents_list. A document is the specification the work is done against; attaching it here is what puts it in front of whoever picks the task up. A reference is a url and names either kind of document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository — so a specification that lives in a repository is attached without copying it in first. A bare id or the `path` a listing reports is accepted too and comes back as the url. Every one must be on THIS project and must resolve: a reference does not cross boards, and one that names nothing is refused rather than stored as a dead link"
     )]
     pub documents: Option<Vec<String>>,
 }
@@ -185,11 +185,11 @@ pub struct TasksUpdateInput {
     )]
     pub remove_subtasks: Option<Vec<String>>,
     #[property(
-        description = "Ids of documents to attach to this task, from documents_list. Added to whatever it already references, so you need not know the current set. Every id must be a live document of this project; one in the trash is refused with the path it had, because restoring it is the fix"
+        description = "Documents to attach to this task, from documents_list. Added to whatever it already references, so you need not know the current set. Each is a reference url — `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository — and a bare id or a listing's `path` is accepted too. A document of this project's own must be live: one in the trash is refused with the path it had, because restoring it is the fix. A file in a repository must be one the mirror actually holds, so a path that has not been pulled yet is refused saying so rather than stored"
     )]
     pub add_documents: Option<Vec<String>>,
     #[property(
-        description = "Ids of documents to detach. Applied after add_documents, so an id passed to both ends up detached. Detaching is not deleting — the document is untouched, this only takes the reference off this task. An id that is not there is not an error"
+        description = "Documents to detach, by reference or by any spelling of one — whichever you have detaches the same reference. Applied after add_documents, so one passed to both ends up detached. Detaching is not deleting — the document is untouched, this only takes the reference off this task. One that is not there is not an error"
     )]
     pub remove_documents: Option<Vec<String>>,
     #[property(

@@ -29,7 +29,7 @@ pub fn RenderDocuments(selected: String) -> Element {
     // `use_reactive!` is what makes a prop wake it, since a prop is not a signal.
     use_effect(use_reactive!(|selected| {
         if !selected.is_empty() {
-            cs.write().reveal(&selected);
+            cs.write().follow(&selected);
         }
     }));
 
@@ -37,7 +37,7 @@ pub fn RenderDocuments(selected: String) -> Element {
 
     // Owned before the read guard is dropped: the picker below is drawn after it, and a borrow of the state
     // cannot outlive it — the same reason the Goals screen takes a copy.
-    let projects: Vec<ProjectResponse> = match get_projects(cs, &cs_ra) {
+    let projects: Vec<ProjectResponse> = match get_projects(cs, &cs_ra, &selected) {
         Ok(projects) => projects.to_vec(),
         Err(element) => return element,
     };
@@ -384,7 +384,14 @@ fn render_document(
 fn get_projects<'s>(
     mut cs: Signal<DocumentsState>,
     cs_ra: &'s DocumentsState,
+    selected: &str,
 ) -> Result<&'s [ProjectResponse], Element> {
+    // **The url wins over what the browser remembers, and it has to.** A reference carries the board it is
+    // on, so following one from a task means opening THAT board — where opening the remembered one instead
+    // draws a tree the document is not in and reports it missing, with nothing on screen to say why.
+    let asked_for = task_manager_shared::documents::parse_document_reference(selected)
+        .map(|itm| itm.project().to_string());
+
     match cs_ra.projects.as_ref() {
         RenderState::None => {
             spawn(async move {
@@ -392,7 +399,7 @@ fn get_projects<'s>(
 
                 match crate::api::get_projects().await {
                     Ok(response) => {
-                        let remembered = crate::web::storage::get_last_project();
+                        let remembered = asked_for.or_else(crate::web::storage::get_last_project);
 
                         let initial = remembered
                             .filter(|prefix| {

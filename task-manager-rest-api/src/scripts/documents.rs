@@ -1,8 +1,9 @@
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use service_sdk::my_telemetry::MyTelemetryContext;
 use task_manager_shared::documents::{
-    DEFAULT_BINARY_CONTENT_TYPE, DEFAULT_TEXT_CONTENT_TYPE, content_type_for_path,
-    normalise_document_path,
+    DEFAULT_BINARY_CONTENT_TYPE, DEFAULT_TEXT_CONTENT_TYPE, DocumentReference,
+    content_type_for_path, mirror_document_reference, normalise_document_path,
+    own_document_reference,
 };
 
 use crate::app::AppContext;
@@ -230,6 +231,40 @@ pub async fn upload_document(
     content: NewDocumentContent,
     who: &str,
 ) -> Result<DocumentDto, String> {
+    write_document(app, project_prefix, path, content, who, None).await
+}
+
+/// The same write, with the id said rather than minted — the one caller being an import.
+///
+/// **A document's id crosses instances, and an import is where it has to.** A reference on a task names a
+/// document by id, so a board that arrived with fresh ids would arrive with every reference pointing at
+/// nothing. Carrying the id over is what makes the receiving board the same board rather than a copy that
+/// lost its links, and it is safe to do because a `SortableId` is `{unix_micros}-{uuid}`: unique across
+/// instances, not merely within one.
+///
+/// It applies to a document being CREATED and to nothing else. Uploading onto a path that is taken still
+/// writes a version of whatever is there, keeping the id it already has — an import into a project that
+/// already holds that path is a rewrite of that document, and giving it a second id is not a thing the
+/// table can express.
+pub async fn import_document(
+    app: &AppContext,
+    project_prefix: &str,
+    path: &str,
+    content: NewDocumentContent,
+    who: &str,
+    id: &str,
+) -> Result<DocumentDto, String> {
+    write_document(app, project_prefix, path, content, who, Some(id)).await
+}
+
+async fn write_document(
+    app: &AppContext,
+    project_prefix: &str,
+    path: &str,
+    content: NewDocumentContent,
+    who: &str,
+    given_id: Option<&str>,
+) -> Result<DocumentDto, String> {
     let project_id = {
         let board = app.board.read();
         resolve_project_by_prefix(&board, project_prefix)?.id.clone()
@@ -280,8 +315,11 @@ pub async fn upload_document(
             updated_by: who.clone(),
         },
         None => DocumentDto {
-            // Minted here and nowhere else. Sortable, so a listing by id is a listing by age.
-            id: rust_extensions::SortableId::generate().to_string(),
+            // Minted here and nowhere else, unless an import said which id this document already has —
+            // see `import_document`. Sortable, so a listing by id is a listing by age.
+            id: given_id
+                .map(str::to_string)
+                .unwrap_or_else(|| rust_extensions::SortableId::generate().to_string()),
             project_id,
             doc_path: path,
             content_type: Some(content_type),
@@ -321,6 +359,7 @@ pub async fn update_document_path(
     path: &str,
     who: &str,
 ) -> Result<DocumentDto, String> {
+    let id = &unwrap_document_reference(id);
     let path = normalise_document_path(path)?;
     let who = require_author(who)?;
 
@@ -383,6 +422,8 @@ pub async fn update_document_path(
 ///
 /// Returns the path it had, which is what a caller wants echoed back: it is what the document was called.
 pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<String, String> {
+    let id = &unwrap_document_reference(id);
+
     // A file of a connected repository is removed from the working tree instead, where git is the trash:
     // every commit that held it still holds it. See `delete_mirror_document`.
     if let Some((project_prefix, mirror_path)) = super::parse_mirror_document_id(id) {
@@ -583,6 +624,8 @@ pub async fn restore_document(
     path: Option<&str>,
     who: &str,
 ) -> Result<DocumentDto, String> {
+    let id = &unwrap_document_reference(id);
+
     // Both ends, because neither has anything to do with this product's trash: a file of a connected
     // repository never went into it, and a trashed document restored INTO a working copy would be a
     // commit to somebody's repository dressed up as an undo. The refusal names the git command that
@@ -653,6 +696,7 @@ pub async fn restore_document(
 
 /// One live document by id, payload included.
 pub async fn read_document(app: &AppContext, id: &str) -> Result<DocumentDto, String> {
+    let id = &unwrap_document_reference(id);
     let ctx = MyTelemetryContext::create_empty();
     require_live(app, id, &ctx).await
 }
@@ -695,7 +739,8 @@ pub async fn resolve_document(
     project_prefix: Option<&str>,
     path: Option<&str>,
 ) -> Result<DocumentDto, String> {
-    let id = id.map(str::trim).filter(|itm| !itm.is_empty());
+    let id = unwrap_named_reference(id, path);
+    let id = id.as_deref();
     let path = path.map(str::trim).filter(|itm| !itm.is_empty());
 
     match (id, path) {
@@ -703,7 +748,7 @@ pub async fn resolve_document(
         // sitting today.
         (Some(id), _) => {
             // A mirrored file is named by an id of its own shape and is never looked for in Postgres —
-            // there is no row. See `super::MIRROR_ID_PREFIX`.
+            // there is no row. See `task_manager_shared::github::MIRROR_ID_PREFIX`.
             if let Some((project_prefix, mirror_path)) = super::parse_mirror_document_id(id) {
                 return super::read_mirror_document(app, project_prefix, mirror_path).await;
             }
@@ -853,8 +898,10 @@ fn mirror_named_by(
     project_prefix: Option<&str>,
     path: Option<&str>,
 ) -> Result<Option<(String, String)>, String> {
-    if let Some(id) = id.map(str::trim).filter(|itm| !itm.is_empty()) {
-        return Ok(super::parse_mirror_document_id(id)
+    // A reference is the THIRD name one of these files has, and it is the one a person writes down. It
+    // carries its own project, so it needs nothing beside it — which is the whole reason it is a url.
+    if let Some(named) = unwrap_named_reference(id, path) {
+        return Ok(super::parse_mirror_document_id(&named)
             .map(|(prefix, mirror_path)| (prefix.to_string(), mirror_path.to_string())));
     }
 
@@ -1073,6 +1120,8 @@ pub async fn document_diff(
     to_version: Option<i64>,
     context_lines: i64,
 ) -> Result<DocumentDiff, String> {
+    let id = &unwrap_document_reference(id);
+
     // Errors when the id names nothing at all, which is the message a caller wants before any talk of
     // version numbers.
     let versions = document_history(app, id).await?;
@@ -1208,6 +1257,8 @@ pub async fn document_history(
     app: &AppContext,
     id: &str,
 ) -> Result<Vec<DocumentVersionDto>, String> {
+    let id = &unwrap_document_reference(id);
+
     // A mirrored file has no history HERE, which is a different sentence from "no such document" — its
     // history is in the repository it came from. `document_diff` comes through this function, so refusing
     // once covers both.
@@ -1233,6 +1284,8 @@ pub async fn document_version(
     id: &str,
     version: i64,
 ) -> Result<DocumentHistoryDto, String> {
+    let id = &unwrap_document_reference(id);
+
     super::refuse_reserved_history(id)?;
 
     let ctx = MyTelemetryContext::create_empty();
@@ -1357,14 +1410,28 @@ pub fn content_type_of(stored: Option<&str>, path: &str) -> String {
 /// Add and remove rather than "here is the new list", the same shape labels use and for the same reason: a
 /// caller attaching one document must not have to know — or resend — the four that are already there.
 ///
-/// **Unlike a label, an unknown id is refused.** A label is a word and removing one that is not there is
-/// harmless; a document id is minted by the system, so one that names nothing means the caller is working
-/// from a stale read or has invented it, and attaching a reference nobody can resolve is worse than
-/// refusing.
+/// **Unlike a label, a reference that names nothing is refused.** A label is a word and removing one that is
+/// not there is harmless; a reference is supposed to point at something a reader can open, so one that
+/// resolves to nothing means the caller is working from a stale read or has invented it, and storing a dead
+/// link is worse than refusing.
 #[derive(Default)]
 pub struct DocumentsPatch {
     pub add: Vec<String>,
     pub remove: Vec<String>,
+}
+
+/// The canonical spelling of a reference, WITHOUT checking that it points at anything.
+///
+/// Its own function because removal needs it and validation must not run there: a reference to a document
+/// that has since been deleted, or to a repository that has since been disconnected, is exactly the
+/// reference somebody is trying to take off a card. Comparing canonical spellings is also what lets a
+/// caller detach with the name they attached with, whichever of the four spellings that was — and what
+/// lets a legacy bare id already on a card be removed by naming its url.
+///
+/// The reading itself is in `shared`, because the browser does it too — see
+/// [`task_manager_shared::documents::read_document_reference`] for the four spellings it accepts.
+fn canonical_reference(project_prefix: &str, src: &str) -> String {
+    task_manager_shared::documents::canonical_document_reference(project_prefix, src)
 }
 
 impl DocumentsPatch {
@@ -1391,57 +1458,238 @@ impl DocumentsPatch {
         ids: &mut Vec<String>,
         owner: &str,
     ) -> Result<(), String> {
-        for id in &self.add {
-            let id = id.trim();
+        // The board is read once, before any await: `parking_lot`'s guard is `!Send`, and every reference
+        // below needs the same two things — what this project is CALLED, since a reference carries a
+        // prefix, and which repositories are connected to it.
+        let (project_prefix, connections) = {
+            let board = app.board.read();
+            let project = super::projects::load(&board, project_id)?;
 
-            if id.is_empty() {
-                return Err("a document reference needs an id".to_string());
+            (project.prefix.clone(), project.github_connections.clone())
+        };
+
+        for reference in &self.add {
+            let reference = reference.trim();
+
+            if reference.is_empty() {
+                return Err("a document reference needs a document to point at".to_string());
             }
 
-            let Some(entry) = app.documents_index.get(id) else {
-                // A trashed document is named as trashed rather than as missing: attaching one is still
-                // refused — a reference should point at something a reader can open — but the fix is
-                // different, and it is one call away.
-                let ctx = MyTelemetryContext::create_empty();
+            // The two kinds are checked by different things and could not share one branch: a document of
+            // the project's own is a row, so the question is whether it is live, and a file in a
+            // repository is a working copy, so the question is whether the mirror holds it.
+            let named =
+                task_manager_shared::documents::read_document_reference(&project_prefix, reference);
 
-                return Err(match app.documents_repo.get_trashed(id, &ctx).await {
-                    Some(trashed) => format!(
-                        "document {id} is in the trash (it was at '{}') — restore it before attaching it to {owner}",
-                        trashed.doc_path
-                    ),
-                    None => format!(
-                        "no document {id} — list the project's documents and use the `id` each entry reports"
-                    ),
-                });
+            let canonical = match named {
+                DocumentReference::Own { project, id } => {
+                    require_own_document(app, project_id, &project, &project_prefix, &id, owner)
+                        .await?;
+
+                    own_document_reference(&project_prefix, &id)
+                }
+                DocumentReference::Mirror { project, path } => {
+                    require_mirror_file(
+                        app,
+                        project_id,
+                        &project,
+                        &project_prefix,
+                        &connections,
+                        &path,
+                        owner,
+                    )?;
+
+                    mirror_document_reference(&project_prefix, &path)
+                }
             };
 
-            if entry.project_id != project_id {
-                return Err(format!(
-                    "document {id} belongs to another project, and a reference does not cross projects — {owner} can only point at documents of its own board"
-                ));
-            }
-
-            if !ids.iter().any(|itm| itm == id) {
-                ids.push(id.to_string());
+            if !ids.iter().any(|itm| itm == &canonical) {
+                ids.push(canonical);
             }
         }
 
-        for id in &self.remove {
-            let id = id.trim();
+        for reference in &self.remove {
+            // Compared as canonical spellings rather than as strings, so a caller detaches with whichever
+            // of the spellings they have — including a bare id put on the card before references were
+            // urls. Unlike an add, removing one that is not there is NOT refused: the caller's intent,
+            // "this reference should not be here", is already true and there is nothing for them to fix.
+            let canonical = canonical_reference(&project_prefix, reference);
 
-            // Unlike an add, removing an id that is not there is NOT refused. The caller's intent — "this
-            // reference should not be here" — is already true, and there is nothing for them to fix.
-            ids.retain(|itm| itm != id);
+            ids.retain(|itm| canonical_reference(&project_prefix, itm) != canonical);
         }
 
-        // Sorted, which for a `SortableId` is also oldest first: two callers attaching the same documents in
-        // different orders end up with identical lists, so nothing compares unequal for a reason nobody can
-        // see.
+        // Sorted so that two callers attaching the same documents in different orders end up with
+        // identical lists, and nothing compares unequal for a reason nobody can see.
         ids.sort();
         ids.dedup();
 
         Ok(())
     }
+}
+
+/// A reference url turned into the name the documents tools already take, or the string untouched.
+///
+/// **This is what makes a reference something you can WRITE DOWN.** A reference is a url, so it survives
+/// being pasted into a `CLAUDE.md`, an issue or a chat message — and what comes back the other way is
+/// somebody handing that url to `documents_get` and expecting the document. Unwrapped at the top of every
+/// tool that takes a document's name, so every one of them accepts it: read it, edit it, move it, delete
+/// it, diff it, outline it.
+///
+/// The two forms unwrap to the two names this service already had, which is why nothing downstream had to
+/// learn anything:
+///
+/// ```text
+/// raw/TM/document/01K2C4…        →  01K2C4…                        an id, looked up in Postgres
+/// raw/TM/github/specs/a.md       →  github:TM:github/specs/a.md    a mirrored file, read off disk
+/// ```
+///
+/// Anything that is not a reference comes back as itself, trimmed — which is every id and every path that
+/// was ever passed to these tools, so this can be put in front of all of them without a branch at the
+/// call site.
+pub fn unwrap_document_reference(src: &str) -> String {
+    match task_manager_shared::documents::parse_document_reference(src) {
+        Some(DocumentReference::Own { id, .. }) => id,
+        Some(DocumentReference::Mirror { project, path }) => {
+            task_manager_shared::github::mirror_document_id(&project, &path)
+        }
+        None => src.trim().to_string(),
+    }
+}
+
+/// The id slot of a tool that takes `id`, `project` and `path`, with a reference unwrapped out of either.
+///
+/// **A person who writes a reference down does not know which of the three arguments this product calls
+/// it**, and both readings are right: a reference IS an identity, and it also looks like an address. So one
+/// arriving as a `path` is moved into the id slot, where identity belongs — otherwise it would be looked
+/// for as a document literally called `raw/TM/github/…`, and the miss would say the path is not there
+/// rather than that it was read in the wrong slot.
+fn unwrap_named_reference(id: Option<&str>, path: Option<&str>) -> Option<String> {
+    let named = |src: Option<&str>| {
+        src.map(str::trim)
+            .filter(|itm| task_manager_shared::documents::parse_document_reference(itm).is_some())
+            .map(unwrap_document_reference)
+    };
+
+    named(id).or_else(|| named(path)).or_else(|| {
+        id.map(str::trim)
+            .filter(|itm| !itm.is_empty())
+            .map(str::to_string)
+    })
+}
+
+/// Refuse a reference unless it names a live document of THIS board.
+///
+/// **Checked against the in-memory index**, not Postgres: the index holds every live document's reference,
+/// which is exactly what this question needs, and it is the reason the index exists. Only the "is it in the
+/// trash" half — the branch that produces a better message — goes to the database.
+async fn require_own_document(
+    app: &AppContext,
+    project_id: &str,
+    named_prefix: &str,
+    project_prefix: &str,
+    id: &str,
+    owner: &str,
+) -> Result<(), String> {
+    // A reference that spelled out a board has to have spelled out this one. Checked before the lookup so
+    // that naming another project's document reads as crossing a boundary rather than as a missing id.
+    if !named_prefix.eq_ignore_ascii_case(project_prefix) {
+        return Err(format!(
+            "that reference is on project {named_prefix} and {owner} is on {project_prefix} — a reference does not cross boards"
+        ));
+    }
+
+    let Some(entry) = app.documents_index.get(id) else {
+        // A trashed document is named as trashed rather than as missing: attaching one is still refused —
+        // a reference should point at something a reader can open — but the fix is different, and it is
+        // one call away.
+        let ctx = MyTelemetryContext::create_empty();
+
+        return Err(match app.documents_repo.get_trashed(id, &ctx).await {
+            Some(trashed) => format!(
+                "document {id} is in the trash (it was at '{}') — restore it before attaching it to {owner}",
+                trashed.doc_path
+            ),
+            None => format!(
+                "no document {id} — list the project's documents and use the `id` each entry reports"
+            ),
+        });
+    };
+
+    if entry.project_id != project_id {
+        return Err(format!(
+            "document {id} belongs to another project, and a reference does not cross projects — {owner} can only point at documents of its own board"
+        ));
+    }
+
+    Ok(())
+}
+
+/// Refuse a reference unless it names a file this board's mirrors actually hold.
+///
+/// **The listing is what it is checked against, and that is the same list `documents_list` answered with.**
+/// So what can be attached is exactly what the caller was offered — no directory walk, no request to
+/// GitHub, and no chance of storing a link to a file that only exists in a stale read.
+///
+/// Synchronous, unlike its counterpart above: there is no row anywhere to ask about. A mirror is memory and
+/// a working copy on disk, so every question this asks is answered without leaving the process.
+///
+/// **The three ways it can miss say three different things**, because the fix is different for each: the
+/// repository is not connected to this board at all, the connection has never been read, or the file is not
+/// in what was read. Only the last one means the caller got the path wrong.
+fn require_mirror_file(
+    app: &AppContext,
+    project_id: &str,
+    named_prefix: &str,
+    project_prefix: &str,
+    connections: &[crate::board::GithubConnectionModel],
+    path: &str,
+    owner: &str,
+) -> Result<(), String> {
+    if !named_prefix.eq_ignore_ascii_case(project_prefix) {
+        return Err(format!(
+            "'{path}' is a file on project {named_prefix} and {owner} is on {project_prefix} — a connected repository belongs to the board it was connected to, and a reference does not cross boards"
+        ));
+    }
+
+    let Some((connection_name, relative)) =
+        task_manager_shared::github::parse_github_mirror_path(path)
+    else {
+        return Err(format!(
+            "'{path}' is not a file in a connected repository — those are `{}/<repository>/<file>`, exactly as documents_list reports them",
+            task_manager_shared::github::GITHUB_ROOT
+        ));
+    };
+
+    if !connections.iter().any(|itm| itm.name == connection_name) {
+        return Err(format!(
+            "this project has no connected repository called '{connection_name}' — projects_list and the Documents screen both show which ones it has"
+        ));
+    }
+
+    let mirror = app.github.get_or_pending(project_id, connection_name);
+
+    if mirror.entries.iter().any(|itm| itm.path == relative) {
+        return Ok(());
+    }
+
+    // Nothing has been read yet, so this is not the caller being wrong — it is a repository that has not
+    // been pulled since the service started, which for a private one means a key nobody has typed back in.
+    if mirror.entries.is_empty()
+        && mirror.state != task_manager_shared::github::GithubMirrorState::READY
+    {
+        return Err(format!(
+            "'{connection_name}' has not been read yet — its state is '{}'{}, so there is nothing to check '{relative}' against. Attach it once the repository has been pulled",
+            mirror.state,
+            match mirror.error.is_empty() {
+                true => String::new(),
+                false => format!(": {}", mirror.error),
+            }
+        ));
+    }
+
+    Err(format!(
+        "'{relative}' is not in '{connection_name}' — list the project's documents and use the `path` each entry reports"
+    ))
 }
 
 /// The author of a write, or a refusal.
@@ -1522,6 +1770,107 @@ async fn write_version(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An agent holds whichever name the tool it last called handed back, so all four spellings of one
+    /// file have to reach the same file — otherwise attaching a document becomes a question of which
+    /// listing you read it from.
+    #[test]
+    fn every_spelling_of_one_mirrored_file_is_the_same_reference() {
+        let expected = "raw/TM/github/specs/design/system.md";
+
+        for spelling in [
+            // The canonical reference, and the url it resolves to.
+            "raw/TM/github/specs/design/system.md",
+            "/raw/TM/github/specs/design/system.md",
+            // The `id` a mirrored file carries in documents_list.
+            "github:TM:github/specs/design/system.md",
+            // The `path` from that same listing, which names a file only on the board it is read with.
+            "github/specs/design/system.md",
+        ] {
+            assert_eq!(
+                canonical_reference("TM", spelling),
+                expected,
+                "'{spelling}' did not read as the file it names"
+            );
+        }
+    }
+
+    /// The other kind, and the one that has an id: what is stored is the reference, and what a caller may
+    /// have passed is the bare id every reference was before this vocabulary existed.
+    #[test]
+    fn a_document_of_the_projects_own_is_named_by_its_id_either_way() {
+        let expected = "raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8";
+
+        for spelling in [
+            "01K2C4Q0S1T2U3V4W5X6Y7Z8",
+            "  01K2C4Q0S1T2U3V4W5X6Y7Z8  ",
+            "raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8",
+            "/raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8",
+        ] {
+            assert_eq!(canonical_reference("TM", spelling), expected);
+        }
+    }
+
+    /// A reference names its own board, and one that names another must NOT be quietly adopted by the card
+    /// it was passed to — the check that refuses it needs the project the caller actually wrote.
+    #[test]
+    fn a_reference_keeps_the_board_it_names() {
+        assert_eq!(
+            canonical_reference("TM", "raw/RMS/github/specs/a.md"),
+            "raw/RMS/github/specs/a.md"
+        );
+        assert_eq!(
+            canonical_reference("TM", "github:RMS:github/specs/a.md"),
+            "raw/RMS/github/specs/a.md"
+        );
+
+        // And a spelling that names no board takes the one the card is on, which is the only board it
+        // could sensibly mean.
+        assert_eq!(
+            canonical_reference("TM", "github/specs/a.md"),
+            "raw/TM/github/specs/a.md"
+        );
+    }
+
+    /// What every documents tool takes: a reference in, the name that tool already understood out.
+    #[test]
+    fn a_reference_unwraps_to_the_name_the_tools_take() {
+        assert_eq!(
+            unwrap_document_reference("raw/TM/document/01K2C4Q0S1T2U3V4W5X6Y7Z8"),
+            "01K2C4Q0S1T2U3V4W5X6Y7Z8"
+        );
+        assert_eq!(
+            unwrap_document_reference("raw/TM/github/specs/a.md"),
+            "github:TM:github/specs/a.md"
+        );
+
+        // Not a reference: back as itself, which is what lets this sit in front of every tool without a
+        // branch at the call site.
+        assert_eq!(
+            unwrap_document_reference("  01K2C4Q0S1T2U3V4W5X6Y7Z8  "),
+            "01K2C4Q0S1T2U3V4W5X6Y7Z8"
+        );
+        assert_eq!(unwrap_document_reference("docs/a.md"), "docs/a.md");
+    }
+
+    /// A reference identifies a document outright, so it belongs in the id slot however it arrived —
+    /// looked for as a path it would miss, and the miss would blame the path.
+    #[test]
+    fn a_reference_written_into_the_path_slot_is_still_an_identity() {
+        assert_eq!(
+            unwrap_named_reference(None, Some("raw/TM/github/specs/a.md")),
+            Some("github:TM:github/specs/a.md".to_string())
+        );
+
+        // An id beside a path still wins, exactly as it does without any reference involved.
+        assert_eq!(
+            unwrap_named_reference(Some("01K2C4"), Some("docs/a.md")),
+            Some("01K2C4".to_string())
+        );
+
+        // And an ordinary path is left in the path slot, where it names a document on the project beside it.
+        assert_eq!(unwrap_named_reference(None, Some("docs/a.md")), None);
+    }
 
     /// The five events have to be distinct strings, or a history cannot tell a rewrite from a move — which is
     /// the one distinction it exists for.
