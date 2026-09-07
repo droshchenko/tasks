@@ -207,6 +207,11 @@ same text stored twice — a file in a connected repository and a copy synced in
 once and found by both, and an edit produces different bytes and therefore a document nobody has \
 briefed again. A brief can never describe a text that has since changed.\
 \
+A DOCUMENT TOO LONG TO HAND OVER WHOLE COMES BACK AS ITS OPENING PLUS ITS OUTLINE, and the brief is \
+still about the whole of it: the headings say what it covers end to end, `read_on_from_line` says where \
+documents_get carries on, and two or three sections read deliberately are what a good brief of a long \
+specification is made of.\
+\
 WRITING THEM IS PART OF THE WORK, NOT A CHORE AFTER IT. documents_upload and documents_edit hand you \
 the new `content_hash`: file a brief with documents_set_brief in the same breath, while you still have \
 the text in front of you. To catch up a board, documents_list reports `without_brief` and \

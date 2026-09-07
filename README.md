@@ -449,6 +449,15 @@ the loop usually starts. `documents_list` reports the same number for a whole bo
 it counts **contents**: a licence file in nine folders is one brief away from done, and a count of nine would
 send an agent round a loop that finishes in one.
 
+**A document too long to hand over whole is briefed from its outline, not from its opening.** The loop
+returns the first 64 KB plus every heading with the lines its section spans, and the line to carry on from
+— so the brief describes the document rather than whatever it happens to start with, and the sections that
+decide what it IS are two `documents_get` calls away. The one document that cannot be read on from is the
+one whose first LINE is longer than the budget: a minified bundle, a one-line JSON. `slice_text` reports
+that honestly as a `to_line` before `from_line` — "read on from `to_line` + 1" would ask for the same
+bytes for ever — so the loop says there is no next line rather than handing back an instruction that
+loops.
+
 **The hash is stored rather than computed on demand**, on the document row and on the mirror listing, because
 the question "which of these has nobody read?" is asked of a whole project at once — and answering it by
 reading every payload is exactly what a brief exists to avoid. Documents written before the column existed
