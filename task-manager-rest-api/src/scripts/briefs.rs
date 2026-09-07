@@ -180,7 +180,9 @@ async fn remember_hash(app: &AppContext, row: &DocumentDto, hash: &str) {
 
     let ctx = service_sdk::my_telemetry::MyTelemetryContext::create_empty();
 
-    app.documents_repo.set_content_hash(&row.id, hash, &ctx).await;
+    app.documents_repo
+        .set_content_hash(&row.id, hash, &ctx)
+        .await;
 
     // And in memory, or the listing keeps saying this document has no hash until the next restart.
     app.documents_index.set_content_hash(&row.id, hash);

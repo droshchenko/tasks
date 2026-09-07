@@ -107,7 +107,10 @@ mod tests {
         let hash = content_hash("специфікація".as_bytes());
 
         assert_eq!(hash.len(), 64);
-        assert!(hash.chars().all(|itm| itm.is_ascii_hexdigit() && !itm.is_uppercase()));
+        assert!(
+            hash.chars()
+                .all(|itm| itm.is_ascii_hexdigit() && !itm.is_uppercase())
+        );
     }
 
     /// The property the whole brief table rests on: the key is the bytes and nothing else.
@@ -115,15 +118,24 @@ mod tests {
     fn the_same_bytes_hash_alike_wherever_they_came_from() {
         let text = "# Design\n\nOne paragraph.\n";
 
-        assert_eq!(content_hash(text.as_bytes()), content_hash(&text.as_bytes().to_vec()));
-        assert_ne!(content_hash(text.as_bytes()), content_hash(b"# Design\n\nOne paragraph."));
+        assert_eq!(
+            content_hash(text.as_bytes()),
+            content_hash(&text.as_bytes().to_vec())
+        );
+        assert_ne!(
+            content_hash(text.as_bytes()),
+            content_hash(b"# Design\n\nOne paragraph.")
+        );
     }
 
     #[test]
     fn a_hash_is_read_in_one_spelling_and_anything_else_is_refused() {
         let hash = content_hash(b"abc");
 
-        assert_eq!(normalise_content_hash(&hash.to_uppercase()), Ok(hash.clone()));
+        assert_eq!(
+            normalise_content_hash(&hash.to_uppercase()),
+            Ok(hash.clone())
+        );
         assert_eq!(normalise_content_hash(&format!("  {hash}  ")), Ok(hash));
 
         for bad in [

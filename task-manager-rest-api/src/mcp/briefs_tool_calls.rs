@@ -170,7 +170,11 @@ impl McpToolCall<DocumentsNextWithoutBriefInput, DocumentsNextWithoutBriefRespon
             // Cut to what a brief actually needs. The shape of a document — its title, its headings, its
             // opening — is in the first pages, and shipping a 900 KB specification whole to produce three
             // sentences spends the context the reading itself needs.
-            view.into_slice(None, None, Some(crate::documents::BRIEF_READ_MAX_BYTES as i64))
+            view.into_slice(
+                None,
+                None,
+                Some(crate::documents::BRIEF_READ_MAX_BYTES as i64),
+            )
         });
 
         let document = match document {

@@ -262,10 +262,10 @@ mod tests {
         let index = briefed(&["aaa"]);
 
         let entries = vec![
-            entry("a.md", Some("aaa"), false),  // briefed
-            entry("b.md", Some("bbb"), false),  // one piece of work…
-            entry("c.md", Some("bbb"), false),  // …the same one
-            entry("d.md", Some("ccc"), false),  // another
+            entry("a.md", Some("aaa"), false),    // briefed
+            entry("b.md", Some("bbb"), false),    // one piece of work…
+            entry("c.md", Some("bbb"), false),    // …the same one
+            entry("d.md", Some("ccc"), false),    // another
             entry("logo.png", Some("ddd"), true), // never counted
         ];
 
@@ -281,7 +281,10 @@ mod tests {
 
     #[test]
     fn a_brief_is_trimmed_and_bounded_and_never_empty() {
-        assert_eq!(normalise_brief("  what it says  "), Ok("what it says".to_string()));
+        assert_eq!(
+            normalise_brief("  what it says  "),
+            Ok("what it says".to_string())
+        );
 
         assert!(normalise_brief("").is_err());
         assert!(normalise_brief("   \n ").is_err());
