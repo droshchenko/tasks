@@ -1793,7 +1793,7 @@ fn require_mirror_file(
 ///
 /// Required for the same reason a comment's author is: MCP has no session, so the caller passes one, and a
 /// history of anonymous versions would not answer the question it exists to answer.
-fn require_author(who: &str) -> Result<String, String> {
+pub(crate) fn require_author(who: &str) -> Result<String, String> {
     let who = who.trim();
 
     if who.is_empty() {

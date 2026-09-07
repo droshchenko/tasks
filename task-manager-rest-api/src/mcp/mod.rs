@@ -4,10 +4,12 @@ use mcp_server_middleware::McpMiddleware;
 
 use crate::app::AppContext;
 
+mod briefs_tool_calls;
 mod comment_tool_calls;
 mod documents_text_tool_calls;
 mod documents_tool_calls;
 mod github_git_tool_call;
+mod github_refresh_tool_call;
 mod goals_tool_calls;
 mod labels_list_tool_call;
 mod projects_list_tool_call;
@@ -20,6 +22,7 @@ mod views;
 
 pub use views::*;
 
+use briefs_tool_calls::{DocumentsNextWithoutBriefHandler, DocumentsSetBriefHandler};
 use comment_tool_calls::{AddCommentHandler, GetCommentsHandler};
 use documents_text_tool_calls::{
     DocumentsDiffHandler, DocumentsEditHandler, DocumentsOutlineHandler, DocumentsSearchHandler,
@@ -30,6 +33,7 @@ use documents_tool_calls::{
     DocumentsUpdatePathHandler, DocumentsUploadHandler,
 };
 use github_git_tool_call::GithubGitHandler;
+use github_refresh_tool_call::GithubRefreshHandler;
 use goals_tool_calls::{
     GoalsAddCommentHandler, GoalsCreateHandler, GoalsDeleteHandler, GoalsGetCommentsHandler,
     GoalsListHandler, GoalsUpdateHandler,
@@ -191,6 +195,24 @@ rather than a bare id because a file in a repository HAS no id — it is a worki
 message, hand it back to documents_get, and it reads. It is also the live address of the bytes, give or \
 take a leading slash. You may still pass a bare id or the `id` and `path` a listing reports; what comes \
 back is always the url.\
+\
+EVERY DOCUMENT CARRIES A BRIEF, AND SCANNING BRIEFS IS HOW YOU FIND ONE. A brief is a few sentences \
+somebody wrote after reading a document — what it is, what it covers, which systems and decisions are \
+named in it. It comes back on every documents_list row and every documents_get, so 'which document \
+covers the settlement retries' is usually answered by ONE listing rather than by opening five \
+documents. An empty brief means nobody has read that one for you yet, not that it is empty.\
+\
+IT IS FILED BY THE HASH OF THE CONTENT, WHICH IS WHY IT STAYS HONEST. The key is `content_hash`, so the \
+same text stored twice — a file in a connected repository and a copy synced into a project — is briefed \
+once and found by both, and an edit produces different bytes and therefore a document nobody has \
+briefed again. A brief can never describe a text that has since changed.\
+\
+WRITING THEM IS PART OF THE WORK, NOT A CHORE AFTER IT. documents_upload and documents_edit hand you \
+the new `content_hash`: file a brief with documents_set_brief in the same breath, while you still have \
+the text in front of you. To catch up a board, documents_list reports `without_brief` and \
+documents_next_without_brief hands them over one at a time until it says `none_left`. A repository that \
+github_refresh has just cloned is the usual place to start — it arrives as a folder of texts nothing \
+here knows anything about.\
 \
 A LARGE DOCUMENT IS WORKED ON IN PIECES, AND FOUR TOOLS EXIST FOR NOTHING ELSE. A specification can be \
 tens of kilobytes; reading one whole to change a line, or reading five to find which mentions a thing, \
@@ -378,10 +400,19 @@ pub fn build_middleware(app: Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(DocumentsTrashHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(DocumentsRestoreHandler::new(app.clone())));
 
+    // The briefing loop, after the tools that produce the documents it reads: hand me the next unread
+    // one, and here is what it says.
+    mcp.register_tool_call(Arc::new(DocumentsNextWithoutBriefHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(DocumentsSetBriefHandler::new(app.clone())));
+
     // After the documents tools, because that is the order the work happens in: a change is made with
     // those, and this is what records and sends it. It is also the only tool here that does not act on
     // the board at all.
     mcp.register_tool_call(Arc::new(GithubGitHandler::new(app.clone())));
+
+    // And the one that brings a repository down again, which is where a board's briefing usually starts:
+    // a folder of files nothing here has read yet.
+    mcp.register_tool_call(Arc::new(GithubRefreshHandler::new(app.clone())));
 
     mcp.register_tool_call(Arc::new(GoalsAddCommentHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(GoalsGetCommentsHandler::new(app.clone())));

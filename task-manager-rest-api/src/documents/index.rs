@@ -178,6 +178,37 @@ impl DocumentsIndex {
     /// Add or replace one document's entry.
     ///
     /// Called after the Postgres write, like every other memory update in this service — see `scripts/`.
+    /// Record a hash on a document that was indexed without one, changing nothing else about it.
+    ///
+    /// **Its own method rather than an upsert of the whole entry**, because the caller that needs it — the
+    /// briefing loop, meeting a row written before the column existed — has read the payload but has no
+    /// business restating a document's size, version or author from it.
+    pub fn set_content_hash(&self, id: &str, content_hash: &str) {
+        let id = id.to_string();
+        let content_hash = content_hash.to_string();
+
+        self.mutate(move |inner| {
+            let Some(existing) = inner.by_id.get(&id) else {
+                return;
+            };
+
+            let mut updated = (**existing).clone();
+            updated.content_hash = Some(content_hash);
+
+            let updated = Arc::new(updated);
+
+            // Both views hold the same entry, so both have to be given the new one — a project's list is
+            // not a filter over the ids, it is a second map.
+            if let Some(entries) = inner.by_project.get_mut(&updated.project_id) {
+                if let Some(slot) = entries.iter_mut().find(|itm| itm.id == id) {
+                    *slot = updated.clone();
+                }
+            }
+
+            inner.by_id.insert(id, updated);
+        });
+    }
+
     pub fn upsert(&self, row: &DocumentDto) {
         let entry = Arc::new(DocumentIndexEntry::from_row(row));
 

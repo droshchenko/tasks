@@ -1,5 +1,6 @@
 mod archives;
 mod board_search;
+mod briefs;
 mod column_templates;
 mod document_text;
 mod documents;
@@ -22,6 +23,7 @@ mod users;
 
 pub use archives::*;
 pub use board_search::*;
+pub use briefs::*;
 pub use column_templates::*;
 pub use document_text::*;
 pub use documents::*;

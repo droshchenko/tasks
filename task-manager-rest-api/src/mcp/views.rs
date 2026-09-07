@@ -443,11 +443,23 @@ pub struct DocumentView {
     pub updated_unix_seconds: i64,
     #[property(description = "Who wrote the current version — an email, or `AI`")]
     pub updated_by: String,
+    #[property(
+        description = "The hash of the content — 64 hex characters, or empty for a file, which is never briefed. It is what a brief is filed under: documents_set_brief takes this, and every copy of the same text anywhere on this server carries the same one, so briefing through any of them briefs all of them. It changes whenever the text does, which is what makes an edited document unbriefed again"
+    )]
+    pub content_hash: String,
+    #[property(
+        description = "WHAT IS IN IT, in a few sentences somebody wrote after reading it — empty when nobody has yet. THIS IS THE FIELD TO SCAN. A listing of a board is dozens of paths that say almost nothing; the briefs beside them say what each document covers, so you open the two that matter instead of five that do not. An empty brief is not an empty document, it is an unread one: documents_next_without_brief hands them over one at a time"
+    )]
+    pub brief: String,
 }
 
 impl DocumentView {
     /// From a whole row, which a write has just produced.
-    pub fn from_dto(src: &crate::postgres::DocumentDto, project_prefix: &str) -> Self {
+    ///
+    /// The brief is passed in rather than looked up: this type knows nothing about the app, and a
+    /// signature that asks for it is what makes the compiler point at every place a listing could have
+    /// forgotten one.
+    pub fn from_dto(src: &crate::postgres::DocumentDto, project_prefix: &str, brief: String) -> Self {
         let body = crate::scripts::body_of(src);
 
         Self {
@@ -465,6 +477,8 @@ impl DocumentView {
             created_unix_seconds: src.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
             updated_by: src.updated_by.clone(),
+            content_hash: src.content_hash.clone().unwrap_or_default(),
+            brief,
         }
     }
 
@@ -472,6 +486,7 @@ impl DocumentView {
     pub fn from_entry(
         src: &crate::documents::DocumentIndexEntry,
         project_prefix: &str,
+        brief: String,
     ) -> Self {
         Self {
             // Off the ID rather than off the path, because the id is what says which KIND this is: a
@@ -491,6 +506,8 @@ impl DocumentView {
             created_unix_seconds: src.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
             updated_by: src.updated_by.clone(),
+            content_hash: src.content_hash.clone().unwrap_or_default(),
+            brief,
         }
     }
 }
@@ -552,10 +569,22 @@ pub struct DocumentContentView {
     pub updated_unix_seconds: i64,
     #[property(description = "Who wrote this version — an email, or `AI`")]
     pub updated_by: String,
+    #[property(
+        description = "The hash of the content you are reading — 64 hex characters, or empty for a file. Pass it to documents_set_brief with what you learned: that is the whole of the briefing loop, and it means the next reader of this text on any board finds your brief instead of reading it again"
+    )]
+    pub content_hash: String,
+    #[property(
+        description = "What somebody already wrote about this document, or empty. Worth reading before the text: if it is there and it answers your question, you have saved yourself the document"
+    )]
+    pub brief: String,
 }
 
 impl DocumentContentView {
-    pub fn from_dto(src: &crate::postgres::DocumentDto, project_prefix: &str) -> Self {
+    pub fn from_dto(
+        src: &crate::postgres::DocumentDto,
+        project_prefix: &str,
+        brief: String,
+    ) -> Self {
         let (content, content_base64, is_binary, size) = split_body(crate::scripts::body_of(src));
 
         Self {
@@ -578,6 +607,8 @@ impl DocumentContentView {
             content_base64,
             updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
             updated_by: src.updated_by.clone(),
+            content_hash: src.content_hash.clone().unwrap_or_default(),
+            brief,
         }
     }
 
@@ -588,9 +619,25 @@ impl DocumentContentView {
     pub fn from_history(
         src: &crate::postgres::DocumentHistoryDto,
         project_prefix: &str,
+        // A brief is filed under the hash of a CONTENT, so an old version has one exactly when somebody
+        // briefed that text — usually because it was the current one at the time. Looked up by the caller,
+        // which has the app; computed here, which has the payload.
+        brief_of: impl FnOnce(&str) -> String,
     ) -> Self {
         let (content, content_base64, is_binary, size) =
             split_body(crate::scripts::body_of_version(src));
+
+        // Computed rather than read: a history row keeps no hash column — it needs none, because the text
+        // is right here and hashing it is cheaper than a column that could disagree with it.
+        let content_hash = content
+            .as_deref()
+            .map(|itm| crate::documents::content_hash(itm.as_bytes()))
+            .unwrap_or_default();
+
+        let brief = match content_hash.is_empty() {
+            true => String::new(),
+            false => brief_of(&content_hash),
+        };
 
         Self {
             reference: task_manager_shared::documents::canonical_document_reference(
@@ -614,6 +661,8 @@ impl DocumentContentView {
             content_base64,
             updated_unix_seconds: src.moment.unix_microseconds / 1_000_000,
             updated_by: src.who.clone(),
+            content_hash,
+            brief,
         }
     }
 

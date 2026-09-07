@@ -18,6 +18,9 @@ pub const HISTORY_PK_NAME: &str = "documents_history_pk";
 pub const TRASH_TABLE_NAME: &str = "documents_trash";
 pub const TRASH_PK_NAME: &str = "documents_trash_pk";
 
+pub const BRIEFS_TABLE_NAME: &str = "document_briefs";
+pub const BRIEFS_PK_NAME: &str = "document_briefs_pk";
+
 // One document, as it currently stands.
 //
 // **The primary key is `id` alone, and it is a `SortableId`** — unlike a task or a goal, which are
@@ -202,6 +205,32 @@ pub struct DocumentIndexDto {
     pub updated_by: String,
 }
 
+// What one text SAYS, in a few sentences somebody wrote so that nobody has to read it to find out.
+//
+// **Keyed by the hash of the content and by nothing else — no project, no path, no document id.** That is
+// the whole design in one column: the same specification stored as a document on one board, as a file in a
+// connected repository on another, and as a copy somebody synced into a third is one text, and summarising
+// it three times is three chances to describe it differently. It is also what makes a brief expire by
+// itself: an edit produces other bytes, so the document is unbriefed again without anybody remembering to
+// say so.
+//
+// The table is therefore GLOBAL rather than per project, and that is deliberate rather than sloppy: a
+// brief describes a text, and a text does not belong to a board. Nothing in it is private — it is prose
+// about content the reader can already open.
+#[derive(SelectDbEntity, InsertDbEntity, UpdateDbEntity, TableSchema, Debug)]
+pub struct DocumentBriefDto {
+    #[primary_key(0)]
+    pub content_hash: String,
+    pub brief: String,
+    // Who wrote it — an email or the literal `AI`, exactly as a document's `updated_by`. Unvalidated for
+    // the same reason: MCP has no session to derive one from.
+    pub updated_by: String,
+    #[sql_type("timestamp")]
+    pub created: DateTimeAsMicroseconds,
+    #[sql_type("timestamp")]
+    pub updated: DateTimeAsMicroseconds,
+}
+
 // One text document that has never been hashed, and the text to hash — the backfill's work list.
 //
 // Its own select model rather than reading whole rows, because the difference is the `bytea` column: a
@@ -332,6 +361,13 @@ impl DocumentsRepo {
                 TRASH_TABLE_NAME,
                 Some(TRASH_PK_NAME.into()),
             )
+            // The fourth table on this connection, beside the three that already share it: briefs are read
+            // and written with documents, and a table of a few hundred short strings does not earn a
+            // Postgres connection of its own.
+            .with_table_schema_verification::<DocumentBriefDto>(
+                BRIEFS_TABLE_NAME,
+                Some(BRIEFS_PK_NAME.into()),
+            )
             .build()
             .await;
 
@@ -345,6 +381,36 @@ impl DocumentsRepo {
             .query_rows(TABLE_NAME, NoneWhereModel::new(), Some(ctx))
             .await
             .expect("documents: query_rows get_all_indexed failed")
+    }
+
+    /// Every brief there is. Called once at startup, exactly as the documents index is filled.
+    ///
+    /// All of them rather than a project's worth: they are keyed by content and a listing joins them by
+    /// hash, so there is no project to filter by — and the whole table is a few hundred short strings.
+    pub async fn get_all_briefs(&self, ctx: &MyTelemetryContext) -> Vec<DocumentBriefDto> {
+        self.postgres
+            .with_retries(3, Duration::from_secs(1))
+            .query_rows(BRIEFS_TABLE_NAME, NoneWhereModel::new(), Some(ctx))
+            .await
+            .expect("document_briefs: query_rows get_all_briefs failed")
+    }
+
+    /// Write one brief, replacing whatever was filed under that hash.
+    ///
+    /// Replacing rather than refusing: a second reader of the same text who writes a better brief is
+    /// improving it, and there is nothing here worth a conflict — the content it describes cannot have
+    /// changed, because the content is the key.
+    pub async fn upsert_brief(&self, row: &DocumentBriefDto, ctx: &MyTelemetryContext) {
+        self.postgres
+            .with_retries(3, Duration::from_secs(1))
+            .insert_or_update_db_entity(
+                BRIEFS_TABLE_NAME,
+                UpdateConflictType::OnPrimaryKeyConstraint(BRIEFS_PK_NAME.into()),
+                row,
+                Some(ctx),
+            )
+            .await
+            .expect("document_briefs: insert_or_update_db_entity failed");
     }
 
     /// Every text document with no content hash yet, with its text — what the startup backfill works

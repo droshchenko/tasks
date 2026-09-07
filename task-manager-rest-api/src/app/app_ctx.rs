@@ -53,6 +53,10 @@ pub struct AppContext {
     // business travelling with it. A screen asks for the index over HTTP and is answered from here; the
     // payloads are the only part that goes to Postgres per read.
     pub documents_index: DocumentsIndex,
+    // What each document SAYS, by the hash of what is in it — see `crate::documents::BriefsIndex`. Beside
+    // the index rather than on it, because a brief belongs to a content and an index entry belongs to a
+    // document: two files of two projects with one text share the brief and share nothing else.
+    pub briefs: crate::documents::BriefsIndex,
 
     // Connected GitHub repositories: the file list of each working copy, and the keys that reach GitHub
     // behind them.
@@ -129,6 +133,7 @@ impl AppContext {
             documents_repo: DocumentsRepo::new(settings_reader.clone()).await,
             board: Board::new(),
             documents_index: DocumentsIndex::new(),
+            briefs: crate::documents::BriefsIndex::new(),
             github: Arc::new(GithubMirrors::new()),
             git_repos_path,
             subscribers: ProjectSubscribers::new(),

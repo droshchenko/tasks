@@ -93,6 +93,10 @@ pub struct DocumentsListResponse {
     pub documents: Vec<DocumentView>,
     #[property(description = "How many there are")]
     pub amount: i32,
+    #[property(
+        description = "How many DISTINCT CONTENTS on this board nobody has briefed yet — the size of the reading list, not a count of rows: two copies of one text are one piece of work, and files (a PDF, an image) are never counted because there is no text in them to brief. A number above zero is an invitation rather than an error: documents_next_without_brief hands them over one at a time, and a board whose briefs are written answers 'which document covers X' from this listing alone"
+    )]
+    pub without_brief: i32,
 }
 
 pub struct DocumentsListHandler {
@@ -114,6 +118,11 @@ which is the right behaviour when you meant to edit that document and a lost tex
 It deliberately does NOT return the texts. A document can be a whole specification, and an agent that \
 pulled all of them in to find one would have spent the context it needed for the work. Read the paths, \
 pick one, then documents_get.\
+\
+IT DOES RETURN THE BRIEFS, AND THAT IS WHAT MAKES THE PATHS USABLE. Each row carries a few sentences \
+saying what is in that document, written by whoever read it last. Scan those before opening anything — \
+on a board where they are written, this one call answers 'which document covers X'. `without_brief` \
+says how many contents nobody has read for you yet; documents_next_without_brief works through them.\
 \
 Folders in the paths are not real: there is no such thing as a folder here, they are read off the paths \
 of the documents in them. So an empty folder cannot exist, and moving every document out of one is what \
@@ -146,14 +155,26 @@ impl McpToolCall<DocumentsListInput, DocumentsListResponse> for DocumentsListHan
         // No `await`: the index is in memory, which is the one part of a document that is cached.
         let rows = crate::scripts::list_documents(&self.app, &model.project)?;
 
+        // The brief is joined here, out of memory, for every row at once — a lookup per row against a map
+        // rather than a query per row against Postgres, which is what would turn the cheapest call on this
+        // surface into a few hundred round trips.
         let documents: Vec<DocumentView> = rows
             .iter()
-            .map(|row| DocumentView::from_entry(row, &project_prefix_of(&self.app, &row.project_id)))
+            .map(|row| {
+                DocumentView::from_entry(
+                    row,
+                    &project_prefix_of(&self.app, &row.project_id),
+                    self.app.briefs.text_of(row.content_hash.as_deref()),
+                )
+            })
             .collect();
+
+        let without_brief = self.app.briefs.without_brief(&rows) as i32;
 
         Ok(DocumentsListResponse {
             amount: documents.len() as i32,
             documents,
+            without_brief,
         })
     }
 }
@@ -257,6 +278,7 @@ impl McpToolCall<DocumentsGetInput, DocumentContentView> for DocumentsGetHandler
             DocumentContentView::from_history(
                 &row,
                 &project_prefix_of(&self.app, &row.project_id),
+                |hash| self.app.briefs.text_of(Some(hash)),
             )
         } else {
             let row = crate::scripts::resolve_document(
@@ -270,6 +292,7 @@ impl McpToolCall<DocumentsGetInput, DocumentContentView> for DocumentsGetHandler
             DocumentContentView::from_dto(
                 &row,
                 &project_prefix_of(&self.app, &row.project_id),
+                self.app.briefs.text_of(row.content_hash.as_deref()),
             )
         };
 
@@ -331,7 +354,12 @@ would not answer the question it exists for.\
 \
 Read documents_list first when you are not sure the path is free. An upload to a path you did not mean \
 to touch replaces what a person put there, and while the old text is still in the history, nobody knows \
-to go looking for it.";
+to go looking for it.\
+\
+THE RESPONSE CARRIES `content_hash` — BRIEF IT NOW. You have just written this text and know exactly \
+what is in it; documents_set_brief with that hash costs one call and saves the next reader the whole \
+document. The hash is new, so whatever brief the old text had does not apply and the document reads as \
+unbriefed until you do.";
 }
 
 #[async_trait::async_trait]
@@ -349,6 +377,7 @@ impl McpToolCall<DocumentsUploadInput, DocumentView> for DocumentsUploadHandler 
         Ok(DocumentView::from_dto(
             &row,
             &project_prefix_of(&self.app, &row.project_id),
+            self.app.briefs.text_of(row.content_hash.as_deref()),
         ))
     }
 }
@@ -404,6 +433,7 @@ impl McpToolCall<DocumentsUpdatePathInput, DocumentView> for DocumentsUpdatePath
         Ok(DocumentView::from_dto(
             &row,
             &project_prefix_of(&self.app, &row.project_id),
+            self.app.briefs.text_of(row.content_hash.as_deref()),
         ))
     }
 }
@@ -752,6 +782,7 @@ impl McpToolCall<DocumentsRestoreInput, DocumentView> for DocumentsRestoreHandle
         Ok(DocumentView::from_dto(
             &row,
             &project_prefix_of(&self.app, &row.project_id),
+            self.app.briefs.text_of(row.content_hash.as_deref()),
         ))
     }
 }

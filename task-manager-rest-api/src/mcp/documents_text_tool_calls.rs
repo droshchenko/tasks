@@ -114,7 +114,11 @@ you have not seen, and they would very likely still apply. The refusal is what s
 documents_diff then says what they changed.\
 \
 A file — a PDF, an image — has no text to match against and is refused. Replace one with \
-documents_upload.";
+documents_upload.\
+\
+THE RESPONSE CARRIES THE NEW `content_hash`, AND THE OLD BRIEF NO LONGER APPLIES. A brief is filed \
+against the content it describes, so an edit leaves the document unbriefed on purpose — write a fresh \
+one with documents_set_brief while the change is still in front of you.";
 }
 
 #[async_trait::async_trait]
@@ -148,6 +152,7 @@ impl McpToolCall<DocumentsEditInput, DocumentsEditResponse> for DocumentsEditHan
             document: DocumentView::from_dto(
                 &row,
                 &project_prefix_of(&self.app, &row.project_id),
+                self.app.briefs.text_of(row.content_hash.as_deref()),
             ),
             replacements,
         })

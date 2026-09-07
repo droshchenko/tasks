@@ -322,3 +322,100 @@ fn start_reclone_with(app: &Arc<AppContext>, project_id: String, connection: Git
 
     pull_no
 }
+
+/// What a synchronous refresh saw when it finished.
+pub struct RefreshOutcome {
+    pub state: &'static str,
+    pub error: String,
+    pub commit: String,
+    pub files_amount: usize,
+    pub skipped_amount: usize,
+    pub without_brief: usize,
+    pub pull_no: i64,
+}
+
+/// Re-clone a connection and WAIT for it, then say what is in the folder that came back.
+///
+/// **The one caller that waits, and the reason it can.** Every other path answers a person who is watching
+/// a screen, so it hands back a receipt and lets the mirror carry the state; an agent has nothing to watch
+/// and no way to poll usefully, so a tool that returned "it has been asked for" would just make it guess
+/// how long to sleep. Waiting also lets the answer carry the counts that make the next move obvious —
+/// above all how many of the files that arrived nobody has briefed.
+///
+/// **The pull is spawned and then awaited rather than run inline, which is not the same thing.** The MCP
+/// middleware races a tool call against its keepalive and DROPS the future when the client goes away — and
+/// a re-clone cancelled half way through leaves the connection reading `pulling` for ever, a git process
+/// with nobody waiting for it, and a staging folder for the next refresh to clear. Spawned, the re-clone
+/// finishes whatever happens to the call that asked for it.
+pub async fn refresh_connection_now(
+    app: &Arc<AppContext>,
+    project_prefix: &str,
+    name: &str,
+) -> Result<RefreshOutcome, String> {
+    let (project_id, connection) = {
+        let board = app.board.read();
+        let project = resolve_project_by_prefix(&board, project_prefix)?;
+
+        let connection = project
+            .github_connection(name)
+            .ok_or_else(|| {
+                let names: Vec<&str> = project
+                    .github_connections
+                    .iter()
+                    .map(|itm| itm.name.as_str())
+                    .collect();
+
+                match names.is_empty() {
+                    true => format!(
+                        "{} has no connected repositories — one is set up in the browser, under the project's settings",
+                        project.prefix
+                    ),
+                    false => format!(
+                        "{} has no connected repository called '{name}'. It has: {}",
+                        project.prefix,
+                        names.join(", ")
+                    ),
+                }
+            })?
+            .clone();
+
+        (project.id.clone(), connection)
+    };
+
+    let guard = app
+        .github
+        .begin_pull_within(&project_id, &connection.name, WAIT_FOR_A_RUNNING_PULL)
+        .await?;
+
+    let spawned = {
+        let app = app.clone();
+        let project_id = project_id.clone();
+        let connection = connection.clone();
+
+        tokio::spawn(async move {
+            crate::github::pull_connection(&app, &project_id, &connection, PullMode::Reclone, guard)
+                .await;
+        })
+    };
+
+    spawned
+        .await
+        .map_err(|err| format!("the re-clone did not finish: {err}"))?;
+
+    let mirror = app.github.get_or_pending(&project_id, &connection.name);
+
+    Ok(RefreshOutcome {
+        state: mirror.state,
+        error: mirror.error.clone(),
+        commit: mirror.commit.chars().take(7).collect(),
+        files_amount: mirror.entries.len(),
+        skipped_amount: mirror.skipped_amount,
+        without_brief: app.briefs.without_brief_of(
+            mirror
+                .entries
+                .iter()
+                .map(|itm| (itm.is_binary, itm.content_hash.as_deref())),
+        ),
+        pull_no: mirror.pull_no as i64,
+    })
+}

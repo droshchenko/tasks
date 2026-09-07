@@ -67,6 +67,11 @@ pub async fn load_state(app: &AppContext) {
 
     let document_rows = app.documents_repo.get_all_indexed(&ctx).await;
 
+    // Every brief there is, in one query: they are keyed by content rather than by project, and a listing
+    // joins them by hash out of memory. See `crate::documents::BriefsIndex`.
+    app.briefs
+        .replace_all(&app.documents_repo.get_all_briefs(&ctx).await);
+
     // Its own collection, installed beside the board rather than inside it — the board is pushed whole down a
     // socket and documents must not ride along.
     app.documents_index.replace_all(&document_rows);
