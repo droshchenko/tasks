@@ -243,6 +243,20 @@
   overflow: hidden;
 }
 
+/* What the document says, above the document. Written by whoever read it last and filed by the hash of the
+ * content, so it is drawn only when there is one — an unbriefed document gets no empty band. Muted and
+ * bordered like `.viewer-head` because it is the same kind of thing: information ABOUT what is below,
+ * rather than part of it. */
+.viewer-brief {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .viewer-note {
   flex: 0 0 auto;
   padding: 16px;

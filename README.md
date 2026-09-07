@@ -415,6 +415,52 @@ sorts the index by path, the browser walks the segments into a tree. So an empty
 renaming one means moving every document under it, one call each. A folder record would have been a second
 source of truth about the structure, and it would have drifted from the paths.
 
+### Every document says what is in it — the brief
+
+A listing is paths. `docs/design/system.md` tells a reader almost nothing, so finding "the document about the
+settlement retries" meant opening four documents to rule out three — which on a specification of seventy
+kilobytes is the whole of somebody's context spent on the search rather than on the work.
+
+So every document carries a **brief**: a few sentences written by whoever read it, saying what it is, what it
+covers, and which systems, decisions and names are in it. It rides on every `documents_list` row and every
+`documents_get`, and on the browser it is the tooltip of a row in the tree and a line above the viewer. An
+empty brief means nobody has read that document for you yet — which is a different thing from an empty
+document, and the browser says so by drawing no line at all.
+
+**It is filed by the hash of the content, not against the document, and that one decision is the whole
+design.** The key is the sha256 of the bytes, so:
+
+- the same specification stored as a project's document and as a file in a connected repository is briefed
+  **once** and found through either — and syncing a copy into a third board finds it there too;
+- an edit produces different bytes, therefore a different key, therefore a document nobody has briefed
+  **again** — a brief can never describe a text that has since changed, because there is nowhere for it to
+  outlive one;
+- a document restored from the trash finds its brief waiting, because the bytes came back with it;
+- and the table is global rather than per project, since a text does not belong to a board.
+
+**A file is never waiting for a brief.** There is no text in a PNG this product could write one from, so
+binaries are not counted as unread — a to-do list that cannot be finished is not one.
+
+The loop an agent runs is three tools. `documents_next_without_brief` hands over the next unread document of
+a board — the project's own and its repositories' files together, in path order — with its text and the hash
+to file under. `documents_set_brief` files what was learned. `github_refresh` re-clones a connected
+repository, waits for it, and answers with how many of the files that arrived nobody has read, which is where
+the loop usually starts. `documents_list` reports the same number for a whole board as `without_brief`, and
+it counts **contents**: a licence file in nine folders is one brief away from done, and a count of nine would
+send an agent round a loop that finishes in one.
+
+**The hash is stored rather than computed on demand**, on the document row and on the mirror listing, because
+the question "which of these has nobody read?" is asked of a whole project at once — and answering it by
+reading every payload is exactly what a brief exists to avoid. Documents written before the column existed
+are hashed by a startup pass that writes one column and no history. Files of a repository are hashed by the
+listing walk, which reuses the hash it has whenever a file's size and mtime are the pair it hashed last time
+— so a ten-minute tick over a repository nobody pushed to opens nothing, and the pass after a re-clone reads
+it whole exactly once.
+
+Briefs travel with a project: `briefs.yaml` in the export carries the ones belonging to the documents in the
+archive, and the import files them before the documents land. Keyed by content, they need no remapping —
+ids are renumbered on import and hashes are not.
+
 ### A large document is worked on in pieces
 
 Everything above is complete **at one size** — the size where reproducing a document verbatim to change a
@@ -846,6 +892,24 @@ each of the three flags earns its place: `--cached` is what git tracks, `--other
 and not tracked — a file a `git` command left behind, which is visible on the screen rather than invisible
 because nobody committed it — and `--exclude-standard` applies `.gitignore`, so a `target/` somebody built
 inside the clone does not become forty thousand rows.
+
+**That listing runs git UNCUT, and it is worth knowing why the distinction exists.** Every other git command
+here answers a model, so its output is cut at 60 000 characters with a line saying so — which is right for a
+`git log` and quietly wrong for a listing: `ls-files -z` passes 60 000 bytes at around 1 200 paths, and a cut
+one does not fail. It loses every file after the cut, counts none of them as skipped, and glues the sentence
+about being cut onto the last surviving path. Every number taken off that listing — how many files a
+connection holds, how many of them nobody has briefed — would have been a number about a prefix of the
+repository with nothing saying so. Internal plumbing therefore reads git's bytes whole and splits the NUL
+list itself, which also means a path that is not UTF-8 is one file skipped rather than a listing half read.
+Symlinks are skipped for a different reason: following one is how a repository would get this service to read
+outside the clone.
+
+**Each listed text file is also hashed there**, which is what lets a repository's files carry briefs like
+any other document — see [the brief](#every-document-says-what-is-in-it--the-brief). The walk reuses a hash
+whenever a file's size and mtime are the pair it hashed last time, so the ten-minute tick over a repository
+nobody has pushed to opens nothing at all; a re-clone rewrites every file, so it re-reads the repository
+once. It runs on a blocking thread: thousands of reads on a tokio worker, under the connection's read guard,
+would have shown up as a refresh that appears to hang.
 
 **The versions are git's, and this side stops pretending otherwise.** `documents_history`,
 `documents_diff` and `documents_restore` refuse a file in a connected repository — and each refusal names the
@@ -1281,6 +1345,13 @@ Tools:
 - `documents_delete_folder` — a folder and everything under it, in one call. The same deletion as
   `documents_delete`, repeated over the subtree, because there is no folder to delete: emptying it IS
   deleting it, and doing that one document at a time is how a folder ends up half gone.
+- `documents_next_without_brief` / `documents_set_brief` — the reading loop: hand me the next document
+  nobody has summarised, and here is what it says. Filed by content hash, so it covers a project's own
+  documents and its repositories' files alike, and an edit makes a document unbriefed by itself. See
+  [the brief](#every-document-says-what-is-in-it--the-brief).
+- `github_refresh` — clone a connected repository again and wait for it, answering with what came back
+  and how many of its files nobody has read yet. The only tool here that takes minutes, and the only one
+  that reaches the network.
 - `tasks_resolve_id` — the counterpart to composing ids on read. Given a human-written `RMS-42` it
   answers in two parts: the **direct** hit (the project holding `RMS` right now, and the task's
   current id), and the **archived** ones — every project that used to hold `RMS`, whether task 42

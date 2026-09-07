@@ -198,6 +198,28 @@ async fn build(
         },
     )?;
 
+    // The briefs of exactly the documents being carried, by content hash. The texts travel in
+    // `documents/`, so the receiving board hashes them back to these same keys — what would not survive
+    // otherwise is the reading somebody did to write them, and a board that arrives with every document
+    // reading as unread is a board somebody has to read again.
+    let briefs: Vec<BriefFileModel> = documents
+        .iter()
+        .filter_map(|itm| itm.content_hash.as_deref())
+        .collect::<std::collections::BTreeSet<&str>>()
+        .into_iter()
+        .filter_map(|hash| {
+            app.briefs.get(hash).map(|brief| BriefFileModel {
+                content_hash: hash.to_string(),
+                brief: brief.text.clone(),
+                updated_by: Some(brief.updated_by.clone()),
+            })
+        })
+        .collect();
+
+    if !briefs.is_empty() {
+        write_yaml(&mut writer, BRIEFS_FILE, &BriefsFile { briefs })?;
+    }
+
     let telemetry = MyTelemetryContext::create_empty();
     let mut written: u64 = 0;
 

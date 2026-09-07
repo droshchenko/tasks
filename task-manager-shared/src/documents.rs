@@ -40,6 +40,12 @@ pub struct DocumentIndexEntryResponse {
     // Who wrote the current version — an email or the literal `AI`, unvalidated for the same reason a
     // comment's author is: MCP has no session to derive one from.
     pub updated_by: String,
+    // What is in it, in a few sentences somebody wrote after reading it. Empty when nobody has — which is
+    // not the same as an empty document, and the browser says so by simply not drawing a line.
+    //
+    // Filed by the hash of the content rather than against the document, so two copies of one text share
+    // it and an edit clears it. See `crate::documents::BriefsIndex` on the service side.
+    pub brief: String,
 }
 
 // One document in full, content included. What a reader gets when they open one.
@@ -63,6 +69,9 @@ pub struct DocumentResponse {
     pub created_unix_seconds: i64,
     pub updated_unix_seconds: i64,
     pub updated_by: String,
+    // What is in it, as somebody summarised it — empty when nobody has. Worth reading before the document
+    // itself, which is the whole reason it travels with it.
+    pub brief: String,
 }
 
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]

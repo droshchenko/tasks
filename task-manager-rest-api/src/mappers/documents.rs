@@ -16,7 +16,7 @@ use crate::scripts::{body_of, content_type_of};
 ///
 /// `prefix` comes from outside because neither the row nor the index entry carries one — they hold the internal
 /// project id, which does not cross this boundary. See `ProjectResponse` in the shared crate.
-pub fn document_to_response(src: &DocumentDto, prefix: &str) -> DocumentResponse {
+pub fn document_to_response(src: &DocumentDto, prefix: &str, brief: String) -> DocumentResponse {
     let body = body_of(src);
 
     DocumentResponse {
@@ -31,6 +31,7 @@ pub fn document_to_response(src: &DocumentDto, prefix: &str) -> DocumentResponse
         created_unix_seconds: src.created.unix_microseconds / 1_000_000,
         updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
         updated_by: src.updated_by.clone(),
+        brief,
     }
 }
 
@@ -41,6 +42,10 @@ pub fn document_to_response(src: &DocumentDto, prefix: &str) -> DocumentResponse
 pub fn document_entry_to_index_entry(
     src: &DocumentIndexEntry,
     prefix: &str,
+    // Passed in rather than looked up, exactly as on the MCP side: this mapper knows nothing about the
+    // app, and a signature that asks for the brief is what makes the compiler point at any listing that
+    // forgot to join one.
+    brief: String,
 ) -> DocumentIndexEntryResponse {
     DocumentIndexEntryResponse {
         id: src.id.clone(),
@@ -52,5 +57,6 @@ pub fn document_entry_to_index_entry(
         version: src.version,
         updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
         updated_by: src.updated_by.clone(),
+        brief,
     }
 }

@@ -67,7 +67,11 @@ async fn handle_request(
 
         return match found {
             Ok(row) => HttpOutput::as_json(FindDocumentResponse {
-                document: Some(document_to_response(&row, &project.prefix)),
+                document: Some(document_to_response(
+                    &row,
+                    &project.prefix,
+                    action.app.briefs.text_of(row.content_hash.as_deref()),
+                )),
                 in_trash: false,
                 not_found: String::new(),
             })
@@ -93,7 +97,11 @@ async fn handle_request(
         }
 
         return HttpOutput::as_json(FindDocumentResponse {
-            document: Some(document_to_response(&row, &project.prefix)),
+            document: Some(document_to_response(
+                &row,
+                &project.prefix,
+                action.app.briefs.text_of(row.content_hash.as_deref()),
+            )),
             in_trash: false,
             not_found: String::new(),
         })

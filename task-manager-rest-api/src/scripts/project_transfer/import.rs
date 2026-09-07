@@ -397,6 +397,27 @@ async fn write_documents(
     Ok(written)
 }
 
+/// Carry the briefs an archive brought with it.
+///
+/// **Keyed by content, so nothing here has to line up with anything else in the import.** Ids are
+/// renumbered, paths can be pointed at another folder, projects change prefix — and none of that touches a
+/// hash. A brief lands beside the text it describes because that text hashes to the same thing on both
+/// boards, or it lands beside nothing at all and is simply never looked up.
+///
+/// A refused brief is skipped rather than failing the import: what it costs is one document reading as
+/// unread on a board that has just gained everything else.
+async fn import_briefs(app: &AppContext, archive: &mut ImportArchive<'_>, who: &str) {
+    let Ok(file) = archive.read_yaml_or_default::<BriefsFile>(BRIEFS_FILE) else {
+        return;
+    };
+
+    for row in file.briefs {
+        let who = row.updated_by.as_deref().unwrap_or(who);
+
+        let _ = crate::scripts::set_brief(app, &row.content_hash, &row.brief, who).await;
+    }
+}
+
 /// Source handle -> the number it gets on this board.
 ///
 /// Reserved in one go, before anything is built, because a task can name a goal or a dependency that is

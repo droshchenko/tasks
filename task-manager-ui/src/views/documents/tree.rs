@@ -461,11 +461,19 @@ pub fn DocumentTreeRow(
 
             let size = render_size(entry.size);
 
+            // The path, and under it what the document says — which is the whole of why a brief is written.
+            // A tooltip rather than a line in the tree: the tree is a tree, and a hundred rows carrying two
+            // lines each stops being one.
+            let title = match entry.brief.is_empty() {
+                true => entry.path.clone(),
+                false => format!("{}\n\n{}", entry.path, entry.brief),
+            };
+
             rsx! {
                 div {
                     class: "{row_class}",
                     style: "{indent}",
-                    title: "{entry.path}",
+                    title: "{title}",
                     // Selecting is navigating: the reference goes into the url and the viewer follows from
                     // there. Nothing about the selection is written to the state — which is what makes a
                     // document linkable and the back button work.
@@ -497,6 +505,7 @@ mod tests {
             path: path.to_string(),
             content_type: "text/markdown".to_string(),
             is_binary: false,
+            brief: String::new(),
             version: 1,
             size: 0,
             updated_unix_seconds: 0,

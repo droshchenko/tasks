@@ -51,7 +51,15 @@ async fn handle_request(
     let documents = crate::scripts::list_documents(&action.app, &project.prefix)
         .map_err(bad_request)?
         .iter()
-        .map(|entry| document_entry_to_index_entry(entry, &project.prefix))
+        // The brief is joined here, out of the same in-memory map MCP's listing reads — the two surfaces
+        // answer from one script and must not start disagreeing about what a document says either.
+        .map(|entry| {
+            document_entry_to_index_entry(
+                entry,
+                &project.prefix,
+                action.app.briefs.text_of(entry.content_hash.as_deref()),
+            )
+        })
         .collect();
 
     HttpOutput::as_json(DocumentsResponse { documents }).into_ok_result(true)

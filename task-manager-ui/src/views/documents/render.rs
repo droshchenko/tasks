@@ -295,7 +295,15 @@ pub fn render_found(project: &str, found: &FindDocumentResponse, show_source: bo
         return render_viewer_note(&reason, !found.in_trash);
     };
 
-    render_document(project, document, show_source)
+    // The brief above whatever the document turns out to be drawn as — a page, a frame, an image — so it
+    // reads the same way in the Documents screen and in the dialog a task's reference opens. A document
+    // nobody has briefed simply has no line, rather than an empty one saying so.
+    rsx! {
+        if !document.brief.is_empty() {
+            div { class: "viewer-brief", "{document.brief}" }
+        }
+        {render_document(project, document, show_source)}
+    }
 }
 
 /// How one document is drawn.

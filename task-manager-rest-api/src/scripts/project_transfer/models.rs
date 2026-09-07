@@ -24,6 +24,7 @@ pub const TASKS_FILE: &str = "tasks.yaml";
 pub const COMMENTS_FILE: &str = "comments.yaml";
 pub const DOCUMENTS_FILE: &str = "documents.yaml";
 pub const DOCUMENTS_FOLDER: &str = "documents/";
+pub const BRIEFS_FILE: &str = "briefs.yaml";
 
 /// `documents.yaml` — what each file in `documents/` IS, beside the bytes themselves.
 ///
@@ -53,6 +54,30 @@ pub struct DocumentFileModel {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+}
+
+/// `briefs.yaml` — what each of the exported documents SAYS, by the hash of its content.
+///
+/// **Carried because the reading is the expensive part.** The texts travel in `documents/`, so the
+/// receiving board hashes them to exactly the same keys — but a brief is a few sentences somebody had to
+/// read a whole document to write, and leaving them behind would land a board whose every document reads
+/// as unread. Keyed by content rather than by document id for the same reason it is stored that way: an
+/// import that renumbers ids does not renumber texts.
+///
+/// Optional in both directions. An archive without it imports a board with no briefs, which is exactly
+/// what every archive written before this existed is.
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct BriefsFile {
+    #[serde(default)]
+    pub briefs: Vec<BriefFileModel>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BriefFileModel {
+    pub content_hash: String,
+    pub brief: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by: Option<String>,
 }
 
 /// `project.yaml` — what was exported, and the settings of the board it came from.
