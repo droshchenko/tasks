@@ -9,12 +9,14 @@
 //!
 //! Two consequences worth stating because everything here depends on them:
 //!
-//! * **The volume holds work that exists nowhere else.** A file edited and not yet committed is on this
-//!   disk and in no repository. So nothing on the refresh path may ever discard a local change — see
-//!   [`refresh_clone`], which fast-forwards only when there is nothing of anybody's to lose.
+//! * **The working copy is a VIEW, and nothing this product offers writes into it.** A connected
+//!   repository is read-only on the documents surface: files are listed and read, and the way to change
+//!   one is to change it in the repository. That is what makes the volume disposable, and what makes
+//!   [`reclone_repository`] — Refresh deleting the folder and cloning it again — an operation that only
+//!   ever throws away a copy of something GitHub still has.
 //! * **The key still does not survive a restart, and that is now survivable.** The clone stays; only
 //!   reaching GitHub needs the token again. A connection that comes up `needs-key` after a deploy is
-//!   still fully readable and editable — it just cannot fetch or push until somebody types the key.
+//!   still fully readable — it just cannot fetch until somebody types the key.
 
 use std::path::{Path, PathBuf};
 
@@ -110,10 +112,68 @@ pub async fn clone_repository(
     Ok(())
 }
 
+/// Delete the working copy and clone it again.
+///
+/// **What the Refresh button does, and it is a destroy-and-replace rather than a fetch.** A fetch answers
+/// "what has changed since"; this answers "give me exactly what is on GitHub now", which is the question
+/// somebody is actually asking when a folder looks wrong: a file that a `.gitignore` stopped tracking, a
+/// branch that was force-pushed, a working copy left on a stale branch by a connection whose row was
+/// edited after it was cloned. Every one of those survives any number of fetches and none of them
+/// survives this.
+///
+/// **It is only safe to be the button because the folder holds nothing of anybody's.** Nothing on the
+/// documents surface writes into a connected repository, so what is deleted here is a copy of what the
+/// remote has. The exception is somebody's own work through `github_git` — a commit that was never
+/// pushed, a stash — and that goes with the folder, which is why the dialog says so before the press.
+///
+/// The delete comes first and on its own: a clone into a folder that already exists fails on the folder
+/// rather than replacing it, so a half-deleted tree would leave the connection unusable until somebody
+/// looked at the disk.
+pub async fn reclone_repository(
+    clone_dir: &Path,
+    connection: &GithubConnectionModel,
+    key: Option<&str>,
+) -> Result<(), String> {
+    remove_clone(clone_dir)?;
+
+    clone_repository(clone_dir, connection, key).await
+}
+
+/// Remove a connection's folder, and ONLY when that folder is a clone.
+///
+/// **`remove_dir_all` is the most dangerous line in this file, so it is guarded by what the folder is
+/// rather than by where it is.** The path is composed from a root, a project id and a connection name,
+/// and every one of those is validated — but a check next to the delete is the one that survives somebody
+/// changing how the path is built. A folder holding no `.git` is not a clone and is not this function's
+/// to remove; `git clone` then makes it if it is absent or empty and refuses by name if it is not, which
+/// is a better answer than deleting whatever is in there.
+///
+/// A folder that is not there is not a failure either: that is the state a first clone starts from, and
+/// the caller's next move is the same.
+fn remove_clone(clone_dir: &Path) -> Result<(), String> {
+    if !is_cloned(clone_dir) {
+        return Ok(());
+    }
+
+    match std::fs::remove_dir_all(clone_dir) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!(
+            "'{}' did not delete, so there was nothing to clone into: {err}",
+            clone_dir.display()
+        )),
+    }
+}
+
 /// Bring an existing clone up to date WITHOUT ever losing a local change.
 ///
+/// **This is the TIMER's pass, not the button's.** Refresh deletes the folder and clones it again — see
+/// [`reclone_repository`]. What runs every ten minutes has to be cheap over eight repositories that have
+/// mostly not moved, so it is a fetch, and it is careful with a working tree that `github_git` may have
+/// left something in.
+///
 /// **Fetch always, merge only when there is nothing to lose.** The timer runs this every ten minutes
-/// against a working tree somebody may be halfway through editing, so:
+/// against a working tree somebody may have run a git command in, so:
 ///
 /// * `git fetch` is unconditional and touches nothing in the working tree;
 /// * the fast-forward is attempted only when the tree is clean — no modified file, no untracked file,
@@ -403,44 +463,9 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|err| format!("that file did not read: {err}"))
 }
 
-/// Write one file of the working copy, making the folders above it.
-///
-/// Nothing is staged and nothing is committed: what this produces is a change git can see, and what
-/// happens to it next is a `git` command somebody runs.
-pub fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("could not create '{}': {err}", parent.display()))?;
-    }
-
-    std::fs::write(path, bytes).map_err(|err| format!("that file did not write: {err}"))
-}
-
-/// Delete one file of the working copy, and any folders it leaves empty.
-///
-/// The empty folders go because git does not track folders: a directory left behind after its last file
-/// was deleted is invisible to `git status` and visible in every listing that walks the disk, which is
-/// exactly the sort of difference nobody can explain later.
-pub fn delete_file(path: &Path, stop_at: &Path) -> Result<(), String> {
-    std::fs::remove_file(path).map_err(|err| format!("that file did not delete: {err}"))?;
-
-    let mut folder = path.parent().map(Path::to_path_buf);
-
-    while let Some(current) = folder {
-        if current == stop_at || !current.starts_with(stop_at) {
-            break;
-        }
-
-        // Only when empty — `remove_dir` refuses a folder with anything in it, which is the check.
-        if std::fs::remove_dir(&current).is_err() {
-            break;
-        }
-
-        folder = current.parent().map(Path::to_path_buf);
-    }
-
-    Ok(())
-}
+// There is deliberately no `write_file` and no `delete_file` here. A connected repository is read-only on
+// this surface, and the place that rule is worth being unable to break is the module that owns the paths:
+// a helper that writes into a working copy is one call away from being reached again.
 
 #[cfg(test)]
 mod tests {

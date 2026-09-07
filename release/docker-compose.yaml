@@ -41,13 +41,12 @@ services:
     - ${HOME}/unix-sockets/task-manager-mcp/grpc:/root/grpc
     - ${HOME}/unix-sockets/task-manager-mcp/system:/root/product-system-sockets
     - ${HOME}/unix-sockets/system:/root/system-sockets
-    # Where connected repositories are CLONED, and the one volume on this stack that holds data
-    # somebody would miss.
+    # Where connected repositories are CLONED.
     #
-    # It has to be a mount rather than the container's writable layer, and the reason is not the clone
-    # — that could be re-fetched — but what sits in it uncommitted. A file edited through
-    # documents_edit lives in the working tree and nowhere else until somebody commits it, so on the
-    # writable layer every deploy would silently throw away whatever was in progress. This is the path
+    # It has to be a mount rather than the container's writable layer, and the reason is cost rather
+    # than loss: a connection is read-only and Refresh deletes its folder and clones it again, so
+    # nothing in here exists only in here. On the writable layer, though, every deploy would re-download
+    # every connected repository before a board that was already loaded could be read. This is the path
     # `git_repos_path` defaults to; a settings template that overrides it has to move both.
     - ${HOME}/task-manager-mcp/git-repos:/root/git-repos
     deploy:

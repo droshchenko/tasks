@@ -174,7 +174,7 @@ fn render_list(
                 div { class: "empty-note",
                     "No repository is connected. A connected one is cloned onto this server and appears in this project's documents as the folder "
                     span { class: "mono", "github/<name>/" }
-                    " — refreshed every ten minutes, read-only in this browser, and copied into this project's own documents only when you sync it. Agents reach that folder through the documents tools and can WRITE in it: nothing is staged, committed or pushed until one of them runs git deliberately, and a push goes out under the key handed over here — so hand over one scoped to what you are willing to have changed."
+                    " — fetched every ten minutes, read-only for everybody, and copied into this project's own documents only when you sync it. Nothing in this product writes into that folder: the documents tools read it, and pressing Refresh deletes it and clones the repository again. The key is still what reaches GitHub, and an agent can run git commands in the clone with it, so hand over one scoped to what you are willing to have changed."
                 }
             } else {
                 table { class: "table",

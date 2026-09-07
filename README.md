@@ -611,9 +611,8 @@ A reference on a task or a goal is a row labelled by what the reference itself c
 carries references and not documents: a file in a connected repository is drawn by its **file name** with its
 path as the tooltip, because the reference spells both out, and a document of the project's own is still
 drawn by its id — its path is a row in a table this screen has not fetched. The two are marked differently on
-purpose. A repository's file is somebody else's — no history here, and an edit lands in a working copy rather
-than on this board — and a reader who cannot tell them apart on a card learns the difference at the worst
-possible moment.
+purpose. A repository's file is somebody else's — no history here, and nothing on this board can change it —
+and a reader who cannot tell them apart on a card learns the difference at the worst possible moment.
 
 **Clicking one opens the document IN that dialog, at the same 95% of the window the task was read at, with
 a back arrow in the header.** One size for both is the point rather than a saving: a document that opened
@@ -649,7 +648,7 @@ beside the box is a shortcut that fills it in.
 application checks before it writes, and the index is what stops two writes racing past that check.
 
 
-### A connected repository is a clone you can work in
+### A connected repository is a clone you can read
 
 Reference material usually already exists, and it usually already lives in a GitHub repository — a
 specification, an API contract, somebody else's README that four tasks refer to. Copying it in by hand means
@@ -658,7 +657,7 @@ specification that is quietly a year old.
 
 So a project can **connect** a repository. It takes a name, a url, optionally a branch and a folder inside the
 repository, and from then on that repository appears in the project's documents as `github/<name>/…`,
-refreshed every ten minutes. It is set up by a person in the browser, under **Projects setup → GitHub**, and
+fetched every ten minutes. It is set up by a person in the browser, under **Projects setup → GitHub**, and
 only there: a connection is configuration, like a project's columns and its members, so nothing on the MCP
 surface creates one. What the MCP surface then gets is everything *inside* it.
 
@@ -672,8 +671,8 @@ knowing: refreshing is per repository now, on each row, because there is no row 
 
 **What is behind those paths is a real `git clone` on a mounted disk.** Not a listing, not a cache of blobs —
 a working copy, the same thing you would have in a terminal. That single fact is what the rest of this
-section follows from: reading a file is reading a file, editing one edits it in the working tree, and
-everything git can say about a repository is one command away.
+section follows from: reading a file is reading a file, everything git can say about the repository is one
+command away, and the whole folder can be thrown away and made again — which is what **Refresh** does.
 
 **It is served by the tools that serve the project's own documents, and that is the whole point of the
 design.** `documents_list` answers with the repository's files beside the real ones, sorted into the same path
@@ -683,17 +682,22 @@ file is referenced from a task or a goal exactly as one of the project's own is:
 which is the half of [the reference vocabulary](#a-reference-is-a-url-and-it-names-either-kind-of-document)
 that exists because these files have no id to be named by.
 
-**And now it writes them too.** `documents_upload` creates or replaces a file, `documents_edit` splices one,
-`documents_delete` removes it, `documents_update_path` renames it inside the same connection. The same tools,
-the same refusals, the same edit semantics — an `old_string` that matches twice fails the batch here exactly
-as it does on a document of the project's own.
+**And nothing writes them.** `documents_upload`, `documents_edit`, `documents_delete`,
+`documents_delete_folder` and `documents_update_path` all refuse a `github/` path, with one sentence that
+says why and what to do instead. A connected repository is somebody else's, and this board reads it.
 
-**A write lands in the working tree and stops there, deliberately.** Nothing is staged, nothing is committed
-and nothing is pushed by editing a file. The alternative was considered and is worse in both directions: an
-edit that committed itself puts a commit on a branch for every keystroke of an agent's, and an edit that
-pushed itself does that to a repository other people are working in. So the loop is the one every developer
-already has — edit, `git diff`, `git add`, `git commit`, `git push` — and the tool that runs the second half
-is `github_git`.
+**The reason is what a refresh does, and the two decisions are one decision.** Pressing Refresh on a
+connection DELETES its folder and clones the repository again. That is what makes a connection honest — what
+is on the screen is what GitHub has, rather than whatever accumulated on a disk — and it is exactly why
+nothing may be written there: a file written into that folder would disappear at the next refresh, with
+nothing left to say it had ever been there. A product that offered a write it would silently destroy would be
+worse than one that offers no write at all.
+
+**So there are two ways to change one of these files, and both are honest.** Change it in the repository —
+through GitHub, through a checkout of your own, through a commit and a push — and refresh the connection to
+see it. Or take a copy this board owns: **sync** it into the project's own documents, where it gets an id, a
+version, an author and a history, and where every writing tool works on it. The second is what most reference
+material actually wants; the first is what a repository is for.
 
 #### `github_git` is git, not a menu
 
@@ -703,6 +707,11 @@ rebase, reset, show, blame, `-c`, aliases. There is deliberately no allow-list o
 with subcommands taken out of it is a git that will not do the one thing somebody needs at the moment they
 need it — and because this runs inside the container the clones live in, so the blast radius of git is the
 container.
+
+**It is not how a file gets edited, because nothing here edits one.** What it is for is asking a repository
+questions — `git log`, `git diff`, `git show`, `git blame`, `git status` — and, when somebody has been asked
+to change the repository, running the change git itself can produce. Whatever it leaves in the working copy
+lives only until the next refresh, which deletes the folder: push what is meant to last.
 
 **The one rule is that it has to be git**, and it is checked against the first ARGUMENT rather than against
 the text. A prefix check on the string would pass `gitleaks …` and `github-cli …`, which are different
@@ -732,9 +741,10 @@ different token means resetting the list first and then supplying one —
 value is what git documents for exactly this; the order matters, because the reset only clears what came
 before it.
 
-**Conflicts are resolved the ordinary way** — `git pull` stopping on one leaves markers in the working
-tree, where `documents_get` shows them and `documents_edit` fixes them, then `git add` and `git commit`; or
-`git merge --abort` to undo the attempt.
+**Conflicts are resolved with git** — `git pull` stopping on one leaves markers in the working tree, which
+`documents_get` shows and nothing here can edit out: `git checkout --ours`/`--theirs` on the paths, or
+`git merge --abort` to undo the attempt. Or the shortest answer of all, now that the folder is disposable:
+press Refresh and take the branch as GitHub has it.
 
 A non-zero exit is reported as a result rather than as a failure, because most of them are answers: a push
 refused for non-fast-forward, a merge stopped on a conflict, a commit with nothing staged. Output is cut at a
@@ -751,17 +761,20 @@ repository — all file reads.
 **A key that is gone is no longer a repository that is gone.** The token is still held in the process's
 memory and written to no table, no settings file and no log, so it still has to be typed in again after a
 restart — but the clone survives on the disk. A connection reading `needs-key` on Monday having worked all
-Friday now lists every file it has, reads them, edits them, commits them; only fetching and pushing wait.
-That was the trade's one real cost, and the disk paid it off.
+Friday still lists every file it has and reads them; only reaching GitHub waits. That was the trade's one
+real cost, and the disk paid it off. The one thing not to do with such a connection is press **Refresh**:
+that deletes the folder before it asks GitHub for anything, so a re-clone with no key leaves it empty until
+somebody types one in.
 
-**The refresh may not destroy local work, so it is careful about when it merges.** A tick is always a `git
-fetch`, which touches nothing in the working tree. The fast-forward after it happens only when `git status
---porcelain` is empty — nothing modified, nothing staged, nothing untracked — and it is `--ff-only`, so a
-branch that has diverged stops rather than opening a merge nobody asked for and leaving conflict markers in a
-file somebody is about to read. A refresh that declines to merge is not a failure and is not reported as
-one: what moves it then is a `git pull` or a `git merge` somebody runs on purpose.
+**The timer fetches and the button re-clones, and those are different operations for different questions.**
+A tick is a `git fetch` over eight repositories that have mostly not moved — it has to be cheap, and it
+touches nothing in the working tree. The fast-forward after it happens only when `git status --porcelain` is
+empty and it is `--ff-only`, so a working copy that a git command left something in stops rather than opening
+a merge nobody asked for. A refresh that declines to merge is not a failure and is not reported as one.
+Pressing **Refresh** asks the other question — *give me what GitHub has now* — and answers it the only way
+that always works: the folder goes, and the repository is cloned again.
 
-**And it only fast-forwards the branch it is FOR**, which is a check git will not do for you: `git merge
+**And the fetch only fast-forwards the branch it is FOR**, which is a check git will not do for you: `git merge
 --ff-only origin/dev` in a working copy sitting on `main` moves *main* onto dev's tip. It is a merge, and a
 merge does not care that the two names differ. Two ordinary things reach that state — somebody edits a
 connection's branch after it was cloned, or somebody takes the advice above and works on a branch of their
@@ -769,35 +782,22 @@ own — and neither would report anything, because the merge succeeds. So the ch
 with the connection's first, and a mismatch declines exactly as a dirty tree does. A detached HEAD declines
 too.
 
-**Editing a connection changes the row, not the clone.** The url and the branch are read when the clone is
-made and never again: `origin` keeps the address it was cloned from and the working copy stays on the branch
-it was checked out on, because there is no `git remote set-url` and no checkout anywhere on the refresh path.
-So re-pointing a connection at a different repository puts the new name on the connections screen and moves
-nothing — every file listed, every fetch and every push still belongs to the old one — and changing the
-branch simply stops the fast-forward, by the rule above. The folder inside the repository is the one field of
-the three that takes effect at once, because it is applied when the working copy is listed rather than when
-it is cloned.
+**Editing a connection changes the row; Refresh is what applies it.** The url and the branch are read when
+the clone is made and not by the timer: `origin` keeps the address it was cloned from and the working copy
+stays on the branch it was checked out on, because a fetch does no `git remote set-url` and no checkout. So
+re-pointing a connection at a different repository, or at a different branch, puts the new values on the
+connections screen and moves nothing until somebody presses **Refresh** — which deletes the folder and clones
+what the row now says, `--branch` included. That is the whole of re-pointing, and it is why the elaborate
+`git remote set-url` / `git reset --hard` recipe this section used to carry is gone. The folder *inside* the
+repository is still the one field that takes effect at once, because it is applied when the working copy is
+listed rather than when it is cloned.
 
-**Re-pointing is a git operation, so `github_git` is how it is done** — on a tree with nothing uncommitted in
-it, since the last line throws away whatever is:
-
-```
-git remote set-url origin https://github.com/<owner>/<repo>.git
-git fetch origin
-git reset --hard origin/<branch>
-```
-
-A branch change on its own is `git fetch origin` and then `git checkout <branch>`. What does **not** do it is
-detaching the connection and connecting it again under the same name: detaching leaves the folder on the
-volume, so the next pull finds a clone and goes on refreshing the old repository. A different name is a
-different folder and therefore a real re-clone.
-
-**Detaching does not reclaim the folder either.** Removing a connection deletes the row, the listing and the
-key, and leaves the clone exactly where it was — it may hold a file edited and never committed, or a commit
-nobody pushed, and one click on a settings dialog is not where work that exists nowhere else gets destroyed.
-Reclaiming the space is a deliberate act on the host, under `<git_repos_path>/<project id>/<connection
-name>`. The consequence worth knowing before it surprises somebody is the one above: a connection re-created
-under the same name adopts the folder that is already there, `origin` included.
+**Detaching does not reclaim the folder.** Removing a connection deletes the row, the listing and the key,
+and leaves the clone exactly where it was: a detach is a change to the board, and deleting a folder on a disk
+in the same breath is a second thing nobody asked for. Reclaiming the space is a deliberate act on the host,
+under `<git_repos_path>/<project id>/<connection name>`. The consequence is that a connection re-created under
+the same name adopts the folder that is already there, `origin` included — which used to be permanent and now
+is not: one press of **Refresh** throws that folder away and clones what the new row names.
 
 **A connected folder does not make a smaller clone.** The folder inside the repository roots what is *shown*;
 what is cloned is the whole repository at its full history, because that is what `git clone` is. Two things
@@ -807,11 +807,10 @@ files no connection shows, and a `git add -A` after editing one file stages anyt
 working tree.
 
 **The listing is walked off the working copy**, with `git ls-files --cached --others --exclude-standard`, and
-each of the three flags earns its place: `--cached` is what git tracks, `--others` adds a file created
-through `documents_upload` that nobody has committed yet — so it appears in `documents_list` immediately
-rather than at the next tick — and `--exclude-standard` applies `.gitignore`, so a `target/` somebody built
-inside the clone does not become forty thousand rows. Every write re-walks that connection at once, for the
-same reason: a file created here that took ten minutes to appear would read as a write that did nothing.
+each of the three flags earns its place: `--cached` is what git tracks, `--others` adds what is in the tree
+and not tracked — a file a `git` command left behind, which is visible on the screen rather than invisible
+because nobody committed it — and `--exclude-standard` applies `.gitignore`, so a `target/` somebody built
+inside the clone does not become forty thousand rows.
 
 **The versions are git's, and this side stops pretending otherwise.** `documents_history`,
 `documents_diff` and `documents_restore` refuse a file in a connected repository — and each refusal names the
@@ -820,14 +819,15 @@ gap being apologised for. The history is complete, it is just kept by the thing 
 `expected_version` means nothing here for the same reason and a non-zero one is refused rather than ignored:
 every read reports version 0, so a lock that can never fail to match is worse than no lock at all.
 
-Deleting has no trash and needs none: a tracked file that is deleted is still in every commit that held it,
-and `git checkout -- <path>` brings it straight back. Only a file that was never committed is really lost,
-which is true of any working copy.
+Deleting one is refused rather than performed, and it is worth seeing why that is not timidity: removing a
+file from this disk would change nothing in the repository and would be undone by the next refresh, so what
+looks like a deletion is a copy quietly diverging until a clone puts it back.
 
-**Moving is refused across the boundary**, in both directions. Out of a connection into the project's own
-documents is a *sync* — it produces a document with an id, a version and a history, and the file stays in the
-repository. In is an upload. Neither is what "move" means, and a move that quietly changed what a thing IS
-would be the kind of rename nobody could account for later.
+**Moving is refused in both directions, and for two different reasons.** Out of a connection into the
+project's own documents is a *sync* — it produces a document with an id, a version and a history, and the file
+stays in the repository. In is an upload into a folder nothing writes to. And a rename *inside* a connection
+is a write like any other. None of the three is what "move" means, and a move that quietly changed what a
+thing IS would be the kind of rename nobody could account for later.
 
 **Syncing is still a copy and still exists**, for the same reason it did: what lands is a document with an
 id, a version, an author and a full history that stops tracking the repository the moment it is written. The
@@ -839,8 +839,9 @@ changed is that it no longer runs out of rate limit halfway through two hundred 
 **The disk is a mounted volume and has to be.** `git_repos_path` in settings says where, defaulting to the
 path the compose file mounts, and one folder per connection sits under it keyed by project id then
 connection name — two boards may each connect something called `specs`, and they are two working trees.
-Leaving that on the container's writable layer would mean a deploy silently throwing away everything
-uncommitted, which is the one thing on this stack nobody could reconstruct.
+Leaving that on the container's writable layer would mean re-cloning every connected repository on every
+deploy — minutes of downloading before a board that was already there could be read, repeated for each
+service restart.
 
 **The image carries git.** The runtime Dockerfile installs `git` and `ca-certificates` on top of
 `ubuntu:22.04`; without them the service starts, serves the board, and fails on the first connected

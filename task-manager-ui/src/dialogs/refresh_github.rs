@@ -7,18 +7,23 @@ use task_manager_shared::github::{GithubConnectionResponse, GithubMirrorState};
 /// How often the watch asks whether the refresh is over.
 ///
 /// A second, and it is cheap on both sides: the answer is served out of the service's memory and never
-/// touches GitHub. What is being waited on is the `git fetch` — or, on a connection with nothing on disk
-/// yet, the `git clone` that has to happen first.
+/// touches GitHub. What is being waited on is a `git clone` of the whole repository — a refresh deletes
+/// the connection's folder and makes it again — so the wait is measured in tens of seconds rather than
+/// in ticks.
 const POLL_EVERY: Duration = Duration::from_secs(1);
 
 /// How long the watch keeps asking before it says so out loud.
 ///
-/// A fetch over a repository that has not moved lands in a second or two, so two and a half minutes is far
-/// past anything healthy for one — but a first clone is a whole repository over the network, and git is
-/// allowed 300 seconds for a single command, so a slow one outlasts this watch. That is why giving up is
-/// said as the watching stopping rather than as the refresh failing: a dialog that spins for ever has
-/// stopped telling the truth, and one that reports a failure that did not happen is worse.
-const GIVE_UP_AFTER: Duration = Duration::from_secs(150);
+/// **Long enough to outlast the thing being watched, which is now a clone every time.** A refresh deletes
+/// the working copy and clones the repository again, so the two-and-a-half minutes that comfortably
+/// covered a fetch would have given up on half the repositories this is used on. Git's own ceiling for
+/// one command is 300 seconds; the watch matches it, so what it reports is git's answer rather than the
+/// dialog's impatience.
+///
+/// Giving up is still said as the watching stopping rather than as the refresh failing: a dialog that
+/// spins for ever has stopped telling the truth, and one that reports a failure that did not happen is
+/// worse.
+const GIVE_UP_AFTER: Duration = Duration::from_secs(300);
 
 /// One connection's refresh, and the number it is being watched against.
 ///
@@ -322,26 +327,26 @@ fn render_intro(watching: &[String], started: bool) -> Element {
     if started {
         return rsx! {
             p { class: "field-hint",
-                "Fetching from GitHub. This stays open until it is done — a fetch over a repository that has not moved takes a second or two, but the first refresh of a connection clones the whole repository and can take minutes."
+                "Cloning from GitHub. This stays open until it is done — the folder is deleted first and the whole repository comes down again, which takes as long as a clone of it takes, and can be minutes on a large one."
             }
         };
     }
 
     let what = match watching {
         [one] => rsx! {
-            "Read "
+            "Delete the folder behind "
             span { class: "mono", "{one}" }
-            " from GitHub again, rather than waiting for the next ten-minute check."
+            " and clone it from GitHub again."
         },
         many => rsx! {
-            "Read all {many.len()} connected repositories from GitHub again, rather than waiting for the next ten-minute check."
+            "Delete the folders behind all {many.len()} connected repositories and clone them from GitHub again."
         },
     };
 
     rsx! {
         p { {what} }
         p { class: "field-hint",
-            "A refresh is a git fetch into the clone on this disk — the files are already here, so opening one costs nothing. What arrives is merged only when the working copy is clean, so an edit nobody has committed is never overwritten: a connection with local changes stays on the commit it is on until somebody merges it deliberately."
+            "A refresh is not a fetch — the ten-minute timer already does that. This throws the working copy away and takes the repository down again, which is what makes a folder right when a fetch cannot: a force-pushed branch, a file that stopped being tracked, a copy left on the wrong branch. These files are read-only here, so what is deleted is a copy — except anything an agent left in the clone through a git command, which goes with it. Push that first if it matters."
         }
     }
 }
@@ -361,11 +366,10 @@ fn render_outcome(connections: &[GithubConnectionResponse], stopped: Option<&Sto
 
             if unread.is_empty() {
                 rsx! {
-                    // Not "everything here is what GitHub holds": a working copy with an uncommitted
-                    // change of its own fetches and then declines the fast-forward, on purpose, and it
-                    // ends the run in exactly this state. Claiming it matched would be a sentence that is
-                    // wrong precisely for the person who has work in flight.
-                    div { class: "refresh-done", "Fetched. Anything with no local change of its own is now what GitHub holds." }
+                    // It can be said plainly now, and only because of what a refresh became: the folder
+                    // was deleted and cloned, so there is no working copy that quietly declined to move
+                    // and no sentence to hedge with.
+                    div { class: "refresh-done", "Cloned. These folders are now exactly what GitHub holds." }
                 }
             } else {
                 let unread = unread.join(", ");
@@ -379,7 +383,7 @@ fn render_outcome(connections: &[GithubConnectionResponse], stopped: Option<&Sto
         }
         Some(Stopped::GaveUp) => rsx! {
             div { class: "refresh-done failed",
-                "This is taking longer than a fetch normally does, which a first clone of a large repository can. It may still be running — close this and open the folder again in a few minutes."
+                "This is taking longer than a clone of a large repository normally does. It may still be running — close this and open the folder again in a few minutes."
             }
         },
         Some(Stopped::Failed(message)) => rsx! {

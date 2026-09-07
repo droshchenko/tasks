@@ -313,7 +313,7 @@ pub fn DocumentTreeRow(
             };
 
             let title = if remote {
-                "A connected GitHub repository — a real clone on the server, read-only here. The documents tools read and write these files in its working copy; a write stops there, and nothing is committed or pushed until a github_git command says so. Sync from GitHub copies files out of it into this project as documents of its own."
+                "A connected GitHub repository — a real clone on the server, and read-only: nothing here or on the tools writes into it, because refreshing the connection deletes the folder and clones the repository again. Sync from GitHub copies files out of it into this project as documents of its own, which are yours to edit."
             } else {
                 ""
             };

@@ -235,20 +235,22 @@ References to a deleted document are deliberately NOT cleaned up, because restor
 a reference quietly dropped would not come back with it. The trash is invisible in the browser: \
 documents_trash is the only way to see what is in it.\
 \
-A CONNECTED REPOSITORY IS A REAL CLONE, AND YOU CAN WORK IN IT. A project may connect GitHub \
+A CONNECTED REPOSITORY IS A REAL CLONE, AND IT IS READ-ONLY. A project may connect GitHub \
 repositories; each appears in that project's documents as `github/<connection>/…`, and what is behind \
-those paths is a working copy on this server. Every documents tool works on them: documents_list shows \
-them beside the project's own, documents_get reads one, documents_search does not reach them (it \
-searches this product's own texts — use `git grep` for a repository). documents_edit, documents_upload, \
-documents_delete and documents_update_path WRITE them.\
+those paths is a working copy on this server. Reading works exactly as it does for the project's own \
+documents: documents_list shows them side by side, documents_get reads one, documents_outline outlines \
+one. documents_search does not reach them (it searches this product's own texts — use `git grep` \
+through github_git for a repository), and documents_upload, documents_edit, documents_delete, \
+documents_delete_folder and documents_update_path REFUSE them.\
 \
-A WRITE LANDS IN THE WORKING TREE AND STOPS THERE, WHICH IS THE WHOLE CONTRACT. Nothing is staged, \
-committed or pushed by editing a file — that would put a commit on somebody's branch for every edit you \
-make. Recording and sending the work is github_git, which runs any git command you like in that clone: \
-`git diff` to see what you changed, `git add` and `git commit -m \"…\"` to record it, `git push` to send \
-it, `git pull` to take what others did. Conflicts arrive as markers in the files, which documents_get \
-shows and documents_edit fixes, then `git add` and `git commit` — or `git merge --abort` to undo the \
-attempt. So: edit with the documents tools, then reach for github_git.\
+THE REASON IS WHAT A REFRESH DOES: it DELETES the folder and clones the repository again. That is what \
+makes a connection honest — what you read is what GitHub has, not what has accumulated on a disk — and \
+it is why nothing may be written there: a file written into that folder would disappear at the next \
+refresh with nothing left to say it had been there. To change one of these files, change it in the \
+repository. To have a copy this board owns, with an id, versions and a history, sync it into the \
+project's own documents. github_git still runs any git command in the clone — `git log`, `git diff`, \
+`git show`, `git blame` — and anything it commits lives only until the next refresh, so push what is \
+meant to last.\
 \
 A FILE IN A REPOSITORY HAS NO VERSION HERE, AND THAT IS NOT A GAP. documents_history, documents_diff \
 and documents_restore refuse one, and say which git command answers the same question — `git log`, \

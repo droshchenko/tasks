@@ -7,7 +7,7 @@ use task_manager_shared::github::{
 
 use crate::app::AppContext;
 use crate::board::GithubConnectionModel;
-use crate::github::{normalise_branch, normalise_repo_path, parse_repo_url};
+use crate::github::{PullMode, normalise_branch, normalise_repo_path, parse_repo_url};
 
 use super::resolve_project_by_prefix;
 
@@ -89,7 +89,7 @@ pub async fn set_github_connection(
         app.github.set_key(&project_id, &name, key);
     }
 
-    start_pull(app, project_id, connection);
+    start_pull(app, project_id, connection, PullMode::Fetch);
 
     Ok(())
 }
@@ -119,7 +119,7 @@ pub async fn set_github_key(
 
     app.github.set_key(&project_id, name, key);
 
-    start_pull(app, project_id, connection);
+    start_pull(app, project_id, connection, PullMode::Fetch);
 
     Ok(())
 }
@@ -127,15 +127,15 @@ pub async fn set_github_key(
 /// Detach a repository: the row, then the listing and the key.
 ///
 /// **The clone on the volume is left where it is.** Nothing here removes
-/// `<git_repos_path>/<project id>/<name>`, and that is a decision rather than an oversight: a working copy
-/// may hold an edit nobody committed and a commit nobody pushed, and a button on a settings dialog is not
-/// where work that exists nowhere else gets destroyed. The folder goes on the host or it does not go.
+/// `<git_repos_path>/<project id>/<name>`: a detach is a change to the board, and deleting a folder on a
+/// disk in the same breath is a second thing nobody asked for — one that also takes whatever somebody
+/// left in it through `github_git`. Reclaiming the space is a deliberate act on the host.
 ///
 /// **What follows is that the next connection of the same name on the same project ADOPTS that folder**,
-/// `origin` included — see [`crate::github::pull_connection`], which clones only when there is nothing on
-/// disk and otherwise fetches whatever `.git/config` already points at. So detaching and re-connecting is
-/// not a way to re-clone from a different url: connect it under a different name, or repoint the working
-/// copy with `github_git` (`git remote set-url origin …`).
+/// `origin` included — see [`crate::github::pull_connection`], which on the timer's pass fetches whatever
+/// `.git/config` already points at. That used to be permanent; it no longer is. Pressing **Refresh** on
+/// the connection deletes the folder and clones it from the url the row now carries, which is what makes
+/// detaching and re-connecting under the same name land where somebody expects.
 pub async fn delete_github_connection(
     app: &Arc<AppContext>,
     project_prefix: &str,
@@ -166,7 +166,13 @@ pub async fn delete_github_connection(
     Ok(())
 }
 
-/// Refresh one connection now, rather than at the next tick.
+/// Refresh one connection now: delete its working copy and clone it again.
+///
+/// **A refresh is not a fetch, and the difference is the point.** The timer fetches every ten minutes and
+/// is already keeping the folder current; somebody who presses this is asking for something a fetch does
+/// not give them — the folder as GitHub has it, with a force-pushed branch, a file that stopped being
+/// tracked, and anything a git command left behind all gone. Nothing on this surface writes into a
+/// connected repository, so what is thrown away is a copy.
 ///
 /// Answers with the connection's finished-listings count as it stood the moment the ask was accepted —
 /// which is what makes the run watchable, since nothing about it is finished when this returns. See
@@ -196,7 +202,7 @@ pub async fn pull_github_connection(
         .get_or_pending(&project_id, &connection.name)
         .pull_no as i64;
 
-    start_pull(app, project_id, connection);
+    start_pull(app, project_id, connection, PullMode::Reclone);
 
     Ok(pull_no)
 }
@@ -264,10 +270,15 @@ pub fn list_github_connections(
 /// Every caller here is answering a person who pressed something, and a repository can take half a
 /// minute to arrive. The mirror carries the state, so the screen has something true to show the whole
 /// time — which a request held open for thirty seconds does not.
-fn start_pull(app: &Arc<AppContext>, project_id: String, connection: GithubConnectionModel) {
+fn start_pull(
+    app: &Arc<AppContext>,
+    project_id: String,
+    connection: GithubConnectionModel,
+    mode: PullMode,
+) {
     let app = app.clone();
 
     tokio::spawn(async move {
-        crate::github::pull_connection(&app, &project_id, &connection).await;
+        crate::github::pull_connection(&app, &project_id, &connection, mode).await;
     });
 }

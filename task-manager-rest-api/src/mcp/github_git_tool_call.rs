@@ -59,10 +59,15 @@ git, not a chosen subset. status, diff, log, add, commit, push, pull, fetch, bra
 merge, rebase, reset, show, blame: if git can do it, this runs it.\
 \
 WHY IT EXISTS: a connected repository is a real clone on this server, and the files under \
-`github/<connection>/…` are that working copy. documents_get reads one, documents_edit and \
-documents_upload write one — and a write lands in the working tree and stops there, deliberately. \
-Nothing is staged, committed or pushed until you say so here. So the loop is: edit with the documents \
-tools, `git diff` to check what you did, `git add` and `git commit` to record it, `git push` to send it.\
+`github/<connection>/…` are that working copy. The documents tools READ it and never write it — \
+documents_upload, documents_edit, documents_delete and documents_update_path all refuse a `github/` \
+path — so everything a repository can be asked comes through here: `git log`, `git diff`, `git show`, \
+`git blame` for what happened and when, `git status` for what the working copy actually holds.\
+\
+THE WORKING COPY IS DISPOSABLE, AND THAT GOVERNS WHAT IS WORTH DOING IN IT. Refresh on a connection \
+DELETES the folder and clones the repository again — a commit nobody pushed, a stash, a branch of your \
+own all go with it, and nothing warns you. So anything you do here that is meant to last has to be \
+pushed in the same breath; anything else is a scratch space with an unpredictable lifetime.\
 \
 IT RUNS AT THE ROOT OF THE CLONE, WHICH IS NOT ALWAYS WHERE THE DOCUMENTS PATHS START. A connection \
 may name a folder inside the repository, and that folder is the ROOT of what `github/<connection>/…` \
@@ -77,10 +82,10 @@ ONLY GIT. The command must start with `git`; anything else is refused by name. I
 shell, so there is no second command to chain onto it — `;` and `&&` are just characters git will not \
 understand.\
 \
-CONFLICTS ARE RESOLVED THE ORDINARY WAY. `git pull` stopping on one leaves the conflicted files with \
-markers in the working tree, where documents_get shows them and documents_edit fixes them; then \
-`git add` those paths and `git commit`. `git merge --abort` undoes the whole attempt. `git status` \
-lists what is still unmerged.\
+CONFLICTS ARE RESOLVED WITH GIT, NOT WITH THE DOCUMENTS TOOLS. `git pull` stopping on one leaves \
+markers in the working tree — documents_get shows them, and nothing here can edit them out. \
+`git checkout --ours`/`--theirs` on the paths, or `git merge --abort` to undo the whole attempt, is what \
+you have; `git status` lists what is still unmerged.\
 \
 A COMMIT IS ATTRIBUTED TO WHOEVER YOU SAY. Pass `--author \"Name <email>\"` on the commit when the work \
 is a person's; without it the committer is this service, which is honest but tells nobody anything.\

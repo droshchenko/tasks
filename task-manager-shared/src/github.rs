@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// **A reserved root is what lets a cloned repository be served by the tools that serve the project's
 /// own.** An agent calls `documents_list` and sees `github/specs/design/system.md` beside
-/// `docs/system.md`, reads either with `documents_get`, and edits either with `documents_edit`. What is
-/// under this root is a working copy on disk rather than rows in a table, and that is the whole of the
-/// difference: a write lands in the working tree and stops there — nothing is staged, committed or pushed
-/// by it — and the versions are git's, which is why `documents_history` and `documents_restore` name the
+/// `docs/system.md`, and reads either with `documents_get`. What is under this root is a working copy on
+/// disk rather than rows in a table, and that is the whole of the difference: it is READ-ONLY — every
+/// tool that writes refuses this root, because a refresh deletes the folder and clones the repository
+/// again — and the versions are git's, which is why `documents_history` and `documents_restore` name the
 /// git command instead of answering. Copying a file OUT of here, into a document of the project's own
 /// with an id and a history, is still a sync.
 pub const GITHUB_ROOT: &str = "github";
@@ -51,7 +51,7 @@ pub struct GithubConnectionResponse {
     // Whether the server currently holds a key for this connection. False is not an error — a public
     // repository clones anonymously — and for a private one it stops the exchange with GitHub rather
     // than the folder: a connection that has never cloned shows nothing until a key is given, while one
-    // already on disk keeps listing, reading and editing, and only fetching and pushing wait for it.
+    // already on disk keeps listing and reading, and only reaching GitHub waits for it.
     pub has_key: bool,
     // What the last pull did. See [`GithubMirrorState`] for the vocabulary; it travels as a string for the
     // same reason every open vocabulary in this contract does.

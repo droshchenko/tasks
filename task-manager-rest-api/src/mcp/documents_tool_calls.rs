@@ -124,13 +124,16 @@ connected, and they are listed beside the real ones because that is what makes r
 reachable. What is behind them is a real clone on this server's disk, so reading one is a file read that \
 costs nothing and needs no key — documents_get takes such a path exactly as it takes any other.\
 \
-YOU CAN WRITE THEM. documents_upload, documents_edit, documents_delete and documents_delete_folder all \
-act on a `github/` path, and documents_update_path moves a file to another path in the SAME connection — \
-moving a document of this project in, or a file of a repository out, is refused, because neither is a \
-move. A write lands in the WORKING TREE and stops there: nothing is staged, committed or pushed until \
-you run git yourself with github_git. What these files do not have is versions — every one reports \
-version 0, and documents_history, documents_diff and documents_restore refuse them, because their \
-history is the repository's and `git log` is how it is read.";
+THEY ARE READ-ONLY, ALL OF THEM. documents_upload, documents_edit, documents_delete, \
+documents_delete_folder and documents_update_path refuse a `github/` path and say why. The folder behind \
+it is a clone this service throws away: refreshing a connection DELETES it and clones it again, so \
+anything written there would be gone at the next refresh with nothing to say it had been there. To \
+change one of these files, change it in the repository and refresh the connection. To have a copy this \
+board owns and keeps versions of, sync it into the project's own documents.\
+\
+THEY ALSO HAVE NO VERSIONS — every one reports version 0, and documents_history, documents_diff and \
+documents_restore refuse them, because their history is the repository's and `git log`, through \
+github_git, is how it is read.";
 }
 
 #[async_trait::async_trait]
@@ -219,13 +222,12 @@ moved three times is still one document, and its whole past is reachable through
 CHANGED between two versions, documents_diff answers without either text.\
 \
 A path under `github/` is a file in a connected repository and reads exactly like anything else here — \
-but it has no versions, so `version`, documents_history and documents_diff all refuse it and say so. \
-What you read is the WORKING COPY on this server, not the branch. It is fetched and fast-forwarded on a \
-ten-minute timer, and the fast-forward is skipped for as long as the working tree has uncommitted \
-changes in it — so it can sit behind the branch indefinitely, not merely for ten minutes. A file written \
-through documents_upload or documents_edit differs from the repository on purpose until somebody commits \
-and pushes it. github_git is what answers which: `git status` for what is uncommitted here, `git log` \
-for what has actually arrived from the remote.";
+but it is READ-ONLY, and it has no versions, so `version`, documents_history and documents_diff all \
+refuse it and say so. What you read is the WORKING COPY on this server, not the branch: it is fetched on \
+a ten-minute timer, and the fast-forward after the fetch is skipped for as long as the working tree has \
+anything uncommitted in it, so it can sit behind the branch for longer than ten minutes. Pressing \
+Refresh on the connection is what settles that — it deletes the folder and clones the repository again. \
+`git log` through github_git says what has actually arrived here.";
 }
 
 #[async_trait::async_trait]
@@ -486,11 +488,11 @@ pub struct DocumentsDeleteResponse {
     )]
     pub reference: String,
     #[property(
-        description = "The id, unchanged — for a document of this project's own it is what documents_restore takes, so it is worth keeping. A `github/` file has no trash to be taken back out of"
+        description = "The id, unchanged — it is what documents_restore takes, so it is worth keeping"
     )]
     pub id: String,
     #[property(
-        description = "The path it had, which is where a restore puts it back by default. For a `github/` file it is the path that was removed from the working copy"
+        description = "The path it had, which is where a restore puts it back by default"
     )]
     pub path: String,
 }
@@ -520,12 +522,10 @@ document. A reader who cannot resolve one is told it is in the trash.\
 \
 The trash is not shown in the browser — documents_trash is how you see what is in it.\
 \
-A PATH UNDER `github/` HAS NO TRASH, AND NONE OF THE ABOVE HOLDS FOR IT. It is a file in a connected \
-repository, and deleting one removes it from the working copy on this server: no trash row, no history \
-entry, and documents_restore refuses it and says so. Nothing is staged or committed either — the removal \
-is an uncommitted change, which `git status` shows. THE UNDO IS GIT'S: `git checkout -- <path>` through \
-github_git brings back anything that was committed, and `git restore --source <commit> -- <path>` takes \
-it from further back. A file that was never committed is really gone.";
+A PATH UNDER `github/` IS REFUSED. It is a file in a connected repository, and this board only reads \
+those: what is on this disk is a clone that a refresh deletes and clones again, so removing a file from \
+it would change nothing in the repository and be undone the next time anybody pressed Refresh. Delete it \
+where it lives — in the repository — and refresh the connection.";
 }
 
 #[async_trait::async_trait]
@@ -567,7 +567,7 @@ pub struct DocumentsDeleteFolderResponse {
     #[property(description = "The folder that was emptied, as it was read")]
     pub folder: String,
     #[property(
-        description = "What went, in path order. For the project's own documents each one is in the trash under its own id and documents_restore takes them back one at a time — keep this list if any of them might be wanted back. For a `github/` folder these are paths deleted from the working copy: there is no trash row behind them, and git is the only undo"
+        description = "What went, in path order. Each one is in the trash under its own id and documents_restore takes them back one at a time — keep this list if any of them might be wanted back"
     )]
     pub documents: Vec<DeletedDocumentView>,
     #[property(description = "How many were deleted")]
@@ -606,18 +606,10 @@ project's documents.\
 References on tasks and goals are NOT removed, on purpose, exactly as with a single deletion: restoring \
 is one call away, and a reference quietly dropped would not come back with the document.\
 \
-A PATH UNDER `github/` IS NOT REFUSED, AND NOTHING ABOVE ABOUT THE TRASH APPLIES TO IT. It is a folder \
-in the working copy of a connected repository, and this call DELETES THE FILES OFF THE DISK: no history \
-entry, no trash row, and documents_restore cannot bring one back. `github/<connection>/<folder>` takes \
-that subtree; `github/<connection>` with no folder under it empties that whole working copy. Only what \
-documents_list shows goes — a file skipped for being over the size limit stays where it is.\
-\
-SO THE UNDO IS GIT, AND ONLY FOR WHAT WAS COMMITTED. github_git running `git checkout -- .` brings back \
-every file that was in a commit; a file that was never committed is gone for good. Run `git status` \
-through github_git before this call, not after.\
-\
-The one refusal is the bare `github` root: that is where every connected repository is shown, not a \
-folder in one, so name a connection.";
+A PATH UNDER `github/` IS REFUSED, WHOLE. That is a folder in a connected repository — somebody else's \
+files, which this board only reads — and the refusal is worth having here more than anywhere: \
+`github/<connection>` is one word that would otherwise empty a whole working copy, and emptying it would \
+change nothing in the repository and be undone by the next refresh.";
 }
 
 #[async_trait::async_trait]

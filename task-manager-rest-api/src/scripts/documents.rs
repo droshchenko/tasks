@@ -275,13 +275,12 @@ async fn write_document(
 
     content.body.validate()?;
 
-    // **A path under the reserved root is a FILE, and everything below this line is about versions.** A
-    // connected repository is a working copy on disk: writing there creates or replaces a real file, which
-    // git then sees as a change, and there is no row, no version and no history on this side to write.
-    // Checked after normalisation, so a path spelled `/github/a.md` is caught as readily as `github/a.md`.
+    // **A path under the reserved root is somebody else's file, and this board only reads those.** The
+    // folder behind it is a clone that Refresh deletes and makes again, so a write there is work that
+    // disappears at the next refresh without anybody being told. Checked after normalisation, so a path
+    // spelled `/github/a.md` is caught as readily as `github/a.md`.
     if task_manager_shared::github::is_github_path(&path) {
-        return super::write_mirror_document(app, project_prefix, &path, &content.body.into_bytes())
-            .await;
+        return Err(super::refuse_mirror_write(&path, "written"));
     }
 
     let content_type = content.resolve_content_type(&path);
@@ -363,13 +362,12 @@ pub async fn update_document_path(
     let path = normalise_document_path(path)?;
     let who = require_author(who)?;
 
-    // **Both ends decide together which side of the boundary this move is on.** A file of a connected
-    // repository is renamed inside its own working copy, where a rename is two filesystem operations and
-    // no history; a document of the project's own is renamed by writing a version that records the move.
-    // What is refused is a move that CROSSES between them, because that changes what the thing is rather
-    // than where it is — see `move_mirror_document`.
-    if let Some((project_prefix, from_path)) = super::parse_mirror_document_id(id) {
-        return super::move_mirror_document(app, project_prefix, from_path, &path).await;
+    // **Both ends are refused, for two different reasons.** A file of a connected repository cannot be
+    // renamed because nothing here writes into one; a document of the project's own cannot be moved INTO
+    // a connection because that would change what it is rather than where it is — see
+    // `refuse_move_into_mirror`.
+    if let Some((_, from_path)) = super::parse_mirror_document_id(id) {
+        return Err(super::refuse_mirror_write(from_path, "renamed"));
     }
 
     super::refuse_move_into_mirror(&path)?;
@@ -424,10 +422,10 @@ pub async fn update_document_path(
 pub async fn delete_document(app: &AppContext, id: &str, who: &str) -> Result<String, String> {
     let id = &unwrap_document_reference(id);
 
-    // A file of a connected repository is removed from the working tree instead, where git is the trash:
-    // every commit that held it still holds it. See `delete_mirror_document`.
-    if let Some((project_prefix, mirror_path)) = super::parse_mirror_document_id(id) {
-        return super::delete_mirror_document(app, project_prefix, mirror_path).await;
+    // A file of a connected repository is not this board's to delete: what is on the disk is a clone, and
+    // removing a file from it would change nothing in the repository and be undone by the next refresh.
+    if let Some((_, mirror_path)) = super::parse_mirror_document_id(id) {
+        return Err(super::refuse_mirror_write(mirror_path, "deleted"));
     }
 
     let who = require_author(who)?;
@@ -527,11 +525,10 @@ pub async fn delete_folder(
 ) -> Result<Vec<DeletedDocument>, String> {
     let folder = normalise_folder(folder)?;
 
-    // A folder under the reserved root is a folder in a working copy, and its files are files. Sent
-    // somewhere else entirely because everything below reads the documents index, which has never held
-    // them — see `delete_mirror_folder`.
+    // A folder under the reserved root is a folder in somebody else's repository, and this is the most
+    // destructive shape the refusal has to cover: one word would otherwise empty a whole working copy.
     if task_manager_shared::github::is_github_path(&folder) {
-        return super::delete_mirror_folder(app, project_prefix, &folder).await;
+        return Err(super::refuse_mirror_write(&folder, "deleted"));
     }
 
     let who = require_author(who)?;
@@ -819,14 +816,11 @@ pub async fn edit_document(
         );
     }
 
-    // **A file of a connected repository takes the same splice to a different destination.** Everything
-    // that makes this tool worth reaching for — sending only what changes, refusing an ambiguous match,
-    // all-or-nothing — is in `apply_edits` and applies identically; what differs is that the result is
-    // written to a working copy rather than as a new version. Resolved by BOTH names, because a caller
-    // holds whichever one it was handed, and going through `resolve_document` first would read the file
-    // only to discover it cannot be written the ordinary way.
-    if let Some((prefix, mirror_path)) = mirror_named_by(id, project_prefix, path)? {
-        return super::edit_mirror_document(app, &prefix, &mirror_path, edits, expected_version).await;
+    // **A file of a connected repository is refused here rather than after it is read**, and by every
+    // name it can be handed over under: an edit that read the file, spliced it and then discovered it
+    // could not be written would have spent the round trip to say what the path already says.
+    if let Some(mirror_path) = mirror_named_by(id, path) {
+        return Err(super::refuse_mirror_write(&mirror_path, "edited"));
     }
 
     let existing = resolve_document(app, id, project_prefix, path).await?;
@@ -888,40 +882,24 @@ pub async fn edit_document(
     Ok((row, replacements))
 }
 
-/// Whether a caller named a file of a connected repository, by either of the two names it has.
+/// The file of a connected repository a caller named, by any of the three names one has.
 ///
 /// **The id wins when both arrive**, for the same reason it does in [`resolve_document`]: it is the
-/// identity, where a path is only where the file is sitting today. A path names one only with a project
-/// beside it, because a path is unique within one board and a connection's name is a folder on it.
-fn mirror_named_by(
-    id: Option<&str>,
-    project_prefix: Option<&str>,
-    path: Option<&str>,
-) -> Result<Option<(String, String)>, String> {
+/// identity, where a path is only where the file is sitting today. What comes back is the
+/// `github/<connection>/<file>` path, which is the half of the name worth putting in a refusal.
+fn mirror_named_by(id: Option<&str>, path: Option<&str>) -> Option<String> {
     // A reference is the THIRD name one of these files has, and it is the one a person writes down. It
     // carries its own project, so it needs nothing beside it — which is the whole reason it is a url.
     if let Some(named) = unwrap_named_reference(id, path) {
-        return Ok(super::parse_mirror_document_id(&named)
-            .map(|(prefix, mirror_path)| (prefix.to_string(), mirror_path.to_string())));
+        return super::parse_mirror_document_id(&named).map(|(_, path)| path.to_string());
     }
 
-    let Some(path) = path.map(str::trim).filter(|itm| !itm.is_empty()) else {
-        return Ok(None);
-    };
+    let path = path.map(str::trim).filter(|itm| !itm.is_empty())?;
 
-    if !task_manager_shared::github::is_github_path(path) {
-        return Ok(None);
-    }
-
-    let prefix = project_prefix
-        .map(str::trim)
-        .filter(|itm| !itm.is_empty())
-        .ok_or_else(|| {
-            "editing by `path` needs `project` beside it — a path is only unique within one board"
-                .to_string()
-        })?;
-
-    Ok(Some((prefix.to_string(), path.to_string())))
+    // **No `project` is asked for, and that is the difference between this and reading one.** Which
+    // connection a path belongs to only matters to somebody about to open the file; the answer here is
+    // that nothing writes there, and it is the same answer on every board.
+    task_manager_shared::github::is_github_path(path).then(|| path.to_string())
 }
 
 /// What a caller is looking for across a project's documents.
