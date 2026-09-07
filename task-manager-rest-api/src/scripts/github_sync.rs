@@ -73,6 +73,15 @@ pub async fn sync_github(
 
     let clone_dir = workdir::connection_dir(&app.git_repos_path, &project_id, connection_name);
 
+    // **One guard for the whole sync, not one per file.** A sync copies a set of files that were chosen
+    // together and is meant to land as one version of the repository; a refresh swapping the folder
+    // half way through would produce a folder of documents assembled from two different commits, with
+    // nothing in the result saying so. Held for as long as the copying takes, which is what delays a
+    // refresh rather than corrupting the answer.
+    let workdir_lock = app.github.workdir_lock(&project_id, connection_name);
+
+    let _guard = workdir_lock.read().await;
+
     let mut written: Vec<DocumentDto> = Vec::new();
     let mut skipped: Vec<SkippedEntry> = Vec::new();
 

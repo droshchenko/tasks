@@ -61,7 +61,7 @@ pub struct AppContext {
     // index is the project's own documents, durable in Postgres and merely cached here. This is a listing
     // of what is on disk in a clone — rebuilt by walking the working copy, never authoritative, and
     // thrown away on every start.
-    pub github: GithubMirrors,
+    pub github: Arc<GithubMirrors>,
 
     // Where those clones live. One folder per connection underneath it, and a mounted volume rather than
     // the container's writable layer — a clone holds edits that exist nowhere else until they are
@@ -129,7 +129,7 @@ impl AppContext {
             documents_repo: DocumentsRepo::new(settings_reader.clone()).await,
             board: Board::new(),
             documents_index: DocumentsIndex::new(),
-            github: GithubMirrors::new(),
+            github: Arc::new(GithubMirrors::new()),
             git_repos_path,
             subscribers: ProjectSubscribers::new(),
             session_key,

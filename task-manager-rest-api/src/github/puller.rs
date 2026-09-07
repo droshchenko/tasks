@@ -7,7 +7,7 @@ use task_manager_shared::github::GithubMirrorState;
 use crate::app::AppContext;
 use crate::board::GithubConnectionModel;
 
-use super::mirror::Mirror;
+use super::mirror::{Mirror, PullGuard};
 use super::workdir;
 
 /// How often every connection's working copy is brought up to date.
@@ -30,7 +30,8 @@ pub enum PullMode {
     /// Fetch into the clone and fast-forward it when there is nothing to lose — the timer's pass. Clones
     /// when there is nothing on disk yet, because that is the only way to have anything to fetch into.
     Fetch,
-    /// Delete the working copy and clone it again — what Refresh does. See
+    /// Clone into a folder of its own and swap it in when it is complete — what Refresh does. The
+    /// connection is readable throughout, and a clone that fails changes nothing. See
     /// [`workdir::reclone_repository`].
     Reclone,
 }
@@ -74,9 +75,16 @@ pub async fn pull_every_connection(app: &Arc<AppContext>) {
     };
 
     for (project_id, connection) in work {
+        // Claimed with `try_`, so a connection somebody is refreshing right now is skipped rather than
+        // queued behind: their re-clone is a better answer than this fetch, and the next tick is ten
+        // minutes away.
+        let Some(guard) = app.github.try_begin_pull(&project_id, &connection.name) else {
+            continue;
+        };
+
         // A fetch, never a re-clone: this runs unattended over every connection of every project, and
         // re-cloning eight repositories every ten minutes is a download nobody asked for.
-        pull_connection(app, &project_id, &connection, PullMode::Fetch).await;
+        pull_connection(app, &project_id, &connection, PullMode::Fetch, guard).await;
     }
 }
 
@@ -89,10 +97,10 @@ pub async fn pull_every_connection(app: &Arc<AppContext>) {
 /// exchange with the remote and stops nothing else. The connection reads `needs-key` or `failed` with the
 /// reason on it, AND lists every file it has, AND every git command in it keeps working.
 ///
-/// **The one case where a failure leaves nothing readable is a re-clone that could not clone**, and it is
-/// inherent rather than an oversight: the folder was deleted before GitHub was asked, so a connection
-/// whose key expired between the press and the clone is empty until somebody supplies one and refreshes
-/// again. The listing is emptied with it rather than left describing files that are no longer there.
+/// **A re-clone that fails is no different**, which is what the staging in [`workdir::reclone_repository`]
+/// buys: the new copy is assembled beside the old one and only swapped in once it is complete, so a
+/// refresh that hits an expired key leaves the connection exactly as readable as it was, with the reason
+/// on it. The only connection that ends a pass with nothing is one that has never been cloned at all.
 ///
 /// Nothing here returns an error, because there is nobody to return one to: this runs on a timer, and
 /// what a failure produces is a state on the mirror that a screen shows and the next pass retries.
@@ -101,12 +109,11 @@ pub async fn pull_connection(
     project_id: &str,
     connection: &GithubConnectionModel,
     mode: PullMode,
+    // Taken by the CALLER, not here, and held to the end of this function — which is what makes the
+    // counter it bumps on the way out mean this run. The timer claims it with `try_begin_pull` and skips
+    // a busy connection; a person's refresh waits for it and then hands it over.
+    _guard: PullGuard,
 ) {
-    let Some(_guard) = app.github.try_begin_pull(project_id, &connection.name) else {
-        // Already running — the person who pressed Refresh and the timer arriving together.
-        return;
-    };
-
     let previous = app.github.get_or_pending(project_id, &connection.name);
 
     app.github.set_state(
@@ -120,12 +127,18 @@ pub async fn pull_connection(
 
     let clone_dir = workdir::connection_dir(&app.git_repos_path, project_id, &connection.name);
 
+    // Taken once and used three times: the re-clone swaps the folder under the write side, the fetch's
+    // fast-forward rewrites files under the write side, and the listing below walks the folder under the
+    // read side. All three exclude the readers — a document read, a sync, a `github_git` command — which
+    // hold the read side and would otherwise be looking at a tree being rewritten under them.
+    let workdir_lock = app.github.workdir_lock(project_id, &connection.name);
+
     let exchange = match (mode, workdir::is_cloned(&clone_dir)) {
         (PullMode::Reclone, _) => {
-            workdir::reclone_repository(&clone_dir, connection, key.as_deref()).await
+            workdir::reclone_repository(&clone_dir, connection, key.as_deref(), &workdir_lock).await
         }
         (PullMode::Fetch, true) => {
-            workdir::refresh_clone(&clone_dir, connection, key.as_deref()).await
+            workdir::refresh_clone(&clone_dir, connection, key.as_deref(), &workdir_lock).await
         }
         (PullMode::Fetch, false) => {
             workdir::clone_repository(&clone_dir, connection, key.as_deref()).await
@@ -145,7 +158,17 @@ pub async fn pull_connection(
         return;
     }
 
-    let listing = workdir::list_working_copy(&clone_dir, &connection.repo_path).await;
+    // Both reads of the folder under one guard: a listing and the commit it is OF must describe the same
+    // working copy, and a swap landing between them would put one repository's files beside another's
+    // sha.
+    let (listing, commit) = {
+        let _guard = workdir_lock.read().await;
+
+        let listing = workdir::list_working_copy(&clone_dir, &connection.repo_path).await;
+        let commit = workdir::head_commit(&clone_dir).await;
+
+        (listing, commit)
+    };
 
     let (entries, skipped_amount) = match listing {
         Ok(listing) => listing,
@@ -181,7 +204,7 @@ pub async fn pull_connection(
         Mirror {
             state,
             error,
-            commit: workdir::head_commit(&clone_dir).await,
+            commit,
             listed: Some(DateTimeAsMicroseconds::now()),
             entries: Arc::new(entries),
             skipped_amount,
@@ -206,9 +229,18 @@ pub async fn relist_connection(
 ) {
     let clone_dir = workdir::connection_dir(&app.git_repos_path, project_id, &connection.name);
 
-    let Ok((entries, skipped_amount)) =
-        workdir::list_working_copy(&clone_dir, &connection.repo_path).await
-    else {
+    let workdir_lock = app.github.workdir_lock(project_id, &connection.name);
+
+    let (listing, commit) = {
+        let _guard = workdir_lock.read().await;
+
+        let listing = workdir::list_working_copy(&clone_dir, &connection.repo_path).await;
+        let commit = workdir::head_commit(&clone_dir).await;
+
+        (listing, commit)
+    };
+
+    let Ok((entries, skipped_amount)) = listing else {
         return;
     };
 
@@ -217,7 +249,7 @@ pub async fn relist_connection(
     let mut mirror = (*previous).clone();
     mirror.entries = Arc::new(entries);
     mirror.skipped_amount = skipped_amount;
-    mirror.commit = workdir::head_commit(&clone_dir).await;
+    mirror.commit = commit;
     mirror.listed = Some(DateTimeAsMicroseconds::now());
 
     app.github.put(project_id, &connection.name, mirror);
@@ -258,9 +290,9 @@ fn needs_key(message: &str) -> bool {
 /// listing them is still the right answer.
 ///
 /// `keep_listing` is whether the files the last good pass found are still on the disk. They are when the
-/// clone is there and merely would not read; they are not after a re-clone that deleted the folder and
-/// then could not clone into it, and carrying the old rows over then would draw a tree of files that no
-/// longer exist.
+/// clone is there and merely would not read; they are not when there is no folder at all — a first clone
+/// that failed, or one somebody removed on the host — and carrying the old rows over then would draw a
+/// tree of files that nothing can open.
 fn record_failure(
     app: &Arc<AppContext>,
     project_id: &str,

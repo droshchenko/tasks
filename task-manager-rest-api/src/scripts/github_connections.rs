@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use task_manager_shared::github::{
     GithubConnectionResponse, GithubMirrorState, MAX_CONNECTIONS_PER_PROJECT,
@@ -194,17 +195,15 @@ pub async fn pull_github_connection(
         (project.id.clone(), connection)
     };
 
-    // Read BEFORE the pull is started, or a listing that finished in between would be handed back as
-    // the baseline — and the caller would take somebody else's run for its own and stop watching at
-    // once.
-    let pull_no = app
+    // Waits for a pull already running rather than being dropped by it — see `begin_pull_within`. This
+    // is the call a person is watching, and the number it answers with is only a receipt for THIS run
+    // because the claim is held before it is read.
+    let guard = app
         .github
-        .get_or_pending(&project_id, &connection.name)
-        .pull_no as i64;
+        .begin_pull_within(&project_id, &connection.name, WAIT_FOR_A_RUNNING_PULL)
+        .await?;
 
-    start_pull(app, project_id, connection, PullMode::Reclone);
-
-    Ok(pull_no)
+    Ok(start_reclone_with(app, project_id, connection, guard))
 }
 
 /// Every connection of one project, with what its mirror currently holds.
@@ -265,11 +264,22 @@ pub fn list_github_connections(
     Ok(connections)
 }
 
+/// How long a refresh waits for a pull that is already running before it says so.
+///
+/// A fetch is a second or two, so this is long enough that the ordinary collision — the ten-minute timer
+/// arriving as somebody presses Refresh — simply waits and then re-clones. What it will not do is hold a
+/// browser request open behind a first clone of a large repository, which is minutes.
+const WAIT_FOR_A_RUNNING_PULL: Duration = Duration::from_secs(20);
+
 /// Start a pull and return without it.
 ///
 /// Every caller here is answering a person who pressed something, and a repository can take half a
 /// minute to arrive. The mirror carries the state, so the screen has something true to show the whole
 /// time — which a request held open for thirty seconds does not.
+///
+/// The claim is taken INSIDE the spawned task, so this waits for a pull already running rather than
+/// skipping: somebody has just connected a repository or typed a key, and the point of both is to see
+/// the folder fill up.
 fn start_pull(
     app: &Arc<AppContext>,
     project_id: String,
@@ -279,6 +289,36 @@ fn start_pull(
     let app = app.clone();
 
     tokio::spawn(async move {
-        crate::github::pull_connection(&app, &project_id, &connection, mode).await;
+        let guard = app
+            .github
+            .begin_pull_within(&project_id, &connection.name, WAIT_FOR_A_RUNNING_PULL)
+            .await;
+
+        let Ok(guard) = guard else {
+            // Something else is reading this connection and has been for a while. It is doing the same
+            // work this would do, and the timer comes round again in ten minutes.
+            return;
+        };
+
+        crate::github::pull_connection(&app, &project_id, &connection, mode, guard).await;
     });
+}
+
+/// Start a re-clone with a claim already in hand, and answer with the number to watch it by.
+///
+/// **The claim is taken BEFORE the counter is read, and that order is the whole of the fix.** A refresh
+/// that merely spawned would be swallowed by a fetch already running: the claim would be refused, the
+/// fetch would finish, its `pull_no` would pass the baseline, and the screen would report a re-clone that
+/// never happened. Holding the claim first means the number read here cannot be moved by anybody else,
+/// and the guard travels into the run that moves it.
+fn start_reclone_with(app: &Arc<AppContext>, project_id: String, connection: GithubConnectionModel, guard: crate::github::PullGuard) -> i64 {
+    let pull_no = app.github.get_or_pending(&project_id, &connection.name).pull_no as i64;
+
+    let app = app.clone();
+
+    tokio::spawn(async move {
+        crate::github::pull_connection(&app, &project_id, &connection, PullMode::Reclone, guard).await;
+    });
+
+    pull_no
 }

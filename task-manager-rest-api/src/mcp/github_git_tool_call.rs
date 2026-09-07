@@ -65,9 +65,11 @@ path — so everything a repository can be asked comes through here: `git log`, 
 `git blame` for what happened and when, `git status` for what the working copy actually holds.\
 \
 THE WORKING COPY IS DISPOSABLE, AND THAT GOVERNS WHAT IS WORTH DOING IN IT. Refresh on a connection \
-DELETES the folder and clones the repository again — a commit nobody pushed, a stash, a branch of your \
-own all go with it, and nothing warns you. So anything you do here that is meant to last has to be \
-pushed in the same breath; anything else is a scratch space with an unpredictable lifetime.\
+clones the repository again and REPLACES this folder with the new copy — a commit nobody pushed, a \
+stash, a branch of your own all go with the old one, and nothing warns you. So anything you do here that \
+is meant to last has to be pushed in the same breath; anything else is a scratch space with an \
+unpredictable lifetime. A command running here does hold the folder: a refresh waits for your git to \
+finish rather than swapping the ground out from under it.\
 \
 IT RUNS AT THE ROOT OF THE CLONE, WHICH IS NOT ALWAYS WHERE THE DOCUMENTS PATHS START. A connection \
 may name a folder inside the repository, and that folder is the ROOT of what `github/<connection>/…` \
@@ -159,7 +161,17 @@ impl McpToolCall<GithubGitInput, GithubGitResponse> for GithubGitHandler {
 
         let key = self.app.github.key(&project_id, connection_name);
 
-        let output = git::run_git(&clone_dir, &args, key.as_deref()).await?;
+        // **The read side of the folder's lock, for as long as git runs in it.** A refresh replaces this
+        // folder with a rename, and doing that under a running `git rebase` is how a working copy ends
+        // up half in one clone and half in another. Scoped so the guard is gone before the re-listing
+        // below takes one of its own — a swap that has been waiting gets in between the two, which is
+        // the right order: the listing then describes the folder that won.
+        let output = {
+            let workdir_lock = self.app.github.workdir_lock(&project_id, connection_name);
+            let _guard = workdir_lock.read().await;
+
+            git::run_git(&clone_dir, &args, key.as_deref()).await?
+        };
 
         // Unconditionally, and whatever the command did. A checkout, a pull, a reset, a stash and a merge
         // all rewrite the working tree, and there is no reading of an exit code that reliably says which

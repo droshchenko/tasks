@@ -7,9 +7,8 @@ use task_manager_shared::github::{GithubConnectionResponse, GithubMirrorState};
 /// How often the watch asks whether the refresh is over.
 ///
 /// A second, and it is cheap on both sides: the answer is served out of the service's memory and never
-/// touches GitHub. What is being waited on is a `git clone` of the whole repository — a refresh deletes
-/// the connection's folder and makes it again — so the wait is measured in tens of seconds rather than
-/// in ticks.
+/// touches GitHub. What is being waited on is a `git clone` of the whole repository — a refresh clones
+/// beside the folder it will replace — so the wait is measured in tens of seconds rather than in ticks.
 const POLL_EVERY: Duration = Duration::from_secs(1);
 
 /// How long the watch keeps asking before it says so out loud.
@@ -327,26 +326,26 @@ fn render_intro(watching: &[String], started: bool) -> Element {
     if started {
         return rsx! {
             p { class: "field-hint",
-                "Cloning from GitHub. This stays open until it is done — the folder is deleted first and the whole repository comes down again, which takes as long as a clone of it takes, and can be minutes on a large one."
+                "Cloning from GitHub. This stays open until it is done — the whole repository comes down again, which can be minutes on a large one. The copy that is there now stays readable for all of it and is replaced only when the new clone is complete."
             }
         };
     }
 
     let what = match watching {
         [one] => rsx! {
-            "Delete the folder behind "
+            "Clone "
             span { class: "mono", "{one}" }
-            " and clone it from GitHub again."
+            " from GitHub again, and put the new copy in place of the one on this disk."
         },
         many => rsx! {
-            "Delete the folders behind all {many.len()} connected repositories and clone them from GitHub again."
+            "Clone all {many.len()} connected repositories from GitHub again, and put the new copies in place of the ones on this disk."
         },
     };
 
     rsx! {
         p { {what} }
         p { class: "field-hint",
-            "A refresh is not a fetch — the ten-minute timer already does that. This throws the working copy away and takes the repository down again, which is what makes a folder right when a fetch cannot: a force-pushed branch, a file that stopped being tracked, a copy left on the wrong branch. These files are read-only here, so what is deleted is a copy — except anything an agent left in the clone through a git command, which goes with it. Push that first if it matters."
+            "A refresh is not a fetch — the ten-minute timer already does that. Taking the repository down again is what makes a folder right when a fetch cannot: a force-pushed branch, a file that stopped being tracked, a copy left on the wrong branch. Nothing is deleted first: the new clone is made beside the old one and swapped in when it is complete, so the folder stays readable throughout and a refresh that fails leaves it exactly as it is. What the swap does discard is anything an agent left in the old copy through a git command — push that first if it matters."
         }
     }
 }

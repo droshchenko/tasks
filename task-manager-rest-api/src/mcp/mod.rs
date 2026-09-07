@@ -243,14 +243,14 @@ one. documents_search does not reach them (it searches this product's own texts 
 through github_git for a repository), and documents_upload, documents_edit, documents_delete, \
 documents_delete_folder and documents_update_path REFUSE them.\
 \
-THE REASON IS WHAT A REFRESH DOES: it DELETES the folder and clones the repository again. That is what \
-makes a connection honest — what you read is what GitHub has, not what has accumulated on a disk — and \
-it is why nothing may be written there: a file written into that folder would disappear at the next \
-refresh with nothing left to say it had been there. To change one of these files, change it in the \
-repository. To have a copy this board owns, with an id, versions and a history, sync it into the \
-project's own documents. github_git still runs any git command in the clone — `git log`, `git diff`, \
-`git show`, `git blame` — and anything it commits lives only until the next refresh, so push what is \
-meant to last.\
+THE REASON IS WHAT A REFRESH DOES: it clones the repository again and REPLACES the folder with the new \
+copy. That is what makes a connection honest — what you read is what GitHub has, not what has \
+accumulated on a disk — and it is why nothing may be written there: a file written into that folder \
+would disappear at the next refresh with nothing left to say it had been there. To change one of these \
+files, change it in the repository. To have a copy this board owns, with an id, versions and a history, \
+sync it into the project's own documents. github_git still runs any git command in the clone — \
+`git log`, `git diff`, `git show`, `git blame` — and anything it commits lives only until the next \
+refresh, so push what is meant to last.\
 \
 A FILE IN A REPOSITORY HAS NO VERSION HERE, AND THAT IS NOT A GAP. documents_history, documents_diff \
 and documents_restore refuse one, and say which git command answers the same question — `git log`, \

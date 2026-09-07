@@ -11,9 +11,9 @@
 //!
 //! * **The working copy is a VIEW, and nothing this product offers writes into it.** A connected
 //!   repository is read-only on the documents surface: files are listed and read, and the way to change
-//!   one is to change it in the repository. That is what makes the volume disposable, and what makes
-//!   [`reclone_repository`] — Refresh deleting the folder and cloning it again — an operation that only
-//!   ever throws away a copy of something GitHub still has.
+//!   one is to change it in the repository. That is what makes the folder replaceable, and what
+//!   [`reclone_repository`] — Refresh — does with that: it clones into a folder of its own and swaps the
+//!   two, so a connection is only ever the old copy or the new one, never a hole in between.
 //! * **The key still does not survive a restart, and that is now survivable.** The clone stays; only
 //!   reaching GitHub needs the token again. A connection that comes up `needs-key` after a deploy is
 //!   still fully readable — it just cannot fetch until somebody types the key.
@@ -21,6 +21,7 @@
 use std::path::{Path, PathBuf};
 
 use task_manager_shared::documents::normalise_document_path;
+use tokio::sync::RwLock;
 
 use crate::board::GithubConnectionModel;
 use crate::scripts::MAX_BINARY_LEN;
@@ -112,65 +113,157 @@ pub async fn clone_repository(
     Ok(())
 }
 
-/// Delete the working copy and clone it again.
+/// Clone the repository into a folder of its own, and swap it in when it is complete.
 ///
-/// **What the Refresh button does, and it is a destroy-and-replace rather than a fetch.** A fetch answers
-/// "what has changed since"; this answers "give me exactly what is on GitHub now", which is the question
-/// somebody is actually asking when a folder looks wrong: a file that a `.gitignore` stopped tracking, a
-/// branch that was force-pushed, a working copy left on a stale branch by a connection whose row was
-/// edited after it was cloned. Every one of those survives any number of fetches and none of them
-/// survives this.
+/// **What the Refresh button does, and it answers a different question from a fetch.** A fetch asks what
+/// has changed since; this asks for exactly what GitHub holds now — which is what somebody actually
+/// wants when a folder looks wrong: a file a `.gitignore` stopped tracking, a branch that was
+/// force-pushed, a working copy still on the branch it was cloned on because the row was edited
+/// afterwards. Every one of those survives any number of fetches and none of them survives this.
 ///
-/// **It is only safe to be the button because the folder holds nothing of anybody's.** Nothing on the
-/// documents surface writes into a connected repository, so what is deleted here is a copy of what the
-/// remote has. The exception is somebody's own work through `github_git` — a commit that was never
-/// pushed, a stash — and that goes with the folder, which is why the dialog says so before the press.
+/// **The order is the whole of it: clone FIRST, replace SECOND, and never the other way round.**
 ///
-/// The delete comes first and on its own: a clone into a folder that already exists fails on the folder
-/// rather than replacing it, so a half-deleted tree would leave the connection unusable until somebody
-/// looked at the disk.
+/// * The clone goes into `<name>~new` beside the connection's folder, and takes as long as a repository
+///   takes. Nothing is locked and nothing is deleted for any of it, so the connection carries on being
+///   listed and read from the copy it already has — a refresh no longer costs a folder while it runs.
+/// * Only when the new clone is complete does the swap happen, and it happens under the write side of
+///   `workdir_lock`: `<name>` is renamed to `<name>~old`, `<name>~new` is renamed to `<name>`. Two
+///   metadata operations on one filesystem, with every reader of the folder holding the read side, so
+///   nobody can be looking at `<name>` at the moment it is neither one copy nor the other.
+/// * A clone that FAILS — no key, no network, a repository that is not there — changes nothing at all.
+///   The old folder is still the connection's folder, still listed, still readable. That is the
+///   difference this staging buys: a refresh can no longer empty a connection by failing.
+/// * The old copy is deleted after the lock is released, because deleting a repository's worth of files
+///   takes time and nothing is waiting on it.
+///
+/// What the swap does throw away is anything somebody left in the old folder through `github_git` — an
+/// unpushed commit, a stash — which is why the dialog says so before the press.
 pub async fn reclone_repository(
     clone_dir: &Path,
     connection: &GithubConnectionModel,
     key: Option<&str>,
+    workdir_lock: &RwLock<()>,
 ) -> Result<(), String> {
-    remove_clone(clone_dir)?;
+    let staged = staging_path(clone_dir, STAGED)?;
+    let retired = staging_path(clone_dir, RETIRED)?;
 
-    clone_repository(clone_dir, connection, key).await
+    // Whatever a crash between the two renames left behind, cleared on the way IN rather than trusted: a
+    // `~new` from a run nobody is watching is a folder `git clone` would refuse to write into, and a
+    // `~old` is a copy of a repository sitting on the disk for no reason.
+    remove_staging(&staged)?;
+    remove_staging(&retired)?;
+
+    clone_repository(&staged, connection, key).await?;
+
+    let swapped = {
+        let _guard = workdir_lock.write().await;
+
+        swap_in(clone_dir, &staged, &retired)
+    };
+
+    // Not part of the result: by here the new clone is in place and being read, and a folder that would
+    // not delete is disk to reclaim rather than a refresh that failed.
+    let _ = remove_staging(&retired);
+
+    swapped
 }
 
-/// Remove a connection's folder, and ONLY when that folder is a clone.
+/// The two renames, run with the write lock held.
 ///
-/// **`remove_dir_all` is the most dangerous line in this file, so it is guarded by what the folder is
-/// rather than by where it is.** The path is composed from a root, a project id and a connection name,
-/// and every one of those is validated — but a check next to the delete is the one that survives somebody
-/// changing how the path is built. A folder holding no `.git` is not a clone and is not this function's
-/// to remove; `git clone` then makes it if it is absent or empty and refuses by name if it is not, which
-/// is a better answer than deleting whatever is in there.
-///
-/// A folder that is not there is not a failure either: that is the state a first clone starts from, and
-/// the caller's next move is the same.
-fn remove_clone(clone_dir: &Path) -> Result<(), String> {
-    if !is_cloned(clone_dir) {
-        return Ok(());
+/// **Ordered so that a failure leaves a folder rather than a hole.** The old copy is moved aside first;
+/// if putting the new one in its place then fails — a disk that filled, a permission that changed — the
+/// old one is moved straight back and the connection goes on reading exactly what it read before.
+fn swap_in(clone_dir: &Path, staged: &Path, retired: &Path) -> Result<(), String> {
+    let had_folder = clone_dir.exists();
+
+    if had_folder {
+        std::fs::rename(clone_dir, retired).map_err(|err| {
+            format!(
+                "the new clone is ready, and '{}' could not be moved aside to make room for it: {err}",
+                clone_dir.display()
+            )
+        })?;
     }
 
-    match std::fs::remove_dir_all(clone_dir) {
+    if let Err(err) = std::fs::rename(staged, clone_dir) {
+        // Back where it was. The alternative is a connection with no folder at all, which is the one
+        // outcome this whole staging dance exists to prevent.
+        if had_folder {
+            let _ = std::fs::rename(retired, clone_dir);
+        }
+
+        return Err(format!(
+            "the new clone could not be moved into place, so the previous one was kept: {err}"
+        ));
+    }
+
+    Ok(())
+}
+
+/// The marker on the folder a re-clone is assembled in, and on the one it replaces.
+///
+/// **`~` is what makes both safe.** A connection's name is letters, digits, `-`, `_` and `.` and nothing
+/// else — `normalise_connection_name` refuses the rest — so no connection can own a folder ending in
+/// `~new` or `~old`. The staging folders cannot collide with a working copy, and a delete guarded on the
+/// marker cannot reach one.
+const STAGED: &str = "~new";
+const RETIRED: &str = "~old";
+
+/// One of the two staging folders beside a connection's own.
+fn staging_path(clone_dir: &Path, marker: &str) -> Result<PathBuf, String> {
+    let name = clone_dir
+        .file_name()
+        .and_then(|itm| itm.to_str())
+        .ok_or_else(|| format!("'{}' is not a folder name", clone_dir.display()))?;
+
+    Ok(clone_dir.with_file_name(format!("{name}{marker}")))
+}
+
+/// Delete a staging folder, and refuse to delete anything that is not one.
+///
+/// **`remove_dir_all` is the most dangerous line in this file, so it is guarded by the NAME it is about
+/// to remove** rather than by where the path came from. Every path handed here is built by
+/// [`staging_path`], and the check is what survives somebody changing how paths are built: a working
+/// copy cannot end in the marker, so this can never be talked into removing one.
+///
+/// A folder that is not there is not a failure: that is the ordinary state before a first clone.
+fn remove_staging(path: &Path) -> Result<(), String> {
+    let is_staging = path
+        .file_name()
+        .and_then(|itm| itm.to_str())
+        .map(|itm| itm.ends_with(STAGED) || itm.ends_with(RETIRED))
+        .unwrap_or(false);
+
+    if !is_staging {
+        return Err(format!(
+            "'{}' is not a staging folder — refusing to delete it",
+            path.display()
+        ));
+    }
+
+    match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!(
-            "'{}' did not delete, so there was nothing to clone into: {err}",
-            clone_dir.display()
-        )),
+        Err(err) => Err(format!("'{}' did not delete: {err}", path.display())),
     }
 }
 
 /// Bring an existing clone up to date WITHOUT ever losing a local change.
 ///
-/// **This is the TIMER's pass, not the button's.** Refresh deletes the folder and clones it again — see
-/// [`reclone_repository`]. What runs every ten minutes has to be cheap over eight repositories that have
-/// mostly not moved, so it is a fetch, and it is careful with a working tree that `github_git` may have
-/// left something in.
+/// **This is the TIMER's pass, not the button's.** Refresh clones into a folder of its own and swaps it
+/// in — see [`reclone_repository`]. What runs every ten minutes has to be cheap over eight repositories
+/// that have mostly not moved, so it is a fetch, and it is careful with a working tree that `github_git`
+/// may have left something in.
+///
+/// **The fetch is unlocked and everything after it is not.** `git fetch` writes into `.git` and leaves
+/// the working tree alone, so it needs no exclusion and can be the slow half. What follows — reading
+/// whether the tree is clean, reading which branch is checked out, and the fast-forward that rewrites
+/// files — is one step under the WRITE side of the connection's lock. That is not about two pulls, which
+/// cannot overlap anyway: it is about the readers. `documents_get`, a sync of two hundred files, a
+/// `github_git` command and the listing walk all hold the READ side, and a read guard excludes nothing
+/// against a task that holds no guard at all. Before this took the lock, a ten-minute tick could
+/// fast-forward the tree out from under a sync half way through it, and what landed was a folder of
+/// documents assembled from two different commits with nothing in the result saying so.
 ///
 /// **Fetch always, merge only when there is nothing to lose.** The timer runs this every ten minutes
 /// against a working tree somebody may have run a git command in, so:
@@ -190,8 +283,15 @@ pub async fn refresh_clone(
     clone_dir: &Path,
     connection: &GithubConnectionModel,
     key: Option<&str>,
+    workdir_lock: &RwLock<()>,
 ) -> Result<(), String> {
     run_git_ok(clone_dir, &["fetch", "--prune", "origin"], key).await?;
+
+    // From here to the end of this function the working tree is this task's alone. The checks below are
+    // only worth making if nothing can change the answer between making them and acting on it — and
+    // `git status` writes `.git/index` itself, so even the reading half must not race a git command
+    // somebody else is running in the same clone.
+    let _guard = workdir_lock.write().await;
 
     if !is_clean(clone_dir).await? {
         return Ok(());
@@ -594,6 +694,47 @@ mod tests {
             classify("fine.md", 4, MAX_MIRROR_FILES),
             Listed::Skipped
         ));
+    }
+
+    /// **The two folder names a re-clone uses, and why they cannot be anybody's.** A connection's name
+    /// cannot contain `~`, so the staged and retired folders sit beside the working copy in a namespace
+    /// no connection can reach — which is also what the delete is guarded on.
+    #[test]
+    fn a_reclone_stages_beside_the_folder_it_will_replace() {
+        let clone = Path::new("/repos/p/specs");
+
+        assert_eq!(
+            staging_path(clone, STAGED).unwrap(),
+            PathBuf::from("/repos/p/specs~new")
+        );
+        assert_eq!(
+            staging_path(clone, RETIRED).unwrap(),
+            PathBuf::from("/repos/p/specs~old")
+        );
+
+        // Both are one rename away from the folder they replace — same parent, therefore one filesystem,
+        // therefore a rename rather than a copy.
+        assert_eq!(
+            staging_path(clone, STAGED).unwrap().parent(),
+            clone.parent()
+        );
+    }
+
+    /// The guard on the only `remove_dir_all` in this module. A working copy is not a staging folder and
+    /// is refused BY NAME, so a mis-built path cannot be talked into deleting a connection.
+    #[test]
+    fn only_a_staging_folder_can_be_deleted() {
+        assert!(remove_staging(Path::new("/repos/p/specs")).is_err());
+        assert!(remove_staging(Path::new("/repos/p")).is_err());
+        assert!(remove_staging(Path::new("/")).is_err());
+
+        // A name a connection could actually have, ending in the letters but not the marker.
+        assert!(remove_staging(Path::new("/repos/p/specs.new")).is_err());
+
+        // And the two that are this module's own: absent on disk, so removing them is a no-op rather
+        // than an error — which is the state a first clone starts from.
+        assert!(remove_staging(Path::new("/repos/p/specs~new")).is_ok());
+        assert!(remove_staging(Path::new("/repos/p/specs~old")).is_ok());
     }
 
     #[test]

@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 /// own.** An agent calls `documents_list` and sees `github/specs/design/system.md` beside
 /// `docs/system.md`, and reads either with `documents_get`. What is under this root is a working copy on
 /// disk rather than rows in a table, and that is the whole of the difference: it is READ-ONLY — every
-/// tool that writes refuses this root, because a refresh deletes the folder and clones the repository
-/// again — and the versions are git's, which is why `documents_history` and `documents_restore` name the
+/// tool that writes refuses this root, because a refresh clones the repository again and replaces the
+/// folder with it — and the versions are git's, which is why `documents_history` and `documents_restore` name the
 /// git command instead of answering. Copying a file OUT of here, into a document of the project's own
 /// with an id and a history, is still a sync.
 pub const GITHUB_ROOT: &str = "github";

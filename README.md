@@ -672,7 +672,7 @@ knowing: refreshing is per repository now, on each row, because there is no row 
 **What is behind those paths is a real `git clone` on a mounted disk.** Not a listing, not a cache of blobs —
 a working copy, the same thing you would have in a terminal. That single fact is what the rest of this
 section follows from: reading a file is reading a file, everything git can say about the repository is one
-command away, and the whole folder can be thrown away and made again — which is what **Refresh** does.
+command away, and the whole folder can be replaced by a fresh one — which is what **Refresh** does.
 
 **It is served by the tools that serve the project's own documents, and that is the whole point of the
 design.** `documents_list` answers with the repository's files beside the real ones, sorted into the same path
@@ -687,11 +687,11 @@ that exists because these files have no id to be named by.
 says why and what to do instead. A connected repository is somebody else's, and this board reads it.
 
 **The reason is what a refresh does, and the two decisions are one decision.** Pressing Refresh on a
-connection DELETES its folder and clones the repository again. That is what makes a connection honest — what
-is on the screen is what GitHub has, rather than whatever accumulated on a disk — and it is exactly why
-nothing may be written there: a file written into that folder would disappear at the next refresh, with
-nothing left to say it had ever been there. A product that offered a write it would silently destroy would be
-worse than one that offers no write at all.
+connection clones the repository again and REPLACES the folder with the new copy. That is what makes a
+connection honest — what is on the screen is what GitHub has, rather than whatever accumulated on a disk —
+and it is exactly why nothing may be written there: a file written into that folder would disappear at the
+next refresh, with nothing left to say it had ever been there. A product that offered a write it would
+silently destroy would be worse than one that offers no write at all.
 
 **So there are two ways to change one of these files, and both are honest.** Change it in the repository —
 through GitHub, through a checkout of your own, through a commit and a push — and refresh the connection to
@@ -762,9 +762,9 @@ repository — all file reads.
 memory and written to no table, no settings file and no log, so it still has to be typed in again after a
 restart — but the clone survives on the disk. A connection reading `needs-key` on Monday having worked all
 Friday still lists every file it has and reads them; only reaching GitHub waits. That was the trade's one
-real cost, and the disk paid it off. The one thing not to do with such a connection is press **Refresh**:
-that deletes the folder before it asks GitHub for anything, so a re-clone with no key leaves it empty until
-somebody types one in.
+real cost, and the disk paid it off. Pressing **Refresh** on such a connection is safe, too, and not by
+luck — see the staging below: the clone that fails for want of a key happens BESIDE the folder rather than
+in place of it, so what the failure produces is a sentence on the connection and not an empty tree.
 
 **The timer fetches and the button re-clones, and those are different operations for different questions.**
 A tick is a `git fetch` over eight repositories that have mostly not moved — it has to be cheap, and it
@@ -772,7 +772,42 @@ touches nothing in the working tree. The fast-forward after it happens only when
 empty and it is `--ff-only`, so a working copy that a git command left something in stops rather than opening
 a merge nobody asked for. A refresh that declines to merge is not a failure and is not reported as one.
 Pressing **Refresh** asks the other question — *give me what GitHub has now* — and answers it the only way
-that always works: the folder goes, and the repository is cloned again.
+that always works: the repository is cloned again, and the new copy replaces the old one.
+
+**And it is staged rather than destructive, which is the whole of how it stays safe to press.** The clone
+goes into `<name>~new` beside the connection's folder and takes as long as a repository takes, with nothing
+locked and nothing deleted — the connection carries on being listed and read from the copy it already has.
+Only when the new clone is complete does the swap happen, and it is two renames on one filesystem —
+`<name>` to `<name>~old`, then `<name>~new` to `<name>` — under the write side of a `tokio::sync::RwLock`
+held per connection. Everything that touches a working copy takes the read side for as long as it is
+looking: a document read, the listing walk, a `github_git` command, a sync. So the exclusion lasts
+microseconds and covers the one instant a reader could otherwise see a folder that is neither copy; a
+five-minute `git rebase` delays a swap rather than having the ground taken out from under it; and the old
+folder is deleted afterwards, outside the lock, because nothing is waiting on it.
+
+**The timer's fast-forward takes that same write side**, and for a reason worth stating because it is the
+one the lock was nearly written without. A swap is not the only thing that changes a working copy under a
+reader: `git merge --ff-only` rewrites files too, and a read guard excludes nothing against a task holding
+no guard at all. Before the fetch took the lock, a ten-minute tick could fast-forward the tree half way
+through a sync of two hundred files, and what landed was a folder of documents assembled from two
+different commits with nothing in the result saying so. The `git fetch` itself stays outside the lock —
+it writes into `.git` and touches no file anybody is reading — so what is held is the cheap half: the
+`git status` check, the branch comparison and the merge, as one step.
+
+**And the two asks are told apart.** Pulling one connection is claimed through a per-connection lock with
+two doors: the timer takes it with `try_` and skips a connection somebody is already refreshing, while a
+person's Refresh WAITS for the fetch in flight and then re-clones. That asymmetry is not a nicety — when
+the manual ask was simply dropped, the fetch it collided with finished, bumped the counter the dialog was
+watching, and the screen reported a re-clone that never happened. The receipt is now read after the claim
+is taken, so it can only be satisfied by the run it was issued for; a claim that does not come free within
+twenty seconds answers with what is happening instead of holding the request open.
+
+Three consequences worth stating. A refresh that FAILS — no key, no network, a repository that is not there
+— changes nothing at all: the old folder is still the connection's, still listed, still readable, with the
+reason beside it. `~` cannot appear in a connection's name, so neither staging folder can collide with a
+working copy, and the one `remove_dir_all` in that module is guarded on the marker rather than on where the
+path was built. And a crash between the two renames leaves the files in `<name>~old`: the next refresh
+clears both staging folders before it starts, and the pull after that clones from nothing.
 
 **And the fetch only fast-forwards the branch it is FOR**, which is a check git will not do for you: `git merge
 --ff-only origin/dev` in a working copy sitting on `main` moves *main* onto dev's tip. It is a merge, and a
@@ -786,8 +821,8 @@ too.
 the clone is made and not by the timer: `origin` keeps the address it was cloned from and the working copy
 stays on the branch it was checked out on, because a fetch does no `git remote set-url` and no checkout. So
 re-pointing a connection at a different repository, or at a different branch, puts the new values on the
-connections screen and moves nothing until somebody presses **Refresh** — which deletes the folder and clones
-what the row now says, `--branch` included. That is the whole of re-pointing, and it is why the elaborate
+connections screen and moves nothing until somebody presses **Refresh** — which clones what the row now says,
+`--branch` included, and swaps that in. That is the whole of re-pointing, and it is why the elaborate
 `git remote set-url` / `git reset --hard` recipe this section used to carry is gone. The folder *inside* the
 repository is still the one field that takes effect at once, because it is applied when the working copy is
 listed rather than when it is cloned.
@@ -797,7 +832,7 @@ and leaves the clone exactly where it was: a detach is a change to the board, an
 in the same breath is a second thing nobody asked for. Reclaiming the space is a deliberate act on the host,
 under `<git_repos_path>/<project id>/<connection name>`. The consequence is that a connection re-created under
 the same name adopts the folder that is already there, `origin` included — which used to be permanent and now
-is not: one press of **Refresh** throws that folder away and clones what the new row names.
+is not: one press of **Refresh** clones what the new row names and replaces that folder with it.
 
 **A connected folder does not make a smaller clone.** The folder inside the repository roots what is *shown*;
 what is cloned is the whole repository at its full history, because that is what `git clone` is. Two things

@@ -65,6 +65,8 @@ pub fn mirror_index_entries(app: &AppContext, project: &ProjectModel) -> Vec<Doc
 pub struct MirrorTarget {
     pub project_id: String,
     pub project_prefix: String,
+    /// Which connection it is in — the second half of the key its folder's lock is kept under.
+    pub connection_name: String,
     /// The file, relative to the connection's root.
     pub relative: String,
     /// The file as this product names it: `github/<connection>/<file>`.
@@ -123,6 +125,7 @@ pub fn resolve_mirror_target(
     Ok(MirrorTarget {
         project_id,
         project_prefix,
+        connection_name: connection_name.to_string(),
         relative: relative.to_string(),
         mirror_path: mirror_path.to_string(),
         full_path,
@@ -144,6 +147,16 @@ pub async fn read_mirror_document(
     mirror_path: &str,
 ) -> Result<DocumentDto, String> {
     let target = resolve_mirror_target(app, project_prefix, mirror_path)?;
+
+    // **The read side of the folder's lock, held across the open.** A refresh replaces a connection's
+    // whole folder with a rename, and this is the half-second in which one could land: the path was
+    // resolved a moment ago and the bytes have not been read yet. Holding the lock is what makes the two
+    // one operation — the read sees the old folder or the new one, never the instant between them.
+    let workdir_lock = app
+        .github
+        .workdir_lock(&target.project_id, &target.connection_name);
+
+    let _guard = workdir_lock.read().await;
 
     let bytes = workdir::read_file(&target.full_path)
         .map_err(|err| format!("'{mirror_path}' did not read: {err}"))?;

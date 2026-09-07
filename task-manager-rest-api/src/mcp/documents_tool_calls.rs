@@ -126,10 +126,11 @@ costs nothing and needs no key — documents_get takes such a path exactly as it
 \
 THEY ARE READ-ONLY, ALL OF THEM. documents_upload, documents_edit, documents_delete, \
 documents_delete_folder and documents_update_path refuse a `github/` path and say why. The folder behind \
-it is a clone this service throws away: refreshing a connection DELETES it and clones it again, so \
-anything written there would be gone at the next refresh with nothing to say it had been there. To \
-change one of these files, change it in the repository and refresh the connection. To have a copy this \
-board owns and keeps versions of, sync it into the project's own documents.\
+it is a clone this service REPLACES: refreshing a connection clones the repository again and swaps the \
+new copy in for the old one, so anything written there would be gone at the next refresh with nothing to \
+say it had been there. To change one of these files, change it in the repository and refresh the \
+connection. To have a copy this board owns and keeps versions of, sync it into the project's own \
+documents.\
 \
 THEY ALSO HAVE NO VERSIONS — every one reports version 0, and documents_history, documents_diff and \
 documents_restore refuse them, because their history is the repository's and `git log`, through \
@@ -226,8 +227,9 @@ but it is READ-ONLY, and it has no versions, so `version`, documents_history and
 refuse it and say so. What you read is the WORKING COPY on this server, not the branch: it is fetched on \
 a ten-minute timer, and the fast-forward after the fetch is skipped for as long as the working tree has \
 anything uncommitted in it, so it can sit behind the branch for longer than ten minutes. Pressing \
-Refresh on the connection is what settles that — it deletes the folder and clones the repository again. \
-`git log` through github_git says what has actually arrived here.";
+Refresh on the connection is what settles that — it clones the repository again and swaps the new copy \
+in for the old one, with the old one readable until the moment it does. `git log` through github_git \
+says what has actually arrived here.";
 }
 
 #[async_trait::async_trait]
