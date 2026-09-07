@@ -131,6 +131,18 @@ impl DocumentBody {
         }
     }
 
+    /// What this payload's brief is filed under, or `None` for a file.
+    ///
+    /// **`None` for binary is a statement, not a gap.** A brief is prose about a text somebody could read;
+    /// a PDF or a PNG has none this product can produce, so a binary document is never counted as waiting
+    /// for one. See `crate::documents::content_hash`.
+    pub fn content_hash(&self) -> Option<String> {
+        match self {
+            Self::Text(text) => Some(crate::documents::content_hash(text.as_bytes())),
+            Self::Binary(_) => None,
+        }
+    }
+
     /// The payload as bytes, whichever kind it is — what a filesystem takes.
     ///
     /// Beside `into_columns`, which is the same payload for the other destination: a document of the
@@ -285,6 +297,10 @@ async fn write_document(
 
     let content_type = content.resolve_content_type(&path);
     let size = content.body.size_bytes();
+    // Before `into_columns` MOVES the payload, beside the size and for the same reason: this is the last
+    // line at which the whole body is in one piece. Afterwards it is two Option columns and hashing it
+    // would mean two branches that can disagree.
+    let content_hash = content.body.content_hash();
     let (text, binary) = content.body.into_columns();
 
     let ctx = MyTelemetryContext::create_empty();
@@ -306,6 +322,7 @@ async fn write_document(
             content: text,
             binary_content: binary,
             content_size: Some(size),
+            content_hash,
             version: existing.version + 1,
             // Kept, not restamped: a document was created once, and that is a different fact from when it
             // was last written.
@@ -325,6 +342,7 @@ async fn write_document(
             content: text,
             binary_content: binary,
             content_size: Some(size),
+            content_hash,
             version: 1,
             created: now,
             updated: now,
@@ -397,6 +415,12 @@ pub async fn update_document_path(
         project_id: existing.project_id,
         doc_path: path,
         content_type: existing.content_type,
+        // Carried, exactly as the content type is: a move changes where a document is, and a hash is about
+        // what is IN it. The fallback covers a row written before the column existed and not yet reached by
+        // the startup backfill — the payload is in hand here, so filling it in costs nothing.
+        content_hash: existing
+            .content_hash
+            .or_else(|| existing.content.as_deref().map(|itm| crate::documents::content_hash(itm.as_bytes()))),
         content: existing.content,
         binary_content: existing.binary_content,
         content_size: existing.content_size,
@@ -670,6 +694,13 @@ pub async fn restore_document(
         project_id: trashed.project_id.clone(),
         doc_path: path,
         content_type: trashed.content_type.clone(),
+        // Recomputed rather than carried: the trash row has no hash column, and it needs none — the
+        // payload came back with it, and hashing text is cheaper than a second column that could be wrong.
+        // A restored document therefore finds the brief it had before, because the bytes are the same ones.
+        content_hash: trashed
+            .content
+            .as_deref()
+            .map(|itm| crate::documents::content_hash(itm.as_bytes())),
         content: trashed.content.clone(),
         binary_content: trashed.binary_content.clone(),
         content_size: trashed.content_size,
@@ -854,6 +885,10 @@ pub async fn edit_document(
     body.validate()?;
 
     let size = body.size_bytes();
+    // The spliced text is a different document from the one that was read, so it is a different hash and
+    // therefore a document with no brief again — which is the point: whatever was written about the old
+    // text no longer describes this one.
+    let content_hash = body.content_hash();
     let (content, binary_content) = body.into_columns();
 
     let row = DocumentDto {
@@ -866,6 +901,7 @@ pub async fn edit_document(
         content,
         binary_content,
         content_size: Some(size),
+        content_hash,
         version: existing.version + 1,
         created: existing.created,
         updated: DateTimeAsMicroseconds::now(),
@@ -1297,6 +1333,46 @@ pub async fn document_version(
 /// Reads the full row — payload included — for the affected documents only. That is the one place in this
 /// feature that pulls payloads in bulk, it happens once per deploy over a handful of rows, and it stops being
 /// work at all as soon as there are none left.
+/// Give every text document written before this column existed the hash its brief will be filed under.
+///
+/// **Its own pass rather than a branch in [`backfill_document_columns`], because the two write
+/// differently.** That one rewrites whole rows, which is what filling in a size and a type needs; this one
+/// writes a single column with `set_content_hash`, so a board of a thousand documents is a thousand small
+/// updates rather than a thousand payloads sent back to Postgres to be stored again exactly as they were.
+///
+/// **It reads text and never bytes.** The work list is selected with `content_hash IS NULL AND
+/// binary_content IS NULL`, so a board full of PDFs costs one query and no blobs — and a binary document
+/// is left with a NULL hash for ever, which is correct: it is never briefed.
+///
+/// No history entry and no version bump. Nothing about the document changed; what changed is that this
+/// product now knows something it could always have worked out.
+pub async fn backfill_content_hashes(app: &AppContext) {
+    let ctx = MyTelemetryContext::create_empty();
+
+    let stale = app.documents_repo.get_text_rows_without_hash(&ctx).await;
+
+    if stale.is_empty() {
+        return;
+    }
+
+    println!(
+        "documents: hashing {} text document(s) written before briefs existed",
+        stale.len()
+    );
+
+    for row in stale {
+        let Some(content) = row.content else {
+            // Neither text nor binary — an empty row nothing can be said about. Left alone rather than
+            // hashed as an empty string, which would file a brief under the hash of nothing.
+            continue;
+        };
+
+        let hash = crate::documents::content_hash(content.as_bytes());
+
+        app.documents_repo.set_content_hash(&row.id, &hash, &ctx).await;
+    }
+}
+
 pub async fn backfill_document_columns(app: &AppContext) {
     let ctx = MyTelemetryContext::create_empty();
 
@@ -1931,6 +2007,7 @@ mod tests {
             content_type: "text/markdown".to_string(),
             is_binary: false,
             size: 0,
+            content_hash: Some(crate::documents::content_hash(path.as_bytes())),
             version: 1,
             created: DateTimeAsMicroseconds::new(0),
             updated: DateTimeAsMicroseconds::new(0),

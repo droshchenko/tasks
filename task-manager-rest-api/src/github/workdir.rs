@@ -19,14 +19,17 @@
 //!   still fully readable — it just cannot fetch until somebody types the key.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use ahash::AHashMap;
+use rust_extensions::date_time::DateTimeAsMicroseconds;
 use task_manager_shared::documents::normalise_document_path;
 use tokio::sync::RwLock;
 
 use crate::board::GithubConnectionModel;
 use crate::scripts::MAX_BINARY_LEN;
 
-use super::git::{run_git_in_parent, run_git_ok};
+use super::git::{run_git_in_parent, run_git_ok, run_git_uncut};
 use super::mirror::{MAX_MIRROR_FILES, MirrorEntry};
 
 /// Where one connection's clone lives, under the configured root.
@@ -415,8 +418,12 @@ pub async fn head_commit(clone_dir: &Path) -> String {
 pub async fn list_working_copy(
     clone_dir: &Path,
     repo_path: &str,
+    previous: Arc<Vec<MirrorEntry>>,
+    previous_listed: Option<DateTimeAsMicroseconds>,
 ) -> Result<(Vec<MirrorEntry>, usize), String> {
-    let listed = run_git_ok(
+    // UNCUT, unlike everything a model reads: a listing truncated at 60 000 bytes loses every file past
+    // the cut without saying so. See `run_git_uncut`.
+    let listed = run_git_uncut(
         clone_dir,
         &["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         None,
@@ -424,26 +431,107 @@ pub async fn list_working_copy(
     .await?;
 
     let root = connection_root(clone_dir, repo_path);
+    let racy_floor = racy_floor_of(previous_listed);
+    let repo_path = repo_path.to_string();
+
+    // **On a blocking thread, and this is the line that made it necessary.** The walk used to be one
+    // `stat` per file; it now opens and hashes every text file whose bytes may have moved, which after a
+    // re-clone is the whole repository. Thousands of blocking reads on a tokio worker would stall
+    // everything else this service is serving — and it holds the connection's read guard while it runs, so
+    // the stall would be visible as a refresh that appears to hang.
+    tokio::task::spawn_blocking(move || walk_listed(&listed, &root, &repo_path, &previous, racy_floor))
+        .await
+        .map_err(|err| format!("the listing walk did not finish: {err}"))
+}
+
+/// The walk itself: one pass over what git listed, opening only what has to be opened.
+///
+/// Blocking on purpose — it is called from a blocking thread — and separated from the async shell so that
+/// what it needs is exactly what it is given: no lock, no runtime, no borrow of anything that could go
+/// away underneath it.
+fn walk_listed(
+    listed: &[u8],
+    root: &Path,
+    repo_path: &str,
+    previous: &[MirrorEntry],
+    racy_floor: i64,
+) -> (Vec<MirrorEntry>, usize) {
+    // What the last walk knew, by path. Built once rather than searched per file: a repository of five
+    // thousand files searched linearly per file is twenty-five million comparisons for nothing.
+    let known: AHashMap<&str, &MirrorEntry> = previous
+        .iter()
+        .map(|itm| (itm.path.as_str(), itm))
+        .collect();
 
     let mut entries: Vec<MirrorEntry> = Vec::new();
     let mut skipped: usize = 0;
 
     // NUL-separated, which is the only listing git offers that a filename containing a newline cannot lie
-    // about — and repositories do contain those.
-    for path in listed.split('\0').filter(|itm| !itm.is_empty()) {
+    // about — and repositories do contain those. Split on the BYTES: a path is not required to be UTF-8,
+    // and one that is not must be skipped rather than take the rest of the repository down with it.
+    for path in listed.split(|byte| *byte == 0).filter(|itm| !itm.is_empty()) {
+        let path = String::from_utf8_lossy(path);
+
         // Asked for the size only once the path is known to be in scope, so a repository whose connected
         // folder is one directory of forty does not `stat` the other thirty-nine.
-        let Some(relative) = in_scope(path, repo_path) else {
+        let Some(relative) = in_scope(&path, repo_path) else {
             continue;
         };
 
+        let full = root.join(&relative);
+
+        // `symlink_metadata` rather than `metadata`: a link is not a file this listing shows, and
+        // following one is how a repository would get this service to read something outside the clone.
         // A path git lists and the filesystem does not have is a staged deletion, or a file removed from
         // under us between the listing and this line. Neither is a file to show.
-        let Ok(metadata) = std::fs::metadata(root.join(&relative)) else {
+        let Ok(metadata) = std::fs::symlink_metadata(&full) else {
             continue;
         };
 
-        match classify(&relative, metadata.len() as i64, entries.len()) {
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let size = metadata.len() as i64;
+        let modified = modified_unix_nanos(&metadata);
+
+        let plan = decide_hash(
+            known.get(relative.as_str()).copied(),
+            size,
+            modified,
+            racy_floor,
+            binary_by_path(&relative),
+        );
+
+        // Reading and hashing is the only part of this walk that opens anything, and it happens for a text
+        // file whose (size, moment) pair is not the one already hashed — so a ten-minute tick over a
+        // repository nobody has pushed to reads nothing at all, and the pass after a re-clone reads it
+        // whole exactly once.
+        let (content_hash, force_binary) = match plan {
+            HashPlan::Reuse(hash) => (Some(hash), false),
+            HashPlan::None => (None, false),
+            HashPlan::Read => match std::fs::read(&full) {
+                // A file whose extension says text and whose bytes disagree is a file, and is listed as
+                // one: `documents_get` would hand it back as bytes, and a brief cannot be written about
+                // bytes.
+                Ok(bytes) => match crate::documents::is_text_bytes(&bytes) {
+                    true => (Some(crate::documents::content_hash(&bytes)), false),
+                    false => (None, true),
+                },
+                // Unreadable now though it was listed a moment ago. Shown without a hash rather than
+                // dropped: the file is there, and the next walk will try again.
+                Err(_) => (None, false),
+            },
+        };
+
+        match classify(
+            &relative,
+            size,
+            entries.len(),
+            modified,
+            content_hash,
+            force_binary,
+        ) {
             Listed::Entry(entry) => entries.push(entry),
             Listed::Skipped => skipped += 1,
         }
@@ -453,7 +541,93 @@ pub async fn list_working_copy(
     // a tree can be built by walking the list once.
     entries.sort_by(|left, right| left.path.cmp(&right.path));
 
-    Ok((entries, skipped))
+    (entries, skipped)
+}
+
+/// How long before the last listing a file must have been written for its recorded hash to be trusted.
+///
+/// **Git's own racy-file rule, for git's own reason.** A filesystem stores mtime at a coarser resolution
+/// than a program can write two files, so a file written in the same tick as the listing that recorded it
+/// can be changed again afterwards without the pair (size, mtime) moving at all. Anything written that
+/// close to the last walk is therefore re-read rather than trusted. Two seconds is generous and costs one
+/// extra read of one file.
+const RACY_WINDOW_NANOS: i64 = 2_000_000_000;
+
+fn racy_floor_of(previous_listed: Option<DateTimeAsMicroseconds>) -> i64 {
+    match previous_listed {
+        Some(listed) => listed.unix_microseconds * 1_000 - RACY_WINDOW_NANOS,
+        // Nothing has been listed, so nothing is trusted.
+        None => i64::MIN,
+    }
+}
+
+/// When a file was last written, in unix nanoseconds, or 0 when the filesystem will not say.
+fn modified_unix_nanos(metadata: &std::fs::Metadata) -> i64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|itm| itm.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|itm| itm.as_nanos() as i64)
+        .unwrap_or(0)
+}
+
+/// What the walk does about one file's hash, decided before anything is opened.
+#[derive(Debug, PartialEq)]
+enum HashPlan {
+    /// The last walk hashed this exact file and nothing about it has moved since.
+    Reuse(String),
+    /// Open it and hash what is in it.
+    Read,
+    /// It is not a file this product briefs, so it has no hash at all.
+    None,
+}
+
+/// Whether the hash the last walk recorded still describes what is on the disk.
+///
+/// Pure, and separate from the walk, because this is the rule the whole cost of a listing turns on: get it
+/// wrong towards reuse and briefs describe a file that has changed; wrong towards reading and every tick
+/// reads the whole repository.
+fn decide_hash(
+    previous: Option<&MirrorEntry>,
+    size: i64,
+    modified: i64,
+    racy_floor: i64,
+    is_binary: bool,
+) -> HashPlan {
+    if is_binary {
+        return HashPlan::None;
+    }
+
+    let Some(previous) = previous else {
+        return HashPlan::Read;
+    };
+
+    let Some(hash) = previous.content_hash.as_ref() else {
+        return HashPlan::Read;
+    };
+
+    // Every one of the three has to hold. The mtime alone is not enough (a write can land in the same
+    // tick), the size alone is not enough (an edit that keeps the length), and a file written around the
+    // moment of the last walk is not trusted at all.
+    let unchanged = previous.size == size && previous.modified_unix_nanos == modified;
+
+    match unchanged && modified < racy_floor {
+        true => HashPlan::Reuse(hash.clone()),
+        false => HashPlan::Read,
+    }
+}
+
+/// Whether this product would serve a file at this path as bytes, judged by its name alone.
+///
+/// **What we CLAIM and what we try to READ are two different questions, and an unknown extension answers
+/// them differently.** A file with an unfamiliar extension in a repository is a `.rst`, a `.gradle` or
+/// somebody's own suffix far more often than it is a binary, so it is read as text first and the bytes get
+/// to disagree.
+fn binary_by_path(relative: &str) -> bool {
+    match task_manager_shared::documents::content_type_for_path(relative) {
+        Some(known) => !crate::documents::is_text_content_type(known),
+        None => false,
+    }
 }
 
 /// What became of one file git listed.
@@ -485,29 +659,29 @@ fn in_scope(path: &str, repo_path: &str) -> Option<String> {
 /// **A file over the single-document limit is skipped rather than listed.** Listing it would put a row in
 /// the tree that every read refuses — the honest thing is for it not to be there, with the count saying
 /// something was left out.
-fn classify(relative: &str, size: i64, shown_so_far: usize) -> Listed {
+fn classify(
+    relative: &str,
+    size: i64,
+    shown_so_far: usize,
+    modified_unix_nanos: i64,
+    content_hash: Option<String>,
+    // What the BYTES said, when they were read. The path's own answer is the default; this is how a `.md`
+    // that turned out not to be text is listed as the file it is.
+    force_binary: bool,
+) -> Listed {
     if shown_so_far >= MAX_MIRROR_FILES || size > MAX_BINARY_LEN as i64 {
         return Listed::Skipped;
     }
 
     let content_type = crate::scripts::content_type_of(None, relative);
 
-    // **What we CLAIM and what we try to READ are two different questions, and an unknown extension
-    // answers them differently.** The type above says `application/octet-stream` when the table has never
-    // heard of the extension, because a browser must not be told a file is something nobody checked. But a
-    // file with an unfamiliar extension in a repository is a `.rst`, a `.gradle` or somebody's own suffix
-    // far more often than it is a binary — so it is still READ as text first, and the read falls back to
-    // bytes the moment the bytes disagree.
-    let is_binary = match task_manager_shared::documents::content_type_for_path(relative) {
-        Some(known) => !crate::documents::is_text_content_type(known),
-        None => false,
-    };
-
     Listed::Entry(MirrorEntry {
         path: relative.to_string(),
         size,
         content_type,
-        is_binary,
+        is_binary: force_binary || binary_by_path(relative),
+        content_hash,
+        modified_unix_nanos,
     })
 }
 
@@ -635,7 +809,7 @@ mod tests {
     }
 
     fn entry_of(relative: &str, size: i64) -> Option<MirrorEntry> {
-        match classify(relative, size, 0) {
+        match classify(relative, size, 0, 0, None, false) {
             Listed::Entry(entry) => Some(entry),
             Listed::Skipped => None,
         }
@@ -691,7 +865,7 @@ mod tests {
 
         // And the ceiling on how many one connection shows at all.
         assert!(matches!(
-            classify("fine.md", 4, MAX_MIRROR_FILES),
+            classify("fine.md", 4, MAX_MIRROR_FILES, 0, None, false),
             Listed::Skipped
         ));
     }
@@ -735,6 +909,70 @@ mod tests {
         // than an error — which is the state a first clone starts from.
         assert!(remove_staging(Path::new("/repos/p/specs~new")).is_ok());
         assert!(remove_staging(Path::new("/repos/p/specs~old")).is_ok());
+    }
+
+    fn hashed(path: &str, size: i64, modified: i64) -> MirrorEntry {
+        MirrorEntry {
+            path: path.to_string(),
+            size,
+            content_type: "text/markdown".to_string(),
+            is_binary: false,
+            content_hash: Some(crate::documents::content_hash(b"one")),
+            modified_unix_nanos: modified,
+        }
+    }
+
+    /// **The rule the whole cost of a listing turns on.** Reuse too eagerly and a brief describes a file
+    /// that has changed; read too eagerly and every ten-minute tick reads the whole repository.
+    #[test]
+    fn a_hash_is_reused_only_when_the_file_is_provably_the_one_that_was_hashed() {
+        let previous = hashed("a.md", 10, 1_000);
+        let floor = 5_000;
+
+        assert_eq!(
+            decide_hash(Some(&previous), 10, 1_000, floor, false),
+            HashPlan::Reuse(previous.content_hash.clone().unwrap())
+        );
+
+        // Any of the three moving is a read: a rewrite that kept the length, a touch that kept the bytes,
+        // and a file this walk has never seen.
+        assert_eq!(decide_hash(Some(&previous), 11, 1_000, floor, false), HashPlan::Read);
+        assert_eq!(decide_hash(Some(&previous), 10, 1_001, floor, false), HashPlan::Read);
+        assert_eq!(decide_hash(None, 10, 1_000, floor, false), HashPlan::Read);
+
+        // Listed last time and never hashed — a file that was binary then, or a walk from before hashes
+        // existed at all.
+        let unhashed = MirrorEntry {
+            content_hash: None,
+            ..hashed("a.md", 10, 1_000)
+        };
+
+        assert_eq!(decide_hash(Some(&unhashed), 10, 1_000, floor, false), HashPlan::Read);
+
+        // A file written around the moment of the last walk is not trusted however well its pair matches:
+        // the filesystem's clock is coarser than two writes.
+        assert_eq!(decide_hash(Some(&previous), 10, 1_000, 500, false), HashPlan::Read);
+
+        // And a file is never hashed at all — there is no brief to be written about a PNG.
+        assert_eq!(decide_hash(Some(&previous), 10, 1_000, floor, true), HashPlan::None);
+    }
+
+    /// Nothing listed before means nothing to trust, which must not accidentally read as "everything is
+    /// unchanged".
+    #[test]
+    fn a_connection_that_has_never_been_listed_trusts_nothing() {
+        let floor = racy_floor_of(None);
+        let previous = hashed("a.md", 10, 1_000);
+
+        assert_eq!(decide_hash(Some(&previous), 10, 1_000, floor, false), HashPlan::Read);
+
+        // And once there IS a listing, the floor sits a window before it.
+        let listed = DateTimeAsMicroseconds::new(10_000_000);
+
+        assert_eq!(
+            racy_floor_of(Some(listed)),
+            10_000_000 * 1_000 - RACY_WINDOW_NANOS
+        );
     }
 
     #[test]

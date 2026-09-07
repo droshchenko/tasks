@@ -203,6 +203,8 @@ mod tests {
             size: 1,
             content_type: "text/markdown".to_string(),
             is_binary: false,
+            content_hash: Some(crate::documents::content_hash(path.as_bytes())),
+            modified_unix_nanos: 0,
         }
     }
 

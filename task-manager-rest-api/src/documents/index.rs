@@ -28,6 +28,14 @@ pub struct DocumentIndexEntry {
     pub is_binary: bool,
     /// Size in bytes, for text and binary alike.
     pub size: i64,
+    /// What this document's BRIEF is filed under — sha256 of the payload, lowercase hex.
+    ///
+    /// `None` for a file, which is never briefed, and for a row written before the column existed, which
+    /// `backfill_content_hashes` fills at the next start. It rides on the index entry rather than being
+    /// read from the payload because the question it answers — "does this one still need reading for
+    /// me?" — is asked of a whole project's listing at once, and reading every payload to answer it is
+    /// exactly what a brief exists to avoid.
+    pub content_hash: Option<String>,
     pub version: i64,
     pub created: DateTimeAsMicroseconds,
     pub updated: DateTimeAsMicroseconds,
@@ -51,6 +59,7 @@ impl DocumentIndexEntry {
             is_binary: !is_text_content_type(&content_type),
             content_type,
             size: src.content_size.unwrap_or(0),
+            content_hash: src.content_hash.clone(),
             version: src.version,
             created: src.created,
             updated: src.updated,
@@ -68,6 +77,7 @@ impl DocumentIndexEntry {
             content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
             is_binary: src.binary_content.is_some(),
             size: src.content_size.unwrap_or(0),
+            content_hash: src.content_hash.clone(),
             version: src.version,
             created: src.created,
             updated: src.updated,
@@ -237,6 +247,10 @@ mod tests {
             },
             binary_content: if binary { Some(vec![1, 2]) } else { None },
             content_size: Some(4),
+            content_hash: match binary {
+                true => None,
+                false => Some(crate::documents::content_hash(b"text")),
+            },
             version: 1,
             created: DateTimeAsMicroseconds::new(0),
             updated: DateTimeAsMicroseconds::new(0),
@@ -322,6 +336,7 @@ mod tests {
                 doc_path: "a".to_string(),
                 content_type: Some(content_type.to_string()),
                 content_size: Some(1),
+                content_hash: None,
                 version: 1,
                 created: DateTimeAsMicroseconds::new(0),
                 updated: DateTimeAsMicroseconds::new(0),

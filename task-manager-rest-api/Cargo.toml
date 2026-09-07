@@ -31,8 +31,11 @@ my-ai-agent = { tag = "0.1.0", git = "https://github.com/my-ai-utils/my-ai-agent
 # `base64` for the binary half of a document. Only on this side: base64 exists because JSON cannot carry
 # bytes, so it is the wire format for a binary payload and never the storage format — Postgres gets the real
 # bytes in `bytea`. The browser needs no decoder either: it puts the same string straight into a `data:` URL.
+# `hex` is the second feature and costs nothing — it pulls no crate, it is a module gated behind an empty
+# feature — and it is how a sha256 digest becomes the 64-character string that keys a document's brief.
 rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-extensions.git", features = [
     "base64",
+    "hex",
 ] }
 
 # The Google OAuth code->token exchange and the userinfo read. FlUrl is the only HTTP client
@@ -63,6 +66,14 @@ ahash = "*"
 # instance. Same shape as `mt-rest-api`'s refresh token.
 encryption = { tag = "0.1.1", git = "https://github.com/MyJetTools/encryption.git" }
 prost = "*"
+
+# The content hash a document's brief is keyed by: same bytes, same key, whether they came out of Postgres
+# or off a connected repository's clone. sha256 rather than anything cheaper because this string is a
+# durable database key — `ahash` above is seeded per process and would change every restart. It is already
+# in the graph (postgres-protocol uses it for SCRAM), so declaring it adds no crate and no second version.
+# NOTE: sha2 0.11's digest is a `hybrid_array::Array` with no `LowerHex` — `format!("{:x}")` does not
+# compile. `rust_extensions::hex` is the encoder.
+sha2 = "*"
 
 # The nonce inside a login `state`, so two sign-ins started in the same second differ.
 uuid = { version = "*", features = ["v4"] }

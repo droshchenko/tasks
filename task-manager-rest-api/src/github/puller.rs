@@ -164,7 +164,19 @@ pub async fn pull_connection(
     let (listing, commit) = {
         let _guard = workdir_lock.read().await;
 
-        let listing = workdir::list_working_copy(&clone_dir, &connection.repo_path).await;
+        // Read again rather than reusing the snapshot taken before the exchange: a re-clone can take
+        // minutes, and a `github_git` command that re-listed in the meantime holds hashes this walk would
+        // otherwise pay for a second time.
+        let latest = app.github.get_or_pending(project_id, &connection.name);
+
+        let listing = workdir::list_working_copy(
+            &clone_dir,
+            &connection.repo_path,
+            latest.entries.clone(),
+            latest.listed,
+        )
+        .await;
+
         let commit = workdir::head_commit(&clone_dir).await;
 
         (listing, commit)
@@ -231,10 +243,19 @@ pub async fn relist_connection(
 
     let workdir_lock = app.github.workdir_lock(project_id, &connection.name);
 
+    let previous = app.github.get_or_pending(project_id, &connection.name);
+
     let (listing, commit) = {
         let _guard = workdir_lock.read().await;
 
-        let listing = workdir::list_working_copy(&clone_dir, &connection.repo_path).await;
+        let listing = workdir::list_working_copy(
+            &clone_dir,
+            &connection.repo_path,
+            previous.entries.clone(),
+            previous.listed,
+        )
+        .await;
+
         let commit = workdir::head_commit(&clone_dir).await;
 
         (listing, commit)
@@ -243,8 +264,6 @@ pub async fn relist_connection(
     let Ok((entries, skipped_amount)) = listing else {
         return;
     };
-
-    let previous = app.github.get_or_pending(project_id, &connection.name);
 
     let mut mirror = (*previous).clone();
     mirror.entries = Arc::new(entries);

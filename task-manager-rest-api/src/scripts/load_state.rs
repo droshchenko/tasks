@@ -59,9 +59,11 @@ pub async fn load_state(app: &AppContext) {
     let kind_templates: Vec<KindTemplateModel> =
         kind_template_rows.iter().map(|row| row.into()).collect();
 
-    // Before the index is built from them: the backfill writes the two derived columns onto rows that predate
-    // them, and an index built first would carry the gaps until the next restart.
+    // Before the index is built from them: the backfills write columns onto rows that predate them, and an
+    // index built first would carry the gaps until the next restart — which for a hash means every legacy
+    // document reading as "never briefed" for the life of the process.
     crate::scripts::backfill_document_columns(app).await;
+    crate::scripts::backfill_content_hashes(app).await;
 
     let document_rows = app.documents_repo.get_all_indexed(&ctx).await;
 

@@ -50,6 +50,10 @@ pub fn mirror_index_entries(app: &AppContext, project: &ProjectModel) -> Vec<Doc
                 content_type: file.content_type.clone(),
                 is_binary: file.is_binary,
                 size: file.size,
+                // Off the listing walk, which hashed the file when it read it — see `MirrorEntry`. A
+                // repository's file has no row to carry one, so the walk is the only place it can come
+                // from, and `None` here reads exactly as it does for a document: not briefed.
+                content_hash: file.content_hash.clone(),
                 version: 0,
                 created: updated,
                 updated,
@@ -211,6 +215,14 @@ fn document_of(target: &MirrorTarget, bytes: Vec<u8>) -> DocumentDto {
         None => false,
     };
 
+    // Hashed off the RAW bytes, before the branch below moves them and before anything decides what they
+    // are. That is what makes a file of a repository and a document of the project's own with the same
+    // text share one brief: both hash the bytes, neither hashes a rendering of them.
+    let content_hash = match crate::documents::is_text_bytes(&bytes) && !is_binary {
+        true => Some(crate::documents::content_hash(&bytes)),
+        false => None,
+    };
+
     let (content, binary_content) = if is_binary {
         (None, Some(bytes))
     } else {
@@ -236,6 +248,7 @@ fn document_of(target: &MirrorTarget, bytes: Vec<u8>) -> DocumentDto {
         content,
         binary_content,
         content_size,
+        content_hash,
         // Not a version. See `mirror_index_entries`.
         version: 0,
         created: now,

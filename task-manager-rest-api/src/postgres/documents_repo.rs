@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use service_sdk::my_postgres::sql_where::NoneWhereModel;
+use service_sdk::my_postgres::sql_where::{NoneWhereModel, StaticLineWhereModel};
 use service_sdk::my_postgres::{MyPostgres, UpdateConflictType};
 
 service_sdk::macros::use_my_postgres!();
@@ -79,6 +79,18 @@ pub struct DocumentDto {
     // means reading the payload — which for a PDF is the whole blob, for every document in the project, on
     // every open of the Documents screen. A number written once on upload costs nothing to read.
     pub content_size: Option<i64>,
+    // sha256 of the payload, lowercase hex — what this document's BRIEF is filed under. See
+    // `crate::documents::content_hash`.
+    //
+    // Stored rather than computed for the same reason `content_size` is, and it matters more here: the
+    // index has no payload, so "which documents have not been briefed yet" would otherwise be a read of
+    // every document in the project. Written on every write that changes the payload; carried unchanged by
+    // a move, which does not.
+    //
+    // NULL means one of two things and neither needs telling apart: a binary document, which is never
+    // briefed, or a row written before this column existed, which `backfill_content_hashes` fills at the
+    // next start. Both read as "no brief yet", which is the truth.
+    pub content_hash: Option<String>,
     // Which version this row is. Starts at 1 and moves on every write of any kind — a rewrite, a move, a
     // delete, a restore — so it doubles as the count of history rows this document has.
     pub version: i64,
@@ -181,12 +193,37 @@ pub struct DocumentIndexDto {
     pub doc_path: String,
     pub content_type: Option<String>,
     pub content_size: Option<i64>,
+    pub content_hash: Option<String>,
     pub version: i64,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
     #[sql_type("timestamp")]
     pub updated: DateTimeAsMicroseconds,
     pub updated_by: String,
+}
+
+// One text document that has never been hashed, and the text to hash — the backfill's work list.
+//
+// Its own select model rather than reading whole rows, because the difference is the `bytea` column: a
+// board with a few hundred PDFs in it would otherwise pull every one of them out of Postgres at startup to
+// discover it has nothing to do with them.
+#[derive(SelectDbEntity, Debug)]
+pub struct DocumentHashBackfillDto {
+    pub id: String,
+    pub content: Option<String>,
+}
+
+// One document's hash, written on its own.
+//
+// **A partial update rather than an upsert of the whole row, and that is not an optimisation.** The
+// backfill runs at startup over documents nobody asked about; writing whole rows back would rewrite every
+// payload it touched, and any field this process read a moment before somebody else wrote would be put
+// back as it was. This says the one thing it knows.
+#[derive(UpdateDbEntity, Debug)]
+pub struct DocumentHashUpdateDto {
+    #[primary_key(0)]
+    pub id: String,
+    pub content_hash: Option<String>,
 }
 
 // One history entry WITHOUT its payload, for the same reason: a document rewritten twenty times would
@@ -308,6 +345,45 @@ impl DocumentsRepo {
             .query_rows(TABLE_NAME, NoneWhereModel::new(), Some(ctx))
             .await
             .expect("documents: query_rows get_all_indexed failed")
+    }
+
+    /// Every text document with no content hash yet, with its text — what the startup backfill works
+    /// through.
+    ///
+    /// **The filter is a static line rather than a where-model, and that is load-bearing.** A derived
+    /// `WhereDbModel` whose only field is an `Option` set to `None` renders NO `WHERE` clause at all —
+    /// the model reports it has no conditions and the builder leaves the clause off — so the "documents
+    /// with no hash" query would quietly become "every document, with its text". `Option<Vec<u8>>` cannot
+    /// be a where field at all, which settles the binary half the same way.
+    pub async fn get_text_rows_without_hash(
+        &self,
+        ctx: &MyTelemetryContext,
+    ) -> Vec<DocumentHashBackfillDto> {
+        let where_model =
+            StaticLineWhereModel::new("content_hash IS NULL AND binary_content IS NULL");
+
+        self.postgres
+            .with_retries(3, Duration::from_secs(1))
+            .query_rows(TABLE_NAME, Some(&where_model), Some(ctx))
+            .await
+            .expect("documents: query_rows get_text_rows_without_hash failed")
+    }
+
+    /// Write one document's content hash, touching nothing else on the row.
+    ///
+    /// No history entry and no version bump: what this records is a fact about the payload that was always
+    /// true, not a change somebody made to it.
+    pub async fn set_content_hash(&self, id: &str, content_hash: &str, ctx: &MyTelemetryContext) {
+        let row = DocumentHashUpdateDto {
+            id: id.to_string(),
+            content_hash: Some(content_hash.to_string()),
+        };
+
+        self.postgres
+            .with_retries(3, Duration::from_secs(1))
+            .update_db_entity(&row, TABLE_NAME, Some(ctx))
+            .await
+            .expect("documents: update_db_entity set_content_hash failed");
     }
 
     /// One live document by id, or `None` — which means it is in the trash or was never there. The caller

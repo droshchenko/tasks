@@ -32,6 +32,21 @@ pub struct MirrorEntry {
     pub size: i64,
     pub content_type: String,
     pub is_binary: bool,
+    /// What this file's BRIEF is filed under — sha256 of the bytes on the disk, lowercase hex.
+    ///
+    /// `None` for a file that is not text (by extension, or because the bytes disagreed with it) and for
+    /// one too big to list, neither of which is ever briefed. A file of a repository has no row anywhere,
+    /// so this listing is the only place its hash can live — and it is the only stable name such a file
+    /// has: its id is derived from its path and changes the moment somebody moves it.
+    pub content_hash: Option<String>,
+    /// When the file was last written, in unix nanoseconds — the second half of the cache key that keeps
+    /// the ten-minute walk cheap.
+    ///
+    /// **Not shown anywhere and not part of what a mirror MEANS.** It is here so the next walk can tell,
+    /// without opening anything, that a file is the one it hashed last time: same size, same moment, same
+    /// bytes. A re-clone rewrites every file, so every mtime is new and every hash is paid for again —
+    /// which is right, since a re-clone is where the content actually changed.
+    pub modified_unix_nanos: i64,
 }
 
 /// What one connection currently knows, and how the last attempt to refresh it went.

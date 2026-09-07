@@ -2949,6 +2949,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "service-sdk",
+ "sha2",
  "similar",
  "task-manager-shared",
  "tikv-jemallocator",

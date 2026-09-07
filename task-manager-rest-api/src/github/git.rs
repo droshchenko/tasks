@@ -196,6 +196,60 @@ pub async fn run_git(
     args: &[String],
     key: Option<&str>,
 ) -> Result<GitOutput, String> {
+    let output = run_git_raw(work_dir, args, key).await?;
+
+    let (stdout, stdout_cut) = cut(&output.stdout);
+    let (stderr, stderr_cut) = cut(&output.stderr);
+
+    Ok(GitOutput {
+        // A process killed by a signal reports no code. -1 rather than a panic: it is not a success and
+        // the streams say what happened.
+        exit_code: output.status.code().unwrap_or(-1),
+        stdout,
+        stderr,
+        truncated: stdout_cut || stderr_cut,
+    })
+}
+
+/// Run git and hand back stdout as the bytes git wrote — nothing cut, nothing lossily converted.
+///
+/// **The cut in [`run_git`] is for output a MODEL reads, and it is wrong for output this service parses.**
+/// `git ls-files -z` over a repository of any size runs past 60 000 bytes in a few hundred paths, and a
+/// listing cut in the middle does not fail: it loses every file after the cut, silently, and glues a
+/// sentence about being cut onto the last surviving path. Every count taken off that listing — how many
+/// files a connection holds, how many of them have no brief — would then be a number about a prefix of the
+/// repository, with nothing saying so.
+///
+/// Bytes rather than a `String` because a path is not required to be UTF-8, and one that is not must be a
+/// path this listing skips rather than an error that loses the other four thousand.
+pub async fn run_git_uncut(
+    work_dir: &Path,
+    args: &[&str],
+    key: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let args: Vec<String> = args.iter().map(|itm| itm.to_string()).collect();
+
+    let output = run_git_raw(work_dir, &args, key).await?;
+
+    if !output.status.success() {
+        // The error is a message for a person, so it is cut like every other one.
+        let (stderr, _) = cut(&output.stderr);
+
+        return Err(match stderr.trim().is_empty() {
+            true => format!("git exited {}", output.status.code().unwrap_or(-1)),
+            false => stderr.trim().to_string(),
+        });
+    }
+
+    Ok(output.stdout)
+}
+
+/// Run git and hand back what the process produced, before anybody decides what to do with it.
+async fn run_git_raw(
+    work_dir: &Path,
+    args: &[String],
+    key: Option<&str>,
+) -> Result<std::process::Output, String> {
     if !work_dir.is_dir() {
         return Err(format!(
             "'{}' is not there — the repository has not been cloned yet",
@@ -232,7 +286,7 @@ pub async fn run_git(
         // image happens to carry.
         .env("LC_ALL", "C");
 
-    let output = tokio::time::timeout(GIT_TIMEOUT, command.output())
+    tokio::time::timeout(GIT_TIMEOUT, command.output())
         .await
         .map_err(|_| {
             format!(
@@ -240,19 +294,7 @@ pub async fn run_git(
                 GIT_TIMEOUT.as_secs()
             )
         })?
-        .map_err(|err| format!("could not run git: {err}"))?;
-
-    let (stdout, stdout_cut) = cut(&output.stdout);
-    let (stderr, stderr_cut) = cut(&output.stderr);
-
-    Ok(GitOutput {
-        // A process killed by a signal reports no code. -1 rather than a panic: it is not a success and
-        // the streams say what happened.
-        exit_code: output.status.code().unwrap_or(-1),
-        stdout,
-        stderr,
-        truncated: stdout_cut || stderr_cut,
-    })
+        .map_err(|err| format!("could not run git: {err}"))
 }
 
 /// Run git and treat anything but success as an error — for the steps this service takes on its own,
