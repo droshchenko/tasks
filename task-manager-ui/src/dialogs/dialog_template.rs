@@ -31,7 +31,7 @@ pub fn dialog_template_ex(
 ///
 /// Cancel is a way out of an edit, and a dialog with nothing to save has no edit to get out of: it left the
 /// reader looking for the difference between Cancel and the cross, of which there is none. The cross in the
-/// header stays, and so does clicking the backdrop, so there are still two ways to close.
+/// header is the way out.
 pub fn dialog_template_read_only(
     title: &str,
     content: Element,
@@ -71,14 +71,15 @@ fn render_modal(
     let title = title.to_string();
 
     rsx! {
+        // **The backdrop does not close the dialog, deliberately.** It used to, and what that cost was
+        // never a click on the grey: it was a drag that began on a card's text and ENDED out there, a
+        // mis-hit beside a field, a click on a dialog that had just repainted — each of which threw away
+        // what was open with no way back. Reading a long thread is what these dialogs are mostly for, and
+        // the way out is the cross, which is a thing you have to mean to press.
         div {
             class: "modal-backdrop",
-            // Clicking the backdrop closes. The body below stops propagation, so a click inside the
-            // dialog — including a drag that ends outside an input — does not count as "outside".
-            onclick: move |_| close(),
             div {
                 class: "{modal_class}",
-                onclick: move |event| event.stop_propagation(),
                 div { class: "modal-header",
                     if let Some(on_back) = on_back {
                         button {

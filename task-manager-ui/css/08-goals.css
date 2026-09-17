@@ -117,14 +117,41 @@
   flex-shrink: 0;
 }
 
-.goal-closed-flag {
+/* Where the goal has got to, drawn beside the priority badge. An OUTLINED pill on purpose: the priority
+   next to it is a SOLID chip from the kind palette, and two solid chips of different palettes sitting
+   shoulder to shoulder read as two priorities. Outline for "which state", fill for "how urgent" — the
+   reader learns the pair once. This is the shape the `Closed` flag had, because it is the same badge:
+   `Done` is what that flag said, in the vocabulary the tasks under the goal are labelled with. */
+.goal-status {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-muted);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   padding: 1px 7px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Not started: the quietest of the three. A badge on every unstarted goal must not out-shout the ones
+   that have something going on. */
+.goal-status.todo {
+  color: var(--text-muted);
+}
+
+/* Started: the same blue the progress bar under it fills with, so the badge and the bar are one statement
+   rather than two. */
+.goal-status.progress {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Closed. `#1a7f37` rather than a new green: it is the success colour this stylesheet already repeats —
+   `05-board.css` and three rules in `07-dialog.css` — and there is no `--success` token to reach for, so
+   the house style here is the repeated literal. A fourth green would be drift. */
+.goal-status.done {
+  color: #1a7f37;
+  border-color: #1a7f37;
 }
 
 .goal-progress-text {
@@ -268,4 +295,20 @@
 .goal-task-status {
   width: 110px;
   text-align: right;
+}
+
+/* The "Show done goals" tick, in the page header beside the project picker. `.checkbox-row` is a FORM row
+   and carries a bottom margin for the field under it; there is no field under it here, and the margin
+   would sit the tick below the centre line of the row it shares with the dropdown. */
+.goals-page .checkbox-row {
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+/* While a status is chosen the tick decides nothing, and it says so rather than quietly doing nothing when
+   pressed — the input carries `disabled`, and this is the half of that a reader can see. */
+.goals-page .checkbox-row.disabled label,
+.goals-page .checkbox-row.disabled input {
+  color: var(--text-faint);
+  cursor: default;
 }

@@ -1,7 +1,6 @@
 use dioxus::prelude::*;
 use task_manager_shared::goals::GoalResponse;
 use task_manager_shared::kind_color::KindColor;
-use task_manager_shared::projects::COLUMN_ID_DONE;
 
 /// One goal, shown in full: what it is about, and what has been said about it.
 ///
@@ -13,16 +12,16 @@ use task_manager_shared::projects::COLUMN_ID_DONE;
 /// it, so `goals_add_comment` is the record of WHY the work under it looks the way it does — and until this
 /// dialog existed there was nowhere in the browser to read it.
 #[component]
-pub fn ViewGoalDialog(goal: GoalResponse) -> Element {
+pub fn ViewGoalDialog(goal: GoalResponse, status: String) -> Element {
     let title = format!("{} · {}", goal.id, goal.name);
-    let content = render_goal(&goal);
+    let content = render_goal(&goal, &status);
 
     // The same size class the task dialog uses: two halves need a height to be halves of, and a goal with a
     // long thread is exactly as worth the window as a task with one.
     super::dialog_template_read_only(&title, content, Some("modal-task"))
 }
 
-fn render_goal(goal: &GoalResponse) -> Element {
+fn render_goal(goal: &GoalResponse, status: &str) -> Element {
     // Rendered rather than shown as source, and escaped rather than trusted — the same reason and the same
     // call as a task's text: agents write Markdown, and `md_to_html` escapes raw HTML instead of passing it
     // through.
@@ -51,7 +50,7 @@ fn render_goal(goal: &GoalResponse) -> Element {
                         super::Checklist { items: goal.subtasks.clone() }
                     }
                 }
-                {render_attributes(goal)}
+                {render_attributes(goal, status)}
             }
             {render_thread(goal)}
         }
@@ -59,16 +58,10 @@ fn render_goal(goal: &GoalResponse) -> Element {
 }
 
 /// The right-hand column: the goal's state, its progress, and its colour.
-fn render_attributes(goal: &GoalResponse) -> Element {
+fn render_attributes(goal: &GoalResponse, status: &str) -> Element {
     let closed = goal.closed_unix_seconds.is_some();
     let hex = KindColor::parse_or_default(&goal.color).hex();
     let priority = task_manager_shared::priority::Priority::parse_or_default(&goal.priority);
-
-    let status = if goal.status == COLUMN_ID_DONE {
-        "Closed".to_string()
-    } else {
-        "Open".to_string()
-    };
 
     // The number the server counted, which includes archived work — not a count of anything on this screen.
     // A goal closes only once every task is done, so by then the oldest of them have aged off the board, and

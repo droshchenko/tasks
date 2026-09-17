@@ -78,6 +78,8 @@ pub fn RenderGoals() -> Element {
     }
 
     let selected_prefix = cs_ra.selected.clone();
+    let show_closed = cs_ra.show_closed;
+    let status_filter = cs_ra.status_filter.clone();
 
     let current = projects
         .iter()
@@ -140,6 +142,68 @@ pub fn RenderGoals() -> Element {
         }
     }
 
+    // Each goal's status, worked out ONCE and carried to the row that draws it. The filter below asks the
+    // same question the badge answers, and two derivations of one fact is how the two come to disagree —
+    // which is also why it happens here, after the tasks are grouped, rather than up where the goals
+    // arrive: a goal's status is a statement about its tasks.
+    let wanted = GoalStatus::parse(&status_filter);
+
+    let with_status: Vec<(GoalResponse, GoalStatus)> = goals
+        .into_iter()
+        .map(|goal| {
+            let under = of_goal
+                .get(&goal.id)
+                .map(|itm| itm.as_slice())
+                .unwrap_or(&[]);
+            let status = goal_status(&goal, under);
+            (goal, status)
+        })
+        .collect();
+
+    // Whether the tick is what emptied the screen, asked BEFORE the filter runs — an empty board and a
+    // board whose every goal is finished are two different things to be told, and afterwards they look
+    // identical.
+    let closed_hidden = !show_closed
+        && wanted.is_none()
+        && with_status
+            .iter()
+            .any(|(_, status)| *status == GoalStatus::Done);
+
+    let of_this_status: Vec<(GoalResponse, GoalStatus)> = with_status
+        .into_iter()
+        .filter(|(_, status)| match wanted {
+            // A status somebody CHOSE wins over the tick. Picking `Done` is the plainest way there is of
+            // asking for the closed goals, and answering it with an empty screen because a checkbox
+            // elsewhere is unticked would be obtuse — so the tick governs the unfiltered view only, and
+            // says so by going dead while a status is chosen.
+            Some(wanted) => *status == wanted,
+            None => show_closed || *status != GoalStatus::Done,
+        })
+        .collect();
+
+    // A goal belongs to no status the way a task belongs to no goal, so the Backlog is part of the
+    // unfiltered picture only: somebody who asked for the `Todo` goals did not ask for the loose work.
+    let show_backlog = wanted.is_none() && !loose.is_empty();
+
+    // What to say when the list comes out empty — which now has three quite different reasons, and a screen
+    // that said "nothing here yet" where a filter is what emptied it would be lying to the person holding
+    // the filter.
+    let empty_note: Option<String> = if !of_this_status.is_empty() || show_backlog {
+        None
+    } else if let Some(wanted) = wanted {
+        Some(format!(
+            "No goal on this board is {} right now.",
+            wanted.title()
+        ))
+    } else if closed_hidden {
+        Some("Every goal on this board is done. Tick \"Show done goals\" to see them.".to_string())
+    } else {
+        Some(
+            "Nothing here yet. Goals are opened through MCP — ask an agent to open one."
+                .to_string(),
+        )
+    };
+
     let current = current.clone();
     let expanded = cs_ra.expanded.clone();
     let picking_color = cs_ra.picking_color.clone();
@@ -149,17 +213,16 @@ pub fn RenderGoals() -> Element {
         div { class: "goals-page",
             {header}
 
-            if goals.is_empty() && loose.is_empty() {
-                div { class: "empty-note",
-                    "Nothing here yet. Goals are opened through MCP — ask an agent to open one."
-                }
+            if let Some(note) = empty_note {
+                div { class: "empty-note", "{note}" }
             }
 
             div { class: "goals-list",
-                for goal in goals.iter() {
+                for (goal, status) in of_this_status.iter() {
                     RenderGoal {
                         key: "{goal.id}",
                         goal: goal.clone(),
+                        status: *status,
                         project: current.clone(),
                         open: expanded.contains(&goal.id),
                         tasks: of_goal.get(&goal.id).cloned().unwrap_or_default(),
@@ -170,7 +233,7 @@ pub fn RenderGoals() -> Element {
 
                 // Last, and drawn as a goal without being one: work that belongs to no epic still has to be
                 // visible, or this screen would quietly hide part of the board.
-                if !loose.is_empty() {
+                if show_backlog {
                     RenderBacklog {
                         tasks: loose,
                         project: current.clone(),
@@ -196,6 +259,13 @@ struct ComponentState {
     tasks: DataState<Vec<TaskResponse>>,
     /// Which groups are open. Kept across a repaint, so a push does not fold up what somebody was reading.
     expanded: Vec<String>,
+    /// Whether closed goals are drawn. Off by default — what somebody opens this screen for is the work in
+    /// flight. Deliberately NOT reset by `select`: it is how this reader wants goals shown, not something
+    /// about one board.
+    show_closed: bool,
+    /// Which status is being looked at, by [`GoalStatus::key`] — empty for all of them. A preference of the
+    /// reader's, like `show_closed`, so switching boards does not silently widen what is on screen.
+    status_filter: String,
     /// Which goal's palette is open, if any. One at a time: two open palettes ask a question nobody asked.
     picking_color: Option<String>,
 }
@@ -342,6 +412,78 @@ fn get_tasks(
     }
 }
 
+/// Where a goal has got to, in the words the board uses for a task: `Todo`, `In Progress`, `Done`.
+///
+/// **Derived here rather than read off the wire, because the wire has only two states.** A goal's `status`
+/// is `close_moment` under another name — `GoalModel::status` returns `done` for a closed goal and `todo`
+/// for every open one — so a goal with half its work landed reads exactly like one nobody has started. The
+/// middle state is the one this screen is opened to see, and what answers it is already in hand: the tasks
+/// grouped beside the goal.
+///
+/// The server's counter is consulted FIRST and the list only after, and that order is what keeps this from
+/// contradicting the `done / total` beside it: `done_amount` counts ARCHIVED work, so a goal whose early
+/// tasks have all aged off the board still says it has started.
+fn goal_status(goal: &GoalResponse, tasks: &[TaskResponse]) -> GoalStatus {
+    if goal.closed_unix_seconds.is_some() {
+        return GoalStatus::Done;
+    }
+
+    let started = goal.done_amount > 0 || tasks.iter().any(|task| task.status != COLUMN_ID_TODO);
+
+    if started {
+        GoalStatus::InProgress
+    } else {
+        GoalStatus::Todo
+    }
+}
+
+/// The three states [`goal_status`] can report, and how each is drawn.
+#[derive(Clone, Copy, PartialEq)]
+enum GoalStatus {
+    Todo,
+    InProgress,
+    Done,
+}
+
+impl GoalStatus {
+    /// In the order the work moves through them, which is the order the filter offers them in.
+    const ALL: [GoalStatus; 3] = [Self::Todo, Self::InProgress, Self::Done];
+
+    /// Back from a [`Self::key`]. Anything else is "any status" — an empty box and a filter naming
+    /// something that no longer exists are the same screen, and neither is worth an error.
+    fn parse(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|itm| itm.key() == key)
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Todo => "Todo",
+            Self::InProgress => "In Progress",
+            Self::Done => "Done",
+        }
+    }
+
+    /// The one name this status is known by outside its own type: the modifier beside `goal-status` in
+    /// the stylesheet, and the value of the option in the header's filter. One vocabulary, so a colour and
+    /// a filter cannot drift apart.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::InProgress => "progress",
+            Self::Done => "done",
+        }
+    }
+
+    /// What the badge says on hover, which is the half a one-word label cannot carry.
+    fn hint(self) -> &'static str {
+        match self {
+            Self::Todo => "Nothing under this goal has been started yet",
+            Self::InProgress => "Work under this goal has started",
+            Self::Done => "Closed — every task under it landed",
+        }
+    }
+}
+
 fn render_loading() -> Element {
     rsx! {
         div { class: "loading-note", "Loading…" }
@@ -356,7 +498,17 @@ fn render_error(message: &str) -> Element {
 
 #[component]
 fn RenderHeader(projects: Vec<ProjectResponse>, cs: Signal<ComponentState>) -> Element {
-    let selected_prefix = cs.read().selected.clone();
+    let cs_ra = cs.read();
+    let selected_prefix = cs_ra.selected.clone();
+    let show_closed = cs_ra.show_closed;
+    let status_filter = cs_ra.status_filter.clone();
+    drop(cs_ra);
+
+    // While a status is chosen the tick has nothing left to govern — that choice already decides whether
+    // the closed goals are on screen. Drawn dead rather than removed: a control that vanishes when you use
+    // the one beside it is a control people stop trusting.
+    let filtered = GoalStatus::parse(&status_filter).is_some();
+
     let mut cs = cs;
 
     rsx! {
@@ -378,6 +530,35 @@ fn RenderHeader(projects: Vec<ProjectResponse>, cs: Signal<ComponentState>) -> E
                         }
                     }
                 }
+                // Straight after the board, because it narrows the board: which goals of it are on
+                // screen. Empty is every one of them, spelled out as an option rather than left as the
+                // blank the other pickers on Home use — a filter whose "off" state has no name is a filter
+                // people are not sure they have turned off.
+                select {
+                    onchange: move |event| cs.write().status_filter = event.value(),
+                    option { value: "", selected: status_filter.is_empty(), "Any status" }
+                    for status in GoalStatus::ALL.iter() {
+                        option {
+                            value: "{status.key()}",
+                            selected: status.key() == status_filter,
+                            "{status.title()}"
+                        }
+                    }
+                }
+                // Beside the picker rather than out at the right edge: it says which goals of this board are
+                // on screen, which is the same question the dropdown answers one level up.
+                div {
+                    class: if filtered { "checkbox-row disabled" } else { "checkbox-row" },
+                    title: if filtered { "A chosen status already decides this" } else { "" },
+                    input {
+                        r#type: "checkbox",
+                        id: "goals-show-closed",
+                        disabled: filtered,
+                        checked: show_closed,
+                        onchange: move |event| cs.write().show_closed = event.checked(),
+                    }
+                    label { r#for: "goals-show-closed", "Show done goals" }
+                }
             }
         }
     }
@@ -387,6 +568,7 @@ fn RenderHeader(projects: Vec<ProjectResponse>, cs: Signal<ComponentState>) -> E
 #[component]
 fn RenderGoal(
     goal: GoalResponse,
+    status: GoalStatus,
     project: ProjectResponse,
     open: bool,
     tasks: Vec<TaskResponse>,
@@ -399,8 +581,10 @@ fn RenderGoal(
     let hex = KindColor::parse_or_default(&goal.color).hex();
     let priority = task_manager_shared::priority::Priority::parse_or_default(&goal.priority);
 
-    // Counters as the server sent them. NOT recomputed from the list below: that list is absent until the
-    // goal is expanded, and the numbers count archived work which a board read leaves out.
+    // Counters as the server sent them, and NOT recomputed from the list below even though that list is
+    // now in hand for every row: the numbers count archived work, and a figure counted from a board read
+    // would report finished work as half-done. The status badge beside them is allowed to consult the list
+    // because it asks a boolean rather than a number — see `goal_status`.
     let done = goal.done_amount;
     let total = goal.tasks_amount;
 
@@ -470,8 +654,17 @@ fn RenderGoal(
                             "{priority.title()}"
                         }
                     }
-                    if closed {
-                        span { class: "goal-closed-flag", "Closed" }
+                    // Beside the priority, and always drawn — unlike the priority, which only appears
+                    // when somebody ranked it. Where a goal has got to is the question this screen exists
+                    // to answer, so the one row that has no badge for it is the row that raises it.
+                    //
+                    // This is also the `Closed` flag that used to sit here: `Done` says the same thing in
+                    // the vocabulary the tasks under it are labelled with, and two badges for one fact is
+                    // one badge too many.
+                    span {
+                        class: "goal-status {status.key()}",
+                        title: "{status.hint()}",
+                        "{status.title()}"
                     }
                     span { class: "goal-progress-text", "{done} / {total}" }
                     div { class: "goal-progress",
@@ -505,6 +698,11 @@ fn RenderGoal(
                             event.stop_propagation();
                             crate::dialogs::open(crate::dialogs::DialogState::ViewGoal {
                                 goal: for_dialog.clone(),
+                                // Handed over rather than worked out again in there: the dialog holds the
+                                // goal but not the tasks the middle state is read from, and a dialog that
+                                // said `Open` where the row behind it says `In Progress` is two answers to
+                                // one question.
+                                status: status.title().to_string(),
                             });
                         },
                         "👁"

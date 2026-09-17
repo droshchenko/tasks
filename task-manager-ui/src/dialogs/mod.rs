@@ -164,8 +164,12 @@ pub enum DialogState {
     },
     /// One goal, in full: its text and its thread. Handed the whole goal rather than an id, because the
     /// screen that opens it is already holding one — a goal arrives with the board on every push.
+    ///
+    /// `status` comes with it for the same reason and one more: a goal's status is derived from the TASKS
+    /// under it, which the Goals screen holds and this dialog does not — see `goal_status` there.
     ViewGoal {
         goal: GoalResponse,
+        status: String,
     },
     /// One document, opened from the task or the goal that references it.
     ///
@@ -216,8 +220,8 @@ pub fn RenderDialog() -> Element {
         DialogState::ViewTask { found } => rsx! {
             ViewTaskDialog { found }
         },
-        DialogState::ViewGoal { goal } => rsx! {
-            ViewGoalDialog { goal }
+        DialogState::ViewGoal { goal, status } => rsx! {
+            ViewGoalDialog { goal, status }
         },
         DialogState::ViewDocument {
             project,

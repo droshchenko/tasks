@@ -151,7 +151,7 @@ pub struct GoalView {
     )]
     pub priority: String,
     #[property(
-        description = "`todo` while the goal is open, `done` once it is closed. Derived from whether it has been closed, so it cannot disagree with `closed_unix_seconds` — a goal has these two states and nothing in between in this version"
+        description = "`todo` while the goal is open, `done` once it is closed. Derived from whether it has been closed, so it cannot disagree with `closed_unix_seconds` — a goal has these two states and nothing in between in this version. The Goals screen shows a third, `In Progress`, which is NOT this field: it is derived in the browser from whether any task under the goal has moved off `todo`, so read `done_amount` and the tasks themselves rather than this to tell a started goal from an untouched one"
     )]
     pub status: String,
     #[property(
