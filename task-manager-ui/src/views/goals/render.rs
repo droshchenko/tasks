@@ -414,18 +414,14 @@ fn get_tasks(
 
 /// Where a goal has got to, in the words the board uses for a task: `Todo`, `In Progress`, `Done`.
 ///
-/// **Derived here rather than read off the wire, because the wire has only two states.** A goal's `status`
-/// is `close_moment` under another name — `GoalModel::status` returns `done` for a closed goal and `todo`
-/// for every open one — so a goal with half its work landed reads exactly like one nobody has started. The
-/// middle state is the one this screen is opened to see, and what answers it is already in hand: the tasks
-/// grouped beside the goal.
-///
-/// The server's counter is consulted FIRST and the list only after, and that order is what keeps this from
-/// contradicting the `done / total` beside it: `done_amount` counts ARCHIVED work, so a goal whose early
-/// tasks have all aged off the board still says it has started.
+/// Prefer the server-derived status. The task-based fallback keeps older server responses readable.
 fn goal_status(goal: &GoalResponse, tasks: &[TaskResponse]) -> GoalStatus {
-    if goal.closed_unix_seconds.is_some() {
+    if goal.status == "done" || goal.closed_unix_seconds.is_some() {
         return GoalStatus::Done;
+    }
+
+    if goal.status == "in-progress" {
+        return GoalStatus::InProgress;
     }
 
     let started = goal.done_amount > 0 || tasks.iter().any(|task| task.status != COLUMN_ID_TODO);
@@ -838,10 +834,7 @@ fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
 
     let done = task.status == COLUMN_ID_DONE;
 
-    let assignee = task
-        .assignee_name
-        .clone()
-        .or_else(|| task.assignee.clone());
+    let assignee = task.assignee_name.clone().or_else(|| task.assignee.clone());
 
     let found = crate::api::find_task_locally(&task, &project);
 

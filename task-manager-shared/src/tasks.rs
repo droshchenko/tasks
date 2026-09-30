@@ -134,6 +134,12 @@ pub struct TaskResponse {
     // rather than a row being removed. The board draws only what is not deleted; a search shows what is,
     // marked as gone.
     pub deleted_unix_seconds: Option<i64>,
+    #[serde(default)]
+    pub execution_prompts: Vec<crate::execution_prompts::ResolvedExecutionPrompt>,
+    #[serde(default)]
+    pub decisions: Vec<crate::decisions::TaskDecision>,
+    #[serde(default)]
+    pub analysis_documents: Vec<String>,
 }
 
 // A whole board in one response, **most urgent first and oldest first within one priority**.
@@ -256,6 +262,10 @@ mod tests {
 
     fn done_task(closed_unix_seconds: Option<i64>) -> TaskResponse {
         TaskResponse {
+            execution_prompts: Vec::new(),
+            decisions: Vec::new(),
+            analysis_documents: Vec::new(),
+
             id: "RMS-1".to_string(),
             project: "P".to_string(),
             text: "text".to_string(),

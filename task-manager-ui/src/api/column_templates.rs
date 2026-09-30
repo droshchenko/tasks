@@ -22,12 +22,14 @@ pub async fn save_column_template(
     id: &str,
     name: &str,
     description: &str,
+    prompts: Vec<task_manager_shared::execution_prompts::ExecutionPrompt>,
     columns: Vec<ColumnTemplateColumn>,
 ) -> Result<(), RequestError> {
     let request = SaveColumnTemplateInputModel {
         id: id.to_string(),
         name: name.to_string(),
         description: description.to_string(),
+        prompts: Some(prompts),
         columns,
     };
 

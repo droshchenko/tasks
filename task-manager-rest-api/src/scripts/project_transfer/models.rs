@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 // Prose and moments are spelled the same way in both of this product's transfer formats — see the module
 // for why that is deliberate. Re-exported rather than imported so every `use super::models::*;` in this
 // folder keeps reaching them under the names it already uses.
-pub use crate::scripts::transfer_encoding::{decode_moment, decode_text, encode_moment, encode_text};
+pub use crate::scripts::transfer_encoding::{
+    decode_moment, decode_text, encode_moment, encode_text,
+};
 
 /// What the file says it is, written into `project.yaml` and checked on the way back in.
 ///
@@ -184,6 +186,8 @@ pub struct GoalFileModel {
     pub closed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<String>,
+    #[serde(default)]
+    pub auto_completed: bool,
 }
 
 /// `tasks.yaml`.
@@ -227,6 +231,10 @@ pub struct TaskFileModel {
     pub closed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted: Option<String>,
+    #[serde(default)]
+    pub decisions: Vec<task_manager_shared::decisions::TaskDecision>,
+    #[serde(default)]
+    pub analysis_documents: Vec<String>,
 }
 
 /// `comments.yaml`.

@@ -17,7 +17,9 @@
 
 pub mod auth;
 pub mod column_templates;
+pub mod decisions;
 pub mod documents;
+pub mod execution_prompts;
 pub mod github;
 pub mod goals;
 pub mod kind_color;

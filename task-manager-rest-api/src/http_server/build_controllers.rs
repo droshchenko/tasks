@@ -6,9 +6,8 @@ use crate::app::AppContext;
 
 /// Register everything the browser talks to.
 ///
-/// There is deliberately no task-mutating action here: every change to a task arrives through `/mcp`.
-/// If you find yourself adding `register_post_action` under `tasks`, the design changed — update
-/// README.md first.
+/// Task specifications arrive through MCP. Narrow browser writes move a card or record an
+/// authenticated answer to an agent's question; README.md documents those exceptions.
 pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpServerBuilder) {
     use super::controllers::{
         auth, column_templates, documents, github, goals, kind_templates, projects, system, tasks,
@@ -17,6 +16,7 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
 
     http_server_builder.register_get_action(system::PingAction::new(app.clone()));
     http_server_builder.register_post_action(system::DiagnosticsAction::new(app.clone()));
+    http_server_builder.register_post_action(tasks::AnswerDecisionAction::new(app.clone()));
 
     http_server_builder.register_post_action(auth::GoogleAuthUrlAction::new(app.clone()));
     http_server_builder.register_post_action(auth::GoogleCallbackAction::new(app.clone()));
@@ -69,7 +69,8 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
     // and syncing are things a member of the project does — a mirror that empties on every deploy would
     // otherwise be one person's job to refill.
     http_server_builder.register_post_action(github::SetGithubConnectionAction::new(app.clone()));
-    http_server_builder.register_post_action(github::DeleteGithubConnectionAction::new(app.clone()));
+    http_server_builder
+        .register_post_action(github::DeleteGithubConnectionAction::new(app.clone()));
     http_server_builder.register_post_action(github::SetGithubKeyAction::new(app.clone()));
     http_server_builder.register_post_action(github::ListGithubConnectionsAction::new(app.clone()));
     http_server_builder.register_post_action(github::PullGithubConnectionAction::new(app.clone()));

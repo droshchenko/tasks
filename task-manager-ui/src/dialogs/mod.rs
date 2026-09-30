@@ -3,12 +3,12 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 use task_manager_shared::column_templates::ColumnTemplateResponse;
 use task_manager_shared::documents::UploadArchiveResponse;
-use task_manager_shared::kind_templates::KindTemplateResponse;
 use task_manager_shared::goals::GoalResponse;
+use task_manager_shared::kind_templates::KindTemplateResponse;
 use task_manager_shared::project_transfer::ImportProjectResponse;
-use task_manager_shared::templates_transfer::ImportTemplatesResponse;
 use task_manager_shared::projects::ProjectResponse;
 use task_manager_shared::tasks::FindTaskResponse;
+use task_manager_shared::templates_transfer::ImportTemplatesResponse;
 
 mod checklist;
 pub use checklist::*;
@@ -35,6 +35,8 @@ pub use sync_github::*;
 mod land_task;
 pub use land_task::*;
 mod md;
+mod prompt_fields;
+mod task_decisions;
 pub use md::*;
 mod message;
 pub use message::*;
@@ -550,6 +552,7 @@ pub fn RenderDialog() -> Element {
                                 &submit.id,
                                 &submit.name,
                                 &submit.description,
+                                submit.prompts,
                                 submit.kinds,
                             )
                             .await
@@ -574,6 +577,7 @@ pub fn RenderDialog() -> Element {
                                 &submit.id,
                                 &submit.name,
                                 &submit.description,
+                                submit.prompts,
                                 submit.columns,
                             )
                             .await

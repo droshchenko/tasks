@@ -160,6 +160,12 @@ pub struct TaskDto {
     // epoch" are different facts.
     #[sql_type("timestamp")]
     pub deleted_moment: Option<DateTimeAsMicroseconds>,
+    #[sql_type("jsonb")]
+    #[json]
+    pub decisions: Option<Vec<task_manager_shared::decisions::TaskDecision>>,
+    #[sql_type("jsonb")]
+    #[json]
+    pub analysis_documents: Option<Vec<String>>,
 }
 
 pub struct TasksRepo {
@@ -167,6 +173,19 @@ pub struct TasksRepo {
 }
 
 impl TasksRepo {
+    pub async fn upsert_workflow(
+        &self,
+        row: &TaskDto,
+        goals: &[super::GoalDto],
+        ctx: &MyTelemetryContext,
+    ) {
+        let sql = super::task_and_goals_statement(row, goals);
+        self.postgres
+            .with_retries(3, Duration::from_secs(1))
+            .execute_sql::<&str>(sql, Some(ctx))
+            .await
+            .expect("task workflow transaction failed");
+    }
     pub async fn new(settings_reader: Arc<SettingsReader>) -> Self {
         let postgres = MyPostgres::from_settings(APP_NAME, settings_reader)
             .with_table_schema_verification::<TaskDto>(TABLE_NAME, Some(PK_NAME.into()))

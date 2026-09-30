@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::AppContext;
 // `GhActionInput` is imported rather than named through `crate::mcp::` at the point of use: the
 // ApplyJsonSchema derive resolves a nested type's schema by its bare name, so a path there does not compile.
+use super::task_workflow::ExecutionPromptView;
 use crate::mcp::{GhActionInput, SubtaskEditInput, SubtaskInput, SubtaskOps, TaskView};
 use crate::scripts::{NewTask, TaskPatch};
 
@@ -17,6 +18,10 @@ use crate::scripts::{NewTask, TaskPatch};
 pub struct TaskWriteResponse {
     #[property(description = "The task as it now stands")]
     pub task: TaskView,
+    #[property(
+        description = "The selected column and task-type instructions for the task's updated stage, with content versions"
+    )]
+    pub execution_prompts: Vec<ExecutionPromptView>,
 }
 
 async fn read_back(app: &AppContext, handle: &str) -> Result<TaskWriteResponse, String> {
@@ -24,6 +29,15 @@ async fn read_back(app: &AppContext, handle: &str) -> Result<TaskWriteResponse, 
     let resolved = crate::scripts::resolve_task(&board, handle)?;
 
     Ok(TaskWriteResponse {
+        execution_prompts: crate::scripts::resolve_execution_prompts(
+            &board,
+            &resolved.project,
+            &resolved.task,
+            None,
+        )?
+        .into_iter()
+        .map(Into::into)
+        .collect(),
         task: TaskView::from_model(&resolved.task, &resolved.project, &board),
     })
 }
@@ -193,6 +207,14 @@ pub struct TasksUpdateInput {
     )]
     pub remove_documents: Option<Vec<String>>,
     #[property(
+        description = "Analysis files to attach after analysis, as board document or connected-repository references. These links are kept in the task history and returned to the next worker"
+    )]
+    pub add_analysis_documents: Option<Vec<String>>,
+    #[property(
+        description = "Analysis file references to detach; the historic attachment event remains"
+    )]
+    pub remove_analysis_documents: Option<Vec<String>>,
+    #[property(
         description = "Builds this task produced, to record on it: each one the `url` of its GitHub Actions run and what to call it. CALL THIS WHEN A CHANGE MADE IN THIS TASK IS BUILT — the link is how somebody months later gets from the work to what shipped from it, and nothing else in this service records that. Added to whatever the task already carries, so you need not know the current list; the same url twice is one build, not two"
     )]
     pub add_gh_actions: Option<Vec<GhActionInput>>,
@@ -285,6 +307,11 @@ impl McpToolCall<TasksUpdateInput, TaskWriteResponse> for TasksUpdateHandler {
                     remove: model.remove_gh_actions,
                 }
                 .into_patch(),
+                analysis_documents: crate::scripts::DocumentsPatch {
+                    add: model.add_analysis_documents.unwrap_or_default(),
+                    remove: model.remove_analysis_documents.unwrap_or_default(),
+                },
+                decision: crate::scripts::DecisionPatch::default(),
                 deleted: model.deleted,
                 comment: model.comment,
                 comment_by: model.comment_by,

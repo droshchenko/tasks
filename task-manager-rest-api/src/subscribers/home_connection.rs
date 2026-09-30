@@ -37,10 +37,19 @@ impl HomeConnection {
     ///
     /// Serialised by the caller, once, and handed to every watcher: a board goes out to everyone looking at
     /// it, and encoding the same tasks once per connection is work that scales with the wrong number.
-    pub async fn send_payload(&self, payload: &str) {
-        self.ws
-            .send_message(std::iter::once(WsMessage::Text(payload.to_string().into())))
-            .await;
+    pub async fn send_payload(&self, payload: &str) -> bool {
+        let sent = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.ws
+                .send_message(std::iter::once(WsMessage::Text(payload.to_string().into()))),
+        )
+        .await;
+        if sent.is_ok() {
+            return true;
+        }
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_millis(500), self.ws.disconnect()).await;
+        false
     }
 
     pub async fn send_error(&self, message: &str) {

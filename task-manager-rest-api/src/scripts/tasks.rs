@@ -34,6 +34,8 @@ pub struct TaskPatch {
     /// Which documents this task points at: ids to attach, ids to detach. Add/remove rather than a whole
     /// list, for the same reason labels are — see [`super::DocumentsPatch`].
     pub documents: super::DocumentsPatch,
+    pub analysis_documents: super::DocumentsPatch,
+    pub decision: super::DecisionPatch,
     /// Which builds came out of this task: links to attach, links to detach. Add/remove for the same reason
     /// again — see [`super::GhActionsPatch`].
     pub gh_actions: super::GhActionsPatch,
@@ -60,6 +62,8 @@ impl TaskPatch {
             && self.depends_on.is_none()
             && self.subtasks.is_empty()
             && self.documents.is_empty()
+            && self.analysis_documents.is_empty()
+            && self.decision.is_empty()
             && self.gh_actions.is_empty()
             && self.deleted.is_none()
             && self.comment.is_none()
@@ -176,6 +180,7 @@ pub struct NewTask {
 
 /// Put a new task on a board. Returns its handle.
 pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, String> {
+    let _mutation = app.task_mutations.lock().await;
     let board = app.board.read();
     let project = resolve_project_by_prefix(&board, &new_task.project_prefix)?;
 
@@ -200,7 +205,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     let subtasks = super::build_subtasks(&new_task.subtasks)?;
 
     // Validated against the project rather than accepted blindly: a goal from another board would draw the
-    // task under something nobody on this one can see, and a closed goal would gain a live task.
+    // task under something nobody on this one can see, adding work makes a completed goal active again.
     //
     // Before the reservation, with the rest of the validation — a refused goal used to burn a number,
     // which contradicted the promise made right above.
@@ -228,6 +233,9 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     let now = DateTimeAsMicroseconds::now();
 
     let task = TaskModel {
+        decisions: Vec::new(),
+        analysis_documents: Vec::new(),
+
         project_id: project.id.clone(),
         number,
         text: new_task.text.trim().to_string(),
@@ -254,14 +262,13 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
     };
 
     let ctx = MyTelemetryContext::create_empty();
-    let dto: TaskDto = (&task).into();
-    app.tasks_repo.upsert(&dto, &ctx).await;
+    super::persist_task_change(app, &board, task, &ctx).await;
 
     // The counter moved in memory when the number was reserved; persist it so a restart does not
     // hand the same number out again.
     persist_project_counter(app, &project.id, &ctx).await;
 
-    app.board.upsert_task(task);
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(crate::board::compose_task_handle(&project.prefix, number))
@@ -328,14 +335,8 @@ pub(super) fn normalise_actor(src: &str) -> String {
 /// number is unambiguous within a project, and a caller editing one task should not have to retype the
 /// prefix.
 ///
-/// Refused in three cases, each of which would otherwise create something that looks fine:
-///
-/// * a handle whose prefix belongs to another project — a task can only be part of a goal on its own board;
-/// * a number naming no goal — unlike a dependency, where an unknown number keeps the task blocked and is
-///   therefore safe, an unknown goal would simply make the task read as standalone and lose the link;
-/// * a **closed** goal. This is the second of the three doors into "a closed goal has no live tasks", and
-///   the easiest one to walk through by accident: closing a goal checks its tasks, and nothing would stop
-///   the very next call from hanging a fresh one underneath.
+/// Validates project ownership and existence. A completed goal may receive unfinished work;
+/// the shared goal projection and transition clock make it active automatically.
 fn resolve_goal(
     board: &crate::board::BoardInner,
     project: &crate::board::ProjectModel,
@@ -351,15 +352,9 @@ fn resolve_goal(
 
     let handle = crate::board::compose_goal_handle(&project.prefix, number);
 
-    let Some(found) = board.get_goal(&project.id, number) else {
+    let Some(_found) = board.get_goal(&project.id, number) else {
         return Err(format!("no goal {handle} on {}", project.prefix));
     };
-
-    if found.is_closed() {
-        return Err(format!(
-            "{handle} is closed — re-open it before putting work under it, or choose another goal"
-        ));
-    }
 
     Ok(Some(number))
 }
@@ -379,7 +374,11 @@ fn normalise_assignee(src: Option<&str>) -> Option<String> {
 ///
 /// Reads the project back out of memory first: the copy captured before `reserve_task_number` still
 /// has the old counter, and persisting that would undo the reservation.
-pub(super) async fn persist_project_counter(app: &AppContext, project_id: &str, ctx: &MyTelemetryContext) {
+pub(super) async fn persist_project_counter(
+    app: &AppContext,
+    project_id: &str,
+    ctx: &MyTelemetryContext,
+) {
     if let Some(project) = app.board.read().get_project(project_id) {
         let dto: crate::postgres::ProjectDto = project.as_ref().into();
         app.projects_repo.upsert(&dto, ctx).await;
@@ -392,6 +391,7 @@ pub async fn update_task(
     handle: &str,
     patch: TaskPatch,
 ) -> Result<String, String> {
+    let _mutation = app.task_mutations.lock().await;
     if patch.is_empty() {
         return Err(
             "nothing to update: pass at least one of text, status, priority, kind, assignee, labels, dependencies, a checklist change, a document reference, a build link or comment"
@@ -432,23 +432,7 @@ pub async fn update_task(
         task.goal_number = resolve_goal(&board, &project, Some(goal))?;
     }
 
-    // The third door into "a closed goal has no live tasks", and the only one that does not involve the
-    // goal at all: the task was done, its goal was closed on the strength of that, and now the task is
-    // being re-opened underneath it. Refused rather than silently re-opening the goal, because re-opening
-    // an epic is a decision that belongs in its thread, not a side effect of moving one sticker.
-    if project.effective_status(&task.status) != COLUMN_ID_DONE {
-        if let Some(number) = task.goal_number {
-            if let Some(goal) = board.get_goal(&project.id, number) {
-                if goal.is_closed() {
-                    return Err(format!(
-                        "{handle} is part of {}, which is closed — re-open the goal first, or detach the task from it by passing an empty `goal`",
-                        crate::board::compose_goal_handle(&project.prefix, number)
-                    ));
-                }
-            }
-        }
-    }
-
+    // Goal completion is recalculated from the task change below.
     if let Some(assignee) = &patch.assignee {
         task.assignee = normalise_assignee(Some(assignee));
     }
@@ -475,10 +459,47 @@ pub async fn update_task(
 
     // On the clone as well, and for the same reason — but this one reads Postgres to check the ids, because a
     // document is the one thing this service does not hold in memory.
+    let previous_analysis = task.analysis_documents.clone();
+    patch
+        .analysis_documents
+        .apply(app, &project.id, &mut task.analysis_documents, handle)
+        .await?;
     patch
         .documents
         .apply(app, &project.id, &mut task.documents, handle)
         .await?;
+    let added_analysis: Vec<_> = task
+        .analysis_documents
+        .iter()
+        .filter(|reference| !previous_analysis.contains(reference))
+        .cloned()
+        .collect();
+    if !added_analysis.is_empty() {
+        task.comments.push(crate::board::CommentModel {
+            moment: DateTimeAsMicroseconds::now(),
+            who: normalise_actor(patch.comment_by.as_deref().unwrap_or("AI")),
+            text: format!(
+                "**Analysis files attached**\n\n{}\n\n_Recorded by {}._",
+                added_analysis
+                    .iter()
+                    .map(|reference| format!(
+                        "- [Analysis file]({})",
+                        task_manager_shared::documents::read_document_reference(
+                            &project.prefix,
+                            reference
+                        )
+                        .url()
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                patch.comment_by.as_deref().unwrap_or("AI")
+            ),
+        });
+    }
+    patch
+        .decision
+        .apply(&mut task, DateTimeAsMicroseconds::now())?;
+    super::validate_analysis_transition(&board, &project, &resolved.task, &task)?;
 
     // On the clone too, and validated the same way — but nothing outside the call is consulted: a build link
     // is a url somebody reports, and this service never goes and looks at it.
@@ -488,6 +509,17 @@ pub async fn update_task(
 
     let comment = build_comment(patch.trimmed_comment(), patch.comment_by.as_deref())?;
     let landing = is_landing(was_done, &task.status);
+
+    if landing
+        && task
+            .decisions
+            .iter()
+            .any(|decision| decision.blocks_completion())
+    {
+        return Err(format!(
+            "{handle} still has a required human decision awaiting an answer"
+        ));
+    }
 
     if landing && comment.is_none() {
         return Err(format!(
@@ -522,11 +554,9 @@ pub async fn update_task(
     task.updated = DateTimeAsMicroseconds::now();
 
     let ctx = MyTelemetryContext::create_empty();
-    let dto: TaskDto = (&task).into();
-    app.tasks_repo.upsert(&dto, &ctx).await;
-
     let handle = crate::board::compose_task_handle(&project.prefix, task.number);
-    app.board.upsert_task(task);
+    super::persist_task_change(app, &board, task, &ctx).await;
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(handle)
@@ -543,6 +573,7 @@ pub async fn update_task(
 /// Deleting twice is not an error and does not move the moment: the caller's intent is already true, and
 /// re-stamping it would rewrite when it happened.
 pub async fn delete_task(app: &AppContext, handle: &str) -> Result<String, String> {
+    let _mutation = app.task_mutations.lock().await;
     let board = app.board.read();
     let resolved = resolve_task(&board, handle)?;
     let project = resolved.project;
@@ -554,11 +585,9 @@ pub async fn delete_task(app: &AppContext, handle: &str) -> Result<String, Strin
     }
 
     let ctx = MyTelemetryContext::create_empty();
-    let dto: TaskDto = (&task).into();
-    app.tasks_repo.upsert(&dto, &ctx).await;
-
     let handle = crate::board::compose_task_handle(&project.prefix, task.number);
-    app.board.upsert_task(task);
+    super::persist_task_change(app, &board, task, &ctx).await;
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(handle)
@@ -574,6 +603,7 @@ pub async fn add_comment(
     who: &str,
     text: &str,
 ) -> Result<String, String> {
+    let _mutation = app.task_mutations.lock().await;
     if who.trim().is_empty() {
         return Err("a comment needs an author — an email, or `AI`".to_string());
     }
@@ -599,6 +629,7 @@ pub async fn add_comment(
 
     let handle = crate::board::compose_task_handle(&project.prefix, task.number);
     app.board.upsert_task(task);
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(handle)

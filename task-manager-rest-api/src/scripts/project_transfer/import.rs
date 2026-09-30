@@ -82,6 +82,7 @@ pub async fn import_project(
     archive: &[u8],
     who: &str,
 ) -> Result<ImportOutcome, String> {
+    let _mutation = app.task_mutations.lock().await;
     if archive.len() > MAX_IMPORT_BYTES {
         return Err(format!(
             "that archive is {} bytes — the limit is {MAX_IMPORT_BYTES}",
@@ -110,7 +111,9 @@ pub async fn import_project(
     let source_prefix = project_file.project.prefix.trim().to_uppercase();
 
     if source_prefix.is_empty() {
-        return Err(format!("{PROJECT_FILE} does not say which project it came from"));
+        return Err(format!(
+            "{PROJECT_FILE} does not say which project it came from"
+        ));
     }
 
     let goals_file = archive.read_yaml_or_default::<GoalsFile>(GOALS_FILE)?;
@@ -214,6 +217,7 @@ pub async fn import_project(
 
     // One snapshot swap for the whole import, rather than one per card.
     app.board.upsert_goals_and_tasks(goals, tasks);
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(ImportOutcome {
@@ -570,6 +574,8 @@ fn build_goal(
         .ok_or_else(|| format!("'{}' has no number reserved for it", src.id))?;
 
     Ok(GoalModel {
+        auto_completed: src.auto_completed,
+
         project_id: project.id.clone(),
         number,
         name: decode_text(&src.name_base64, "a goal's name")?,
@@ -596,6 +602,15 @@ fn build_task(
     documents: &DocumentTargets,
     skipped: &mut Vec<SkippedImport>,
 ) -> Result<TaskModel, String> {
+    task_manager_shared::decisions::validate_decision_history(&src.decisions)?;
+    if src.status.trim().eq_ignore_ascii_case("done")
+        && src
+            .decisions
+            .iter()
+            .any(|decision| decision.blocks_completion())
+    {
+        return Err("a done task cannot contain an unanswered required human question".into());
+    }
     let handle = normalise_handle(&src.id);
 
     if parse_task_handle(&handle).is_none() {
@@ -612,7 +627,12 @@ fn build_task(
 
     // A goal naming something the archive does not carry leaves the task standalone rather than refusing it:
     // the work is real and the grouping is not worth losing it over. Reported, so nobody has to notice.
-    let goal_number = match src.goal.as_deref().map(str::trim).filter(|itm| !itm.is_empty()) {
+    let goal_number = match src
+        .goal
+        .as_deref()
+        .map(str::trim)
+        .filter(|itm| !itm.is_empty())
+    {
         None => None,
         Some(goal) => {
             let goal_handle = normalise_handle(goal);
@@ -660,6 +680,21 @@ fn build_task(
     }
 
     Ok(TaskModel {
+        decisions: src
+            .decisions
+            .iter()
+            .cloned()
+            .map(|mut decision| {
+                if let Some(answer) = decision.answer.as_mut() {
+                    if !answer.source.starts_with("imported:") {
+                        answer.source = format!("imported:{}", answer.source);
+                    }
+                }
+                decision
+            })
+            .collect(),
+        analysis_documents: resolve_documents(&src.analysis_documents, documents),
+
         project_id: project.id.clone(),
         number,
         text: decode_text(&src.text_base64, "a task's text")?,
@@ -812,7 +847,10 @@ async fn apply_settings(
         }
     }
 
-    if let Ok(description) = decode_text(&file.project.description_base64, "the project's description") {
+    if let Ok(description) = decode_text(
+        &file.project.description_base64,
+        "the project's description",
+    ) {
         updated.description = description.trim().to_string();
     }
 
@@ -1077,6 +1115,8 @@ mod tests {
     fn what_the_export_writes_is_what_the_import_reads() {
         let tasks = TasksFile {
             tasks: vec![TaskFileModel {
+                decisions: Vec::new(),
+                analysis_documents: Vec::new(),
                 id: "TM-42".to_string(),
                 text_base64: encode_text("Ship it:\n- properly\n"),
                 status: "review".to_string(),
@@ -1153,7 +1193,10 @@ mod tests {
         );
         assert_eq!(task.gh_actions.len(), 1);
 
-        assert_eq!(read.document_names(), vec!["documents/docs/a.md".to_string()]);
+        assert_eq!(
+            read.document_names(),
+            vec!["documents/docs/a.md".to_string()]
+        );
         assert_eq!(read.read_entry("documents/docs/a.md").unwrap(), b"# hello");
 
         // **The half that used to be missing.** The folder is keyed by path and carries no id, so without
@@ -1186,8 +1229,18 @@ mod tests {
         let archive = zip_of(&[(PROJECT_FILE, &a_project_file())]);
         let mut read = ImportArchive::open(&archive).unwrap();
 
-        assert!(read.read_yaml_or_default::<GoalsFile>(GOALS_FILE).unwrap().goals.is_empty());
-        assert!(read.read_yaml_or_default::<TasksFile>(TASKS_FILE).unwrap().tasks.is_empty());
+        assert!(
+            read.read_yaml_or_default::<GoalsFile>(GOALS_FILE)
+                .unwrap()
+                .goals
+                .is_empty()
+        );
+        assert!(
+            read.read_yaml_or_default::<TasksFile>(TASKS_FILE)
+                .unwrap()
+                .tasks
+                .is_empty()
+        );
         assert!(
             read.read_yaml_or_default::<CommentsFile>(COMMENTS_FILE)
                 .unwrap()
@@ -1249,6 +1302,8 @@ mod tests {
 
     fn a_task_file_model(id: &str) -> TaskFileModel {
         TaskFileModel {
+            decisions: Vec::new(),
+            analysis_documents: Vec::new(),
             id: id.to_string(),
             text_base64: encode_text("do the thing"),
             status: "done".to_string(),
@@ -1361,7 +1416,11 @@ mod tests {
 
         assert_eq!(task.goal_number, None);
         assert!(task.depends_on.is_empty());
-        assert_eq!(skipped.len(), 2, "the goal and the dependency, one line each");
+        assert_eq!(
+            skipped.len(),
+            2,
+            "the goal and the dependency, one line each"
+        );
         assert!(skipped.iter().all(|itm| itm.name == "TM-42"));
     }
 

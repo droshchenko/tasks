@@ -32,6 +32,8 @@ pub struct ColumnTemplateResponse {
     pub description: String,
     pub columns: Vec<ColumnTemplateColumn>,
     pub used_by: i32,
+    #[serde(default)]
+    pub prompts: Vec<crate::execution_prompts::ExecutionPrompt>,
 }
 
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
@@ -57,6 +59,8 @@ pub struct SaveColumnTemplateInputModel {
     pub description: String,
     #[http_body(name: "columns", description: "The complete list of columns between Todo and Done")]
     pub columns: Vec<ColumnTemplateColumn>,
+    #[http_body(name: "prompts", description: "Execution prompts mapped to column or task-type IDs; omitted preserves existing prompts")]
+    pub prompts: Option<Vec<crate::execution_prompts::ExecutionPrompt>>,
 }
 
 // Refused while any project still points at the template: a project whose template vanished would

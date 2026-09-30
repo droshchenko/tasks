@@ -27,6 +27,7 @@ pub struct ColumnTemplateModel {
     pub description: String,
     pub columns: Vec<ColumnModel>,
     pub created: DateTimeAsMicroseconds,
+    pub prompts: Vec<task_manager_shared::execution_prompts::ExecutionPrompt>,
 }
 
 /// A named set of task types, shared by any number of projects.
@@ -40,6 +41,7 @@ pub struct KindTemplateModel {
     pub description: String,
     pub kinds: Vec<KindModel>,
     pub created: DateTimeAsMicroseconds,
+    pub prompts: Vec<task_manager_shared::execution_prompts::ExecutionPrompt>,
 }
 
 /// One kind of work, in memory. Unlike a column id, a kind is optional on a task.
@@ -206,9 +208,7 @@ impl ProjectModel {
     /// leniency is on the read side on purpose — writes validate — so one bad row cannot empty a board.
     pub fn archive_after(&self) -> std::time::Duration {
         match self.archive_days {
-            Some(days) if days > 0 => {
-                std::time::Duration::from_secs(days as u64 * 24 * 60 * 60)
-            }
+            Some(days) if days > 0 => std::time::Duration::from_secs(days as u64 * 24 * 60 * 60),
             _ => super::ARCHIVE_AFTER,
         }
     }
@@ -224,12 +224,8 @@ impl ProjectModel {
 /// It does not list its tasks: a task carries the goal's number. That direction is also the one every
 /// read wants, since a task is drawn far more often than a goal is listed.
 ///
-/// **There is no `status` field, and that is the point.** A goal has exactly two states in this version,
-/// and `close_moment` already tells them apart — storing a status beside it would let the two disagree
-/// (`done` with no moment reads as never closed; a moment with `todo` reads as archived while open), and
-/// a goal that is closed according to one field and open according to the other is a bug nobody sees
-/// until a screen goes blank. The wire still reports `status`; it is derived. When the second iteration
-/// gives a goal real columns, the field arrives then and pays for itself.
+/// Goal state is derived from its tasks by BoardInner::goal_state. The stored clock
+/// records when a transition occurred, independently of the state and task counters.
 #[derive(Debug, Clone)]
 pub struct GoalModel {
     pub project_id: String,
@@ -256,7 +252,7 @@ pub struct GoalModel {
     pub created: DateTimeAsMicroseconds,
     // Moved by a change to the goal itself. A comment does NOT move it, as on a task.
     pub updated: DateTimeAsMicroseconds,
-    // When the goal was closed, and `None` while it is open — which makes this the whole of its state.
+    // When the goal was closed, and `None` while it is open — used by the derived state for archive timing.
     // Cleared on re-opening, so a re-closed goal is dated by its latest close.
     pub close_moment: Option<DateTimeAsMicroseconds>,
     // When it was deleted, and `None` for one that is not.
@@ -265,10 +261,11 @@ pub struct GoalModel {
     // because it should never have existed, which is a different statement from how it went; closing is the
     // statement about how it went, and it demands a resolution for exactly that reason.
     pub deleted_moment: Option<DateTimeAsMicroseconds>,
+    pub auto_completed: bool,
 }
 
 impl GoalModel {
-    /// Whether the goal is closed. The only state question there is — see the note on the struct.
+    /// Whether a closure time has been recorded — see the note on the struct.
     pub fn is_closed(&self) -> bool {
         self.close_moment.is_some()
     }
@@ -407,6 +404,8 @@ pub struct TaskModel {
     // its id — which is the one moment anybody wants a deleted task, and the moment a hard delete had nothing
     // to say.
     pub deleted_moment: Option<DateTimeAsMicroseconds>,
+    pub decisions: Vec<task_manager_shared::decisions::TaskDecision>,
+    pub analysis_documents: Vec<String>,
 }
 
 impl TaskModel {

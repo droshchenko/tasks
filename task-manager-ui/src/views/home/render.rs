@@ -1036,12 +1036,10 @@ fn RenderSticker(
 
     // Unknown colour falls back to the default swatch rather than to nothing, so a goal coloured by a build
     // that knew one more swatch still draws a band.
-    let goal_hex = KindColor::parse_or_default(task.goal_color.as_deref().unwrap_or_default()).hex();
+    let goal_hex =
+        KindColor::parse_or_default(task.goal_color.as_deref().unwrap_or_default()).hex();
 
-    let goal_title = task
-        .goal_name
-        .clone()
-        .unwrap_or_else(|| "Goal".to_string());
+    let goal_title = task.goal_name.clone().unwrap_or_else(|| "Goal".to_string());
 
     // Built here rather than fetched: this side already holds the whole task and the project it is on, so
     // the card opens instantly and without a round trip. `archived` is false by definition — a card that is
@@ -1266,8 +1264,17 @@ fn handles(ids: &[String]) -> String {
 mod tests {
     use super::*;
 
-    pub(super) fn task(id: &str, text: &str, labels: &[&str], assignee: Option<&str>) -> TaskResponse {
+    pub(super) fn task(
+        id: &str,
+        text: &str,
+        labels: &[&str],
+        assignee: Option<&str>,
+    ) -> TaskResponse {
         TaskResponse {
+            execution_prompts: Vec::new(),
+            decisions: Vec::new(),
+            analysis_documents: Vec::new(),
+
             id: id.to_string(),
             project: "P".to_string(),
             text: text.to_string(),
@@ -1320,11 +1327,20 @@ mod tests {
 
         assert!(!archived(&fresh, None));
         assert!(archived(&old_news, None));
-        assert!(!archived(&open, None), "open work never archives, however old");
+        assert!(
+            !archived(&open, None),
+            "open work never archives, however old"
+        );
 
         // And the window is the project's: two days hides what the default would still be drawing.
-        assert!(archived(&fresh, Some(2)) == false, "a minute is inside two days");
-        assert!(archived(&old_news, Some(60)) == false, "thirty days is inside sixty");
+        assert!(
+            archived(&fresh, Some(2)) == false,
+            "a minute is inside two days"
+        );
+        assert!(
+            archived(&old_news, Some(60)) == false,
+            "thirty days is inside sixty"
+        );
     }
 
     /// Which of the two things the box does is decided here, so the shapes are worth pinning.
@@ -1652,13 +1668,7 @@ mod tests {
         loose_one.goal = None;
         loose_two.goal = None;
 
-        let mut column = vec![
-            &loose_one,
-            &under_a,
-            &loose_two,
-            &under_b,
-            &under_a_again,
-        ];
+        let mut column = vec![&loose_one, &under_a, &loose_two, &under_b, &under_a_again];
 
         board_order(&mut column);
 
@@ -1666,13 +1676,7 @@ mod tests {
 
         assert_eq!(
             ids,
-            vec![
-                "RMS-2",
-                "RMS-5",
-                "RMS-4",
-                "RMS-1",
-                "RMS-3",
-            ],
+            vec!["RMS-2", "RMS-5", "RMS-4", "RMS-1", "RMS-3",],
             "both cards of RMS-G10 first and in board order, then RMS-G20, then the loose pile in board order"
         );
     }

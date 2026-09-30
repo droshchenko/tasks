@@ -45,6 +45,7 @@ async fn handle_request(
         &input_data.name,
         &input_data.description,
         &input_data.columns,
+        input_data.prompts.as_deref(),
     )
     .await
     .map_err(bad_request)?;

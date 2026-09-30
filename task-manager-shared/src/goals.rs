@@ -12,8 +12,9 @@ use crate::tasks::TaskCommentResponse;
 // same per-project counter task numbers come from, so no number names both a task and a goal, and the `G`
 // says which of the two you are holding.
 //
-// `status` is derived from whether the goal is closed, not stored, so it cannot disagree with
-// `closed_unix_seconds`. Progress is `done_amount` out of `tasks_amount`, also derived on every read, and
+// `status` is derived by the server from the tasks: todo, in-progress or done. Completion
+// time is tracked separately so removing a blocker cannot backdate a new completion.
+// Progress is `done_amount` out of `tasks_amount`, also derived on every read, and
 // it counts ARCHIVED tasks too: a goal can only be closed once all its tasks are done, and by then the
 // oldest of them have aged off the board — a count that skipped those would report finished work as
 // half-done. Which is why the Goals screen must not recompute these numbers from the tasks it holds.

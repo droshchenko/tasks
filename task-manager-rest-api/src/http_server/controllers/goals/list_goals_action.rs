@@ -38,7 +38,8 @@ async fn handle_request(
     ctx: &HttpContext,
 ) -> Result<HttpOkResult, HttpFailResult> {
     // Prefix in, project out, access already established — see `require_project_by_prefix`.
-    let project = crate::auth::require_project_by_prefix(&action.app, ctx, &input_data.project).await?;
+    let project =
+        crate::auth::require_project_by_prefix(&action.app, ctx, &input_data.project).await?;
 
     let board = action.app.board.read();
 
@@ -50,7 +51,7 @@ async fn handle_request(
         .filter(|goal| include_archived || !board.is_goal_archived(goal))
         .map(|goal| {
             let (tasks_amount, done_amount) = board.goal_progress(&goal.project_id, goal.number);
-            goal_to_response(goal, &project.prefix, tasks_amount, done_amount)
+            goal_to_response(goal, &project.prefix, tasks_amount, done_amount, &board)
         })
         .collect();
 

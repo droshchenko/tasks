@@ -27,8 +27,10 @@ use crate::app::AppContext;
 use crate::board::{ColumnModel, ColumnTemplateModel, KindModel, KindTemplateModel};
 use crate::postgres::{ColumnTemplateDto, KindTemplateDto};
 
-use super::transfer_encoding::{decode_moment, decode_text, encode_moment, encode_text, file_name_date};
 use super::SkippedImport;
+use super::transfer_encoding::{
+    decode_moment, decode_text, encode_moment, encode_text, file_name_date,
+};
 
 /// What the file says it is.
 ///
@@ -72,6 +74,8 @@ pub struct ColumnTemplateFileModel {
     pub columns: Vec<ColumnFileModel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<Vec<task_manager_shared::execution_prompts::ExecutionPrompt>>,
 }
 
 /// One column. Todo and Done are not here — they exist in every project by definition.
@@ -95,6 +99,8 @@ pub struct KindTemplateFileModel {
     pub kinds: Vec<KindFileModel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<Vec<task_manager_shared::execution_prompts::ExecutionPrompt>>,
 }
 
 /// One task type. `color` is a palette name and `icon` a file name in the UI bundle — both open
@@ -129,6 +135,7 @@ pub fn export_templates(app: &AppContext) -> ExportedTemplates {
         .get_column_templates()
         .iter()
         .map(|template| ColumnTemplateFileModel {
+            prompts: Some(template.prompts.clone()),
             id: template.id.clone(),
             name_base64: encode_text(&template.name),
             description_base64: encode_text(&template.description),
@@ -152,6 +159,7 @@ pub fn export_templates(app: &AppContext) -> ExportedTemplates {
         .get_kind_templates()
         .iter()
         .map(|template| KindTemplateFileModel {
+            prompts: Some(template.prompts.clone()),
             id: template.id.clone(),
             name_base64: encode_text(&template.name),
             description_base64: encode_text(&template.description),
@@ -233,7 +241,9 @@ pub async fn import_templates(
 
     if file.format != FORMAT {
         return Err(if file.format.trim().is_empty() {
-            format!("that file does not say what it is — a templates export starts with `format: {FORMAT}`")
+            format!(
+                "that file does not say what it is — a templates export starts with `format: {FORMAT}`"
+            )
         } else {
             format!(
                 "this file says it is '{}', and this build reads '{FORMAT}'",
@@ -413,8 +423,23 @@ fn build_column_template(
         },
     };
 
+    let mut targets = vec!["todo", "done"];
+    targets.extend(columns.iter().map(|item| item.id.as_str()));
+    let preserved: Vec<_> = existing
+        .as_ref()
+        .map(|template| template.prompts.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|prompt| targets.contains(&prompt.target.as_str()))
+        .collect();
+    let prompts = task_manager_shared::execution_prompts::validate_prompts(
+        src.prompts.as_deref().unwrap_or(&preserved),
+        &targets,
+    )?;
     Ok((
         ColumnTemplateModel {
+            prompts,
+
             id,
             name: name.trim().to_string(),
             description: decode_text(&src.description_base64, "a template description")?
@@ -484,8 +509,23 @@ fn build_kind_template(
         },
     };
 
+    let mut targets = Vec::new();
+    targets.extend(kinds.iter().map(|item| item.id.as_str()));
+    let preserved: Vec<_> = existing
+        .as_ref()
+        .map(|template| template.prompts.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|prompt| targets.contains(&prompt.target.as_str()))
+        .collect();
+    let prompts = task_manager_shared::execution_prompts::validate_prompts(
+        src.prompts.as_deref().unwrap_or(&preserved),
+        &targets,
+    )?;
     Ok((
         KindTemplateModel {
+            prompts,
+
             id,
             name: name.trim().to_string(),
             description: decode_text(&src.description_base64, "a template description")?
@@ -507,7 +547,10 @@ fn template_id(src: &str, seen: &mut BTreeSet<String>) -> Result<String, String>
     let id = src.trim().to_lowercase();
 
     if id.is_empty() {
-        return Err("a template in this file has no id — an id is what says which template it is".to_string());
+        return Err(
+            "a template in this file has no id — an id is what says which template it is"
+                .to_string(),
+        );
     }
 
     if id.len() > 64 {
@@ -524,7 +567,9 @@ fn template_id(src: &str, seen: &mut BTreeSet<String>) -> Result<String, String>
     }
 
     if !seen.insert(id.clone()) {
-        return Err(format!("'{id}' is in this file more than once — an id names one template"));
+        return Err(format!(
+            "'{id}' is in this file more than once — an id names one template"
+        ));
     }
 
     Ok(id)
@@ -561,7 +606,10 @@ mod tests {
         let mut seen = BTreeSet::new();
 
         assert_eq!(template_id("  Default ", &mut seen).unwrap(), "default");
-        assert_eq!(template_id("with-dash_1", &mut seen).unwrap(), "with-dash_1");
+        assert_eq!(
+            template_id("with-dash_1", &mut seen).unwrap(),
+            "with-dash_1"
+        );
 
         // Said twice, in either spelling.
         assert!(template_id("DEFAULT", &mut seen).is_err());
@@ -599,6 +647,7 @@ mod tests {
             format: FORMAT.to_string(),
             exported: "2026-08-06T09:00:00.000000Z".to_string(),
             column_templates: vec![ColumnTemplateFileModel {
+                prompts: None,
                 id: "default".to_string(),
                 name_base64: encode_text("Default"),
                 description_base64: encode_text("The usual board:\n  with a colon"),
@@ -611,6 +660,7 @@ mod tests {
                 created: Some("2026-01-01T00:00:00.000000Z".to_string()),
             }],
             kind_templates: vec![KindTemplateFileModel {
+                prompts: None,
                 id: "work".to_string(),
                 name_base64: encode_text("Work"),
                 description_base64: encode_text(""),

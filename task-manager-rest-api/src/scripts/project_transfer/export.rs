@@ -49,7 +49,10 @@ pub struct ExportedFile {
 /// on disk, mirrored from a repository that is still there — they are not this project's to carry, and the
 /// receiving board gets them by connecting the same repository. They are not in the documents index, so
 /// nothing here has to exclude them; the check below is a backstop, not a filter.
-pub async fn export_project(app: &AppContext, project_prefix: &str) -> Result<ExportedFile, String> {
+pub async fn export_project(
+    app: &AppContext,
+    project_prefix: &str,
+) -> Result<ExportedFile, String> {
     // Everything read off the board happens here, in one block: `parking_lot`'s guard is `!Send`, so a read
     // held across the awaits below would not compile — which is the compiler enforcing what we want anyway.
     let (project, goals, tasks) = {
@@ -61,7 +64,14 @@ pub async fn export_project(app: &AppContext, project_prefix: &str) -> Result<Ex
         let mut goals: Vec<GoalModel> = board
             .goals_of_project_including_deleted(&project.id)
             .iter()
-            .map(|itm| itm.as_ref().clone())
+            .map(|itm| {
+                let mut goal = itm.as_ref().clone();
+                let closed = board.goal_state(&goal).1;
+                goal.auto_completed =
+                    goal.auto_completed || (closed.is_some() && goal.close_moment.is_none());
+                goal.close_moment = closed;
+                goal
+            })
             .collect();
 
         goals.sort_by_key(|itm| itm.number);
@@ -343,6 +353,8 @@ fn comments_file(project: &ProjectModel, goals: &[GoalModel], tasks: &[TaskModel
 
 fn goal_to_file(project: &ProjectModel, goal: &GoalModel) -> GoalFileModel {
     GoalFileModel {
+        auto_completed: goal.auto_completed,
+
         id: compose_goal_handle(&project.prefix, goal.number),
         name_base64: encode_text(&goal.name),
         description_base64: encode_text(&goal.description),
@@ -359,6 +371,8 @@ fn goal_to_file(project: &ProjectModel, goal: &GoalModel) -> GoalFileModel {
 
 fn task_to_file(project: &ProjectModel, task: &TaskModel) -> TaskFileModel {
     TaskFileModel {
+        decisions: task.decisions.clone(),
+        analysis_documents: task.analysis_documents.clone(),
         id: compose_task_handle(&project.prefix, task.number),
         text_base64: encode_text(&task.text),
         // The STORED status, not the effective one: a task parked in a column the project's template no

@@ -1490,6 +1490,20 @@ button.task-view-check-row:hover {
   opacity: 0.85;
   flex-shrink: 0;
 }
+/* Workflow extensions use the existing form, tag and dialog tokens. */
+.execution-prompt-editor, .task-execution-prompts {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.execution-prompt-editor summary, .task-execution-prompts summary { cursor: pointer; font-weight: 600; }
+.task-execution-prompts pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-decision-card { border: 1px solid var(--border); border-radius: 6px; padding: 14px; margin: 12px 0; }
+.task-decision-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.task-decision-card textarea, .task-decision-card select { width: 100%; margin: 6px 0 12px; }
+.task-decision-card p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-decision-answer { padding: 10px; background: var(--surface); border-left: 3px solid var(--accent); }
 
 /* The Goals screen: the same work as the board, grouped by the epic it belongs to.
    Rows rather than cards on purpose — what this screen is for is the shape of a goal, and twenty cards per

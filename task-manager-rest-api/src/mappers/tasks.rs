@@ -7,9 +7,7 @@ use crate::board::{
     BoardInner, CommentModel, GhActionModel, ProjectModel, SubtaskModel, TaskModel,
     compose_task_handle, parse_task_handle,
 };
-use crate::postgres::{
-    TaskCommentJsonModel, TaskDto, TaskGhActionJsonModel, TaskSubtaskJsonModel,
-};
+use crate::postgres::{TaskCommentJsonModel, TaskDto, TaskGhActionJsonModel, TaskSubtaskJsonModel};
 
 impl From<&TaskCommentJsonModel> for CommentModel {
     fn from(src: &TaskCommentJsonModel) -> Self {
@@ -93,6 +91,8 @@ pub fn subtasks_to_response(src: &[SubtaskModel]) -> Vec<SubtaskResponse> {
 impl From<&TaskDto> for TaskModel {
     fn from(src: &TaskDto) -> Self {
         Self {
+            decisions: src.decisions.clone().unwrap_or_default(),
+            analysis_documents: src.analysis_documents.clone().unwrap_or_default(),
             project_id: src.project_id.clone(),
             number: src.number,
             text: src.task_text.clone(),
@@ -138,6 +138,8 @@ impl From<&TaskDto> for TaskModel {
 impl From<&TaskModel> for TaskDto {
     fn from(src: &TaskModel) -> Self {
         Self {
+            decisions: Some(src.decisions.clone()),
+            analysis_documents: Some(src.analysis_documents.clone()),
             project_id: src.project_id.clone(),
             number: src.number,
             task_text: src.text.clone(),
@@ -192,6 +194,10 @@ pub fn task_to_response(
     let blocks = board.blocks(&task.project_id, task.number);
 
     TaskResponse {
+        execution_prompts: crate::scripts::resolve_execution_prompts(board, project, task, None)
+            .unwrap_or_default(),
+        decisions: task.decisions.clone(),
+        analysis_documents: task.analysis_documents.clone(),
         id: compose_task_handle(&project.prefix, task.number),
         project: project.prefix.clone(),
         text: task.text.clone(),

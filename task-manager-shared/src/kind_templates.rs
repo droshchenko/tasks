@@ -38,6 +38,8 @@ pub struct KindTemplateResponse {
     pub description: String,
     pub kinds: Vec<KindTemplateKind>,
     pub used_by: i32,
+    #[serde(default)]
+    pub prompts: Vec<crate::execution_prompts::ExecutionPrompt>,
 }
 
 #[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
@@ -62,6 +64,8 @@ pub struct SaveKindTemplateInputModel {
     pub description: String,
     #[http_body(name: "kinds", description: "The complete list of task types")]
     pub kinds: Vec<KindTemplateKind>,
+    #[http_body(name: "prompts", description: "Execution prompts mapped to column or task-type IDs; omitted preserves existing prompts")]
+    pub prompts: Option<Vec<crate::execution_prompts::ExecutionPrompt>>,
 }
 
 // Refused while any project still points at the template. Unlike a column, a task type vanishing is not
