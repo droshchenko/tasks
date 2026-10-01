@@ -24,6 +24,7 @@ fn main() {
         .add_file("09-markdown.css")
         .add_file("10-documents.css")
         .add_file("11-workflow.css")
+        .add_file("12-ai-settings.css")
         .compile("./public/assets/app.css");
 
     generate_task_icons_list();

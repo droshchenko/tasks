@@ -33,6 +33,10 @@ pub struct AppContext {
     pub tasks_repo: TasksRepo,
     pub semantic_repo: crate::postgres::SemanticRepo,
     pub semantic_index: crate::intelligence::semantic::SemanticIndex,
+    pub settings_repo: crate::postgres::AppSettingsRepo,
+    pub configuration: crate::intelligence::settings::Configuration,
+    pub index_jobs: crate::intelligence::jobs::IndexJobs,
+    pub knowledge: crate::intelligence::knowledge::KnowledgeCache,
     pub semantic_jobs: tokio::sync::Mutex<()>,
     pub evaluation_jobs: tokio::sync::Mutex<()>,
     pub users_repo: UsersRepo,
@@ -113,6 +117,19 @@ impl AppContext {
         }
 
         let session_key = AesKey::new(session_encryption_key.as_bytes());
+        let settings_repo = crate::postgres::AppSettingsRepo::new(settings_reader.clone()).await;
+        let saved_settings = settings_repo
+            .get_all()
+            .await
+            .expect("application settings must load before serving");
+        let (knowledge_rows, saved_settings) = saved_settings.into_iter().partition(|row| {
+            row.id.starts_with("knowledge-snapshot:") || row.id.starts_with("graph-upload:")
+        });
+        let configuration = crate::intelligence::settings::Configuration::new(
+            &session_encryption_key,
+            saved_settings,
+        );
+        let knowledge = crate::intelligence::knowledge::KnowledgeCache::restore(knowledge_rows);
 
         // Trailing slashes trimmed here rather than at every join: this is pasted into a settings file by
         // a person, and `/root/git-repos/` and `/root/git-repos` must not produce two different roots.
@@ -139,6 +156,10 @@ impl AppContext {
             tasks_repo: TasksRepo::new(settings_reader.clone()).await,
             semantic_repo: crate::postgres::SemanticRepo::new(settings_reader.clone()).await,
             semantic_index: Default::default(),
+            settings_repo,
+            configuration,
+            index_jobs: Default::default(),
+            knowledge,
             semantic_jobs: tokio::sync::Mutex::new(()),
             evaluation_jobs: tokio::sync::Mutex::new(()),
             users_repo: UsersRepo::new(settings_reader.clone()).await,

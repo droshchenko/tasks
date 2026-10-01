@@ -1,5 +1,6 @@
 use super::TaskView;
 use crate::app::AppContext;
+use crate::intelligence::semantic::KnowledgeContextHit;
 use crate::scripts::{DecisionPatch, TaskPatch};
 use mcp_server_middleware::*;
 use serde::{Deserialize, Serialize};
@@ -145,6 +146,12 @@ pub struct TaskWorkflowResponse {
     pub decisions: Vec<DecisionView>,
     #[property(description = "The decision created or resolved by this call, when applicable")]
     pub requested_decision_id: Option<String>,
+    #[property(
+        description = "Bounded project wiki and Graphify evidence relevant to this task, with source references"
+    )]
+    pub knowledge: Vec<KnowledgeContextHit>,
+    #[property(description = "Project knowledge availability and source freshness")]
+    pub knowledge_notice: String,
 }
 fn read_context(
     app: &AppContext,
@@ -154,6 +161,18 @@ fn read_context(
 ) -> Result<TaskWorkflowResponse, String> {
     let board = app.board.read();
     let resolved = crate::scripts::resolve_task(&board, id)?;
+    let knowledge = crate::intelligence::knowledge::search_project(
+        app,
+        &resolved.project,
+        &crate::intelligence::semantic::clip(&resolved.task.text, 4096),
+        5,
+    )
+    .unwrap_or_else(
+        |notice| task_manager_shared::ai_settings::KnowledgePreviewResponse {
+            hits: vec![],
+            notice,
+        },
+    );
     let prompts = crate::scripts::resolve_execution_prompts(
         &board,
         &resolved.project,
@@ -165,6 +184,8 @@ fn read_context(
         execution_prompts: prompts.into_iter().map(Into::into).collect(),
         decisions: resolved.task.decisions.iter().map(Into::into).collect(),
         requested_decision_id: selected,
+        knowledge: knowledge.hits.into_iter().map(Into::into).collect(),
+        knowledge_notice: knowledge.notice,
     })
 }
 

@@ -37,6 +37,7 @@ async fn main() {
     // repository that is slow to answer must not hold up the port opening. Every mirror starts empty and
     // fills within a few seconds of the service being up.
     github::run_puller(app.clone());
+    intelligence::knowledge::run_refresher(app.clone());
 
     // Three surfaces on one HTTP server, in one process, over one copy of the state:
     //   /api/*  — reads for the UI and the configuration CRUD

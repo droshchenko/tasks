@@ -267,6 +267,16 @@ state and the last snapshot time. Delivery is ordered with regular board updates
 Both integrations run directly in this backend. They are optional: ordinary task operations and local
 text search need neither an embeddings provider nor a Jev key.
 
+Administrators configure both providers at **Settings → AI providers** (`/settings/ai-providers`).
+Save the embeddings endpoint/model and optional bearer key, or the Jev model and TypeSafe key, then
+use **Test connection**. The test uses synthetic input and can incur a provider charge; it creates no
+task review or comment. Saving takes effect immediately without a deployment. A blank key field keeps
+the saved key; **Remove saved key on save** is explicit. Changing an endpoint requires replacing or
+removing its credential. Concurrent edits are rejected by their settings revision.
+
+The environment values below are initial defaults. Once a provider is saved in Settings, the saved
+configuration takes precedence, including an explicit disable or credential removal.
+
 | Server environment | Meaning |
 |---|---|
 | `TASKS_EMBEDDINGS_URL` | Full HTTP(S) embeddings endpoint. Omit to use text search only. |
@@ -275,7 +285,11 @@ text search need neither an embeddings provider nor a Jev key.
 | `TASKS_JEV_API_KEY` | TypeSafe credential. Omit to disable new Jev evaluations. |
 | `TASKS_JEV_MODEL` | Direct TypeSafe model/version; defaults to `jev-latest`. The actual returned version is recorded. |
 
-Credentials stay in the server environment and never enter tool arguments, UI responses or receipts.
+Saved credentials are encrypted with AES-256-GCM in PostgreSQL `app_settings`, using a domain-separated
+key derived from the existing server session secret. Preserve that secret with private deployment
+backups; rotating it requires re-entering saved provider credentials. Settings reads return only key
+presence, never the credential or ciphertext. Credentials never enter MCP arguments, board snapshots,
+project/template exports or review receipts. The Settings API requires an authenticated administrator.
 The embeddings adapter posts `{model, input: [...], encoding_format: "float"}` and requires a response
 with a model identity and indexed `data` entries containing numeric embeddings. Requests have a 25-second
 deadline and no hidden inference retries. Only explicit indexing, search or review calls contact a
@@ -284,7 +298,8 @@ provider. Use the existing `tasks_search` for exhaustive local literal/regex sea
 - `tasks_index_semantic`: index up to 16 task snapshots per call. Repeat until `remaining` is zero;
   with `force`, pass the returned `next_after` as `after_number`. A changed task is skipped and retried.
 - `tasks_search_context`: project-scoped exact-ID, text and vector retrieval with explicit `text`/
-  `hybrid` mode and fallback notices. Results include analysis-file references. Similarity never creates
+  `hybrid` mode and fallback notices. Results include analysis-file references and separately identified
+  project knowledge evidence when configured. Similarity never creates
   a dependency, marks a duplicate or changes a task.
 - `tasks_review`: ask Jev for configured task type (Choice), urgency on five defined levels (Score),
   missing material input (Noul), and a possible duplicate among up to five current same-project vector
@@ -298,6 +313,42 @@ hashes, model identities and dimensions are checked before ranking; deleted task
 cannot participate. At the current board scale, exact cosine comparison avoids an extension or another
 service. A later ANN/pgvector implementation can preserve the MCP contract. Embedding inputs are bounded
 excerpts of task text, recent comments and recorded human decisions; attached file contents are not indexed.
+
+**Settings → Knowledge & indexing** (`/settings/knowledge`) selects a project and shows its task-vector
+coverage. **Start indexing** processes bounded batches in the background and reports progress and
+errors. **Cancel indexing** stops at a request boundary and keeps saved vectors. **Rebuild all vectors**
+is available when the actual version behind a model alias changes. Jobs are process-local; after a
+restart, saved vectors remain and starting indexing resumes the missing/currently stale snapshots.
+
+### Project wiki and Graphify sources
+
+The same Settings page configures each project's sources independently:
+
+- Select one of that project's existing repository connections. Wiki paths are relative to the
+  connection's configured folder, which the form displays. Add Markdown/text folders or individual files.
+- Choose a Graphify JSON file in the connected checkout, or **Uploaded JSON export** and upload `graph.json`.
+  Graphify exports require `nodes`, `links` (or `edges`) and a full `built_at_commit`; nullable source
+  locations and virtual Node.js built-ins are supported. The parser was checked against an actual
+  27,912-node / 70,435-link Graphify export. Importing data never executes code from the repository.
+- Save and **Refresh sources**. Automatic refresh checks every minute for changes in the local
+  connected repository; the existing repository refresh process controls when remote commits arrive.
+- **Preview context** shows retrieved passages/symbols and links to the source documents before using
+  them with agents. Status, source commit, graph commit, document/symbol counts and errors are visible.
+
+`tasks_prepare`, `tasks_search_context`, and Jev requests receive bounded cited knowledge from the task's
+own project. Wiki and graph retrieval is text/symbol based and works independently of embeddings.
+Stale settings, changed repository identities, missing indexes and graphs from a different commit are
+reported; stale evidence is excluded. Retrieved text is evidence, not authorization or agent instructions.
+Repository branch changes also invalidate the index. Refresh verifies the checkout's repository and
+branch/tag, and rejects a connected folder that resolves outside the cloned repository.
+Jev's request fingerprint includes the knowledge actually supplied, so changed evidence invalidates a
+pending evaluation. Knowledge caches and provider configuration are excluded from project exports.
+
+Wiki indexing is bounded to 3,000 files, 128 KiB per file and 24 MiB of text per project. Skipped files
+are reported. Graph imports accept up to 64 MiB, 100,000 nodes and 300,000 links. Absolute paths,
+traversal, `.git` metadata and source symlinks escaping the connected repository are refused. If a graph
+is built locally into an ignored cache folder, upload its export rather than expecting the Git clone
+on the server to contain it. A stale graph needs a fresh export; Settings does not run Graphify itself.
 
 Jev uses [TypeSafe's typed HTTP API](https://docs.typesafe.ai/api), not a chat completion. Probabilities,
 confidence and urgency scores remain distinct. The backend rejects undeclared choices, malformed

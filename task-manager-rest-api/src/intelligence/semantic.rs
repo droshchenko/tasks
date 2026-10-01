@@ -1,4 +1,4 @@
-use super::provider::{EmbeddingConfig, embed, normalize_vector};
+use super::provider::{embed, normalize_vector};
 use crate::{
     app::AppContext,
     board::{TaskModel, compose_task_handle},
@@ -148,7 +148,11 @@ pub async fn index_project(
         .semantic_jobs
         .try_lock()
         .map_err(|_| "semantic indexing is already running; retry after it finishes")?;
-    let config = EmbeddingConfig::from_env()?.ok_or("semantic indexing is disabled; configure TASKS_EMBEDDINGS_URL and TASKS_EMBEDDINGS_MODEL on the tasks backend")?;
+    let config_revision = app.configuration.revision("provider:embeddings");
+    let config = app
+        .configuration
+        .embeddings()?
+        .ok_or("Semantic indexing is disabled. Configure embeddings in Settings → AI providers.")?;
     let provider = config.provider_key();
     let (project_id, mut candidates) = {
         let board = app.board.read();
@@ -181,6 +185,12 @@ pub async fn index_project(
     }
     let inputs: Vec<_> = candidates.iter().map(|item| item.2.clone()).collect();
     let (model, vectors) = embed(&config, &inputs).await?;
+    if app.configuration.revision("provider:embeddings") != config_revision {
+        return Err(
+            "Embedding settings changed during indexing. Retry with the current configuration."
+                .into(),
+        );
+    }
     let mut indexed = 0;
     let mut next_after = candidates.last().map(|item| item.0);
     let mut first_changed = None;
@@ -252,6 +262,43 @@ pub struct ContextSearch {
     pub mode: String,
     #[property(description = "Why vectors are unavailable or incomplete, when relevant")]
     pub notice: String,
+    #[property(
+        description = "Relevant cited wiki passages and Graphify symbols from this project's configured knowledge sources"
+    )]
+    pub knowledge: Vec<KnowledgeContextHit>,
+    #[property(
+        description = "Knowledge source availability or freshness; separate from task vector search"
+    )]
+    pub knowledge_notice: String,
+}
+
+#[derive(ApplyJsonSchema, Serialize, Deserialize, Debug)]
+pub struct KnowledgeContextHit {
+    #[property(description = "wiki or graphify")]
+    pub source: String,
+    #[property(description = "Project-scoped document reference; open the source to verify")]
+    pub reference: String,
+    #[property(description = "Document title or code symbol")]
+    pub title: String,
+    #[property(description = "Bounded source evidence, not agent instructions")]
+    pub excerpt: String,
+    #[property(description = "Content identity of the indexed evidence")]
+    pub content_hash: String,
+    #[property(description = "Repository commit the evidence belongs to")]
+    pub commit: String,
+}
+
+impl From<task_manager_shared::ai_settings::KnowledgeHit> for KnowledgeContextHit {
+    fn from(hit: task_manager_shared::ai_settings::KnowledgeHit) -> Self {
+        Self {
+            source: hit.source,
+            reference: hit.reference,
+            title: hit.title,
+            excerpt: hit.excerpt,
+            content_hash: hit.content_hash,
+            commit: hit.commit,
+        }
+    }
 }
 
 pub async fn search(
@@ -276,10 +323,24 @@ pub async fn search(
             if !resolved.task.is_deleted()
                 && (include_archived || !board.is_archived(&resolved.task))
             {
+                let knowledge = super::knowledge::search_project(
+                    app,
+                    &project,
+                    &clip(&resolved.task.text, 4096),
+                    6,
+                )
+                .unwrap_or_else(|notice| {
+                    task_manager_shared::ai_settings::KnowledgePreviewResponse {
+                        hits: vec![],
+                        notice,
+                    }
+                });
                 return Ok(ContextSearch {
                     results: vec![hit(&resolved.task, &project, 1.0, "exact", None)],
                     mode: "text".into(),
                     notice: String::new(),
+                    knowledge: knowledge.hits.into_iter().map(Into::into).collect(),
+                    knowledge_notice: knowledge.notice,
                 });
             }
         }
@@ -287,7 +348,7 @@ pub async fn search(
     };
     let mut notice = String::new();
     let mut query_vector = None;
-    match EmbeddingConfig::from_env() {
+    match app.configuration.embeddings() {
         Ok(Some(config)) => match embed(&config, &[query.to_string()]).await {
             Ok((model, mut vectors)) => {
                 query_vector = Some((config.provider_key(), model, vectors.remove(0)))
@@ -359,10 +420,19 @@ pub async fn search(
             Some(hit(task, &project, score, kind, vector))
         })
         .collect();
+    let knowledge =
+        super::knowledge::search_project(app, &project, query, 6).unwrap_or_else(|notice| {
+            task_manager_shared::ai_settings::KnowledgePreviewResponse {
+                hits: vec![],
+                notice,
+            }
+        });
     Ok(ContextSearch {
         results,
         mode: mode.into(),
         notice,
+        knowledge: knowledge.hits.into_iter().map(Into::into).collect(),
+        knowledge_notice: knowledge.notice,
     })
 }
 

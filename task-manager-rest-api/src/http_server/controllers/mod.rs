@@ -1,3 +1,4 @@
+pub mod ai_settings;
 pub mod auth;
 pub mod column_templates;
 pub mod documents;

@@ -1,3 +1,4 @@
+mod ai_settings;
 mod auth;
 mod column_templates;
 mod decisions;
@@ -11,6 +12,7 @@ mod tasks;
 mod templates_transfer;
 mod users;
 
+pub use ai_settings::*;
 pub use auth::*;
 pub use column_templates::*;
 pub use decisions::*;

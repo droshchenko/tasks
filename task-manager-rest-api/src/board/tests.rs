@@ -269,7 +269,7 @@ async fn postgres_workflow_is_atomic_and_nullable_migration_preserves_legacy_row
         connection.await.unwrap();
     });
     client.batch_execute(r#"
-        DROP TABLE IF EXISTS tasks, goals, column_templates, kind_templates, semantic_vectors;
+        DROP TABLE IF EXISTS tasks, goals, column_templates, kind_templates, semantic_vectors, app_settings;
         CREATE TABLE tasks (
             project_id text NOT NULL, number bigint NOT NULL, task_text text NOT NULL, status text NOT NULL,
             priority text, kind text, goal_number bigint, assignee text, labels jsonb NOT NULL, depends_on jsonb NOT NULL,
@@ -314,12 +314,63 @@ async fn postgres_workflow_is_atomic_and_nullable_migration_preserves_legacy_row
                 "semantic_vectors",
                 Some("semantic_vectors_pk".into()),
             )
+            .with_table_schema_verification::<crate::postgres::AppSettingDto>(
+                "app_settings",
+                Some("app_settings_pk".into()),
+            )
             .build()
             .await;
     let legacy = client.query_one("SELECT task_text, decisions IS NULL, analysis_documents IS NULL, ai_reviews IS NULL FROM tasks WHERE project_id='legacy'", &[]).await.unwrap();
     assert_eq!(legacy.get::<_, String>(0), "Keep this row");
     assert!(legacy.get::<_, bool>(1) && legacy.get::<_, bool>(2));
     assert!(legacy.get::<_, bool>(3));
+    let configuration =
+        crate::intelligence::settings::Configuration::new("synthetic-settings-master", vec![]);
+    let provider_input = task_manager_shared::ai_settings::SaveProviderInput {
+        provider: "embeddings".into(),
+        enabled: true,
+        endpoint: "http://127.0.0.1:54321/embeddings".into(),
+        model: "fixture-v1".into(),
+        api_key: Some("synthetic-settings-key".into()),
+        clear_key: false,
+        revision: 0,
+    };
+    let setting = configuration
+        .prepare_update(&provider_input, "owner@example.test")
+        .unwrap();
+    let statement = service_sdk::my_postgres::sql::build_insert_or_update_sql(
+        &setting,
+        "app_settings",
+        &service_sdk::my_postgres::UpdateConflictType::OnPrimaryKeyConstraint(
+            "app_settings_pk".into(),
+        ),
+    );
+    client
+        .execute(&statement.sql, &statement.values.get_values_to_invoke())
+        .await
+        .unwrap();
+    let stored_setting = client
+        .query_one(
+            "SELECT value, revision, updated_by FROM app_settings WHERE id='provider:embeddings'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let stored_value: String = stored_setting.get(0);
+    assert!(!stored_value.contains("synthetic-settings-key"));
+    let restored = crate::intelligence::settings::Configuration::new(
+        "synthetic-settings-master",
+        vec![crate::postgres::AppSettingDto {
+            id: "provider:embeddings".into(),
+            value: stored_value,
+            revision: stored_setting.get(1),
+            updated_by: stored_setting.get(2),
+        }],
+    );
+    assert_eq!(
+        restored.embeddings().unwrap().unwrap().key.as_deref(),
+        Some("synthetic-settings-key")
+    );
     let vector = crate::postgres::SemanticVectorDto {
         project_id: "p".into(),
         task_number: 2,

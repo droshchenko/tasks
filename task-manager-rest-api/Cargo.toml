@@ -1,6 +1,6 @@
 [package]
 name = "task-manager-rest-api"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
@@ -74,6 +74,8 @@ prost = "*"
 # NOTE: sha2 0.11's digest is a `hybrid_array::Array` with no `LowerHex` — `format!("{:x}")` does not
 # compile. `rust_extensions::hex` is the encoder.
 sha2 = "*"
+aes-gcm = "=0.10.3"
+url = "=2.5.8"
 
 # The nonce inside a login `state`, so two sign-ins started in the same second differ.
 uuid = { version = "*", features = ["v4"] }
