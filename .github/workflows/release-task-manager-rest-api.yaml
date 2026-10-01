@@ -5,6 +5,10 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   DIR: task-manager-rest-api
   # The pre-baked dependency graph — see build-task-manager-rest-api-docker.yaml, which is run BY HAND and
@@ -36,7 +40,7 @@ jobs:
       # Before the pull as well as before the push: the builder image is private to the org.
       - name: Docker login
         run: |
-          echo "${{ secrets.PUBLISH_TOKEN }}" | docker login https://ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.PUBLISH_TOKEN || github.token }}" | docker login https://ghcr.io -u "${{ github.actor }}" --password-stdin
 
       # A MISSING BUILDER MUST NEVER BREAK A RELEASE. This step is allowed to fail — no image pushed yet,
       # ghcr down, the token unable to read it — and the cold steps behind the `if:` below are the exact

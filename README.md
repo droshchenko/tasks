@@ -1693,8 +1693,21 @@ behind the `if:` are the exact build used before the image existed, token and al
 missing or broken image is the time we used to pay anyway. Confirm in a run that *Build (warm, …)* ran and
 the cold steps were skipped.
 
-Not for `task-manager-ui`: it is a Dioxus WASM build with its own toolchain and `dx build`, running inside
-`ghcr.io/myjettools/dioxus-docker`. Different problem, different fix — and its lock stays ignored.
+The UI uses its own Dioxus/WASM toolchain rather than the API builder image. Its lock is tracked too,
+so the dependency graph used for deployment matches the locally tested client.
+
+### Deployment bundles for an existing installation
+
+The manual **Build deployment bundles** workflow builds a selected commit on Ubuntu 22.04 with Rust
+1.98.1 and Dioxus CLI 0.7.9. It produces minimal API/UI Docker contexts, source-commit records and
+SHA-256 checksums in this repository's GitHub Actions artifacts. Both dependency graphs are locked.
+This route needs no registry publishing credential and never uses a shared third-party upload path.
+
+For an existing stack, download and verify both artifacts, build versioned local images, and back up
+the database and deployment configuration before cutover. Test the API migration against an isolated
+database copy first. Update only the API/UI image references in the installation's own Compose file;
+keep its database, ports, mounts and credentials. Deploy the API before the UI and verify MCP tools,
+stored record counts and static assets. Retain the previous images and configuration for rollback.
 
 ## Open
 

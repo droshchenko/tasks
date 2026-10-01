@@ -1,0 +1,79 @@
+name: Build deployment bundles
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit or ref to build
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [task-manager-rest-api, task-manager-ui]
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+
+      - name: Install backend prerequisites
+        if: matrix.service == 'task-manager-rest-api'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev libssl-dev pkg-config build-essential cmake
+
+      - name: Build API against Ubuntu 22.04
+        if: matrix.service == 'task-manager-rest-api'
+        run: |
+          cargo build --manifest-path task-manager-rest-api/Cargo.toml --release --locked
+          mkdir -p bundle/target/release
+          cp task-manager-rest-api/target/release/task-manager-rest-api bundle/target/release/
+          cp task-manager-rest-api/Dockerfile bundle/Dockerfile
+
+      - name: Install Dioxus
+        if: matrix.service == 'task-manager-ui'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install dioxus-cli --version 0.7.9 --locked --features disable-telemetry
+
+      - name: Build UI with locked dependencies
+        if: matrix.service == 'task-manager-ui'
+        run: |
+          cd task-manager-ui
+          dx build --release --web --locked
+          python3 build.py target/dx/task-manager-ui/release/web/public/index.html
+          cd ..
+          mkdir -p bundle/target/dx/task-manager-ui/release/web
+          cp -a task-manager-ui/target/dx/task-manager-ui/release/web/public bundle/target/dx/task-manager-ui/release/web/
+          cp task-manager-ui/Dockerfile bundle/Dockerfile
+
+      - name: Record provenance and pack the Docker context
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          git rev-parse HEAD > bundle/SOURCE_COMMIT
+          rustc --version > bundle/TOOLCHAIN
+          cp "$SERVICE/Cargo.lock" bundle/Cargo.lock
+          mkdir -p artifacts
+          tar -C bundle -czf "artifacts/$SERVICE.tar.gz" .
+          cd artifacts
+          sha256sum "$SERVICE.tar.gz" > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: deploy-${{ matrix.service }}
+          path: artifacts/
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
