@@ -6,9 +6,9 @@
 # a ~400-crate graph invalidates the image and the warm build silently becomes a cold one. Committing it
 # also means a broken transitive dependency reproduces locally instead of only in CI.
 #
-# task-manager-ui's lock stays ignored: it is a Dioxus WASM build with its own toolchain, it has no builder
-# image, and there is nothing for a lock to protect there yet.
+# The UI lock is also tracked so deployment bundles use the same graph as the tested WASM build.
 !task-manager-rest-api/Cargo.lock
+!task-manager-ui/Cargo.lock
 **/dist
 .claude
 .idea
