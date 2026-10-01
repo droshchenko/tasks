@@ -5,8 +5,10 @@ mod kind_templates_repo;
 mod project_members_repo;
 mod projects_repo;
 mod semantic_repo;
+mod settings_repo;
 mod tasks_repo;
 pub use semantic_repo::*;
+pub use settings_repo::*;
 mod users_repo;
 mod workflow_sql;
 

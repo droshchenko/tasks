@@ -26,11 +26,45 @@ pub struct ReviewRequest {
 
 pub fn build_request(app: &AppContext, id: &str, model: &str) -> Result<ReviewRequest, String> {
     let board = app.board.read();
-    let key = provider::EmbeddingConfig::from_env()
+    let key = app
+        .configuration
+        .embeddings()
         .ok()
         .flatten()
         .map(|config| config.provider_key());
-    build_request_for(&board, &app.semantic_index, key.as_deref(), id, model)
+    build_request_with_knowledge(app, &board, key.as_deref(), id, model)
+}
+
+fn build_request_with_knowledge(
+    app: &AppContext,
+    board: &crate::board::BoardInner,
+    provider_key: Option<&str>,
+    id: &str,
+    model: &str,
+) -> Result<ReviewRequest, String> {
+    let mut request = build_request_for(board, &app.semantic_index, provider_key, id, model)?;
+    let resolved = crate::scripts::resolve_task(board, id)?;
+    let knowledge = super::knowledge::search_project(
+        app,
+        &resolved.project,
+        &semantic::clip(&resolved.task.text, 4096),
+        5,
+    )
+    .unwrap_or_else(
+        |notice| task_manager_shared::ai_settings::KnowledgePreviewResponse {
+            hits: vec![],
+            notice,
+        },
+    );
+    request.payload["state"]["project_knowledge"] = serde_json::to_value(knowledge.hits)
+        .map_err(|_| "Project knowledge could not be encoded")?;
+    request.payload["state"]["knowledge_notice"] = knowledge.notice.into();
+    let bytes = serde_json::to_vec(&request.payload).map_err(|_| "Cannot encode Jev context")?;
+    if bytes.len() > 65536 {
+        return Err("Jev context including project knowledge exceeds 64 KiB. Shorten task definitions or rules.".into());
+    }
+    request.hash = crate::documents::content_hash(&bytes);
+    Ok(request)
 }
 
 pub fn build_request_for(
@@ -307,9 +341,13 @@ pub async fn evaluate(app: &AppContext, id: &str, who: &str) -> Result<AiReview,
     if who.trim().is_empty() || who.len() > 4000 || who.contains('\0') {
         return Err("a Jev evaluation needs an author".into());
     }
-    let key = provider::env_value("TASKS_JEV_API_KEY")
-        .ok_or("Jev is disabled; configure TASKS_JEV_API_KEY on the tasks backend")?;
-    let model = provider::env_value("TASKS_JEV_MODEL").unwrap_or_else(|| "jev-latest".into());
+    let config_revision = app.configuration.revision("provider:jev");
+    let config = app
+        .configuration
+        .jev()?
+        .ok_or("Jev is disabled. Configure the provider in Settings → AI providers.")?;
+    let key = config.key;
+    let model = config.model;
     let _job = app
         .evaluation_jobs
         .try_lock()
@@ -324,12 +362,8 @@ pub async fn evaluate(app: &AppContext, id: &str, who: &str) -> Result<AiReview,
             return Ok(previous.clone());
         }
     }
-    let response = provider::post_json(
-        "https://api.typesafe.ai/v1/systemone",
-        Some(&key),
-        &request.payload,
-    )
-    .await?;
+    let response =
+        provider::post_json(super::settings::JEV_ENDPOINT, Some(&key), &request.payload).await?;
     let now = DateTimeAsMicroseconds::now();
     let review = parse_response(
         &request,
@@ -339,19 +373,17 @@ pub async fn evaluate(app: &AppContext, id: &str, who: &str) -> Result<AiReview,
     )?;
     // Inference holds no task mutation lock. Re-read under it before persisting a result.
     let mutation = app.task_mutations.lock().await;
+    if app.configuration.revision("provider:jev") != config_revision {
+        return Err("Jev settings changed during evaluation. No review was recorded; retry with the current configuration.".into());
+    }
     let board = app.board.read();
-    let provider_key = provider::EmbeddingConfig::from_env()
+    let provider_key = app
+        .configuration
+        .embeddings()
         .ok()
         .flatten()
         .map(|config| config.provider_key());
-    if build_request_for(
-        &board,
-        &app.semantic_index,
-        provider_key.as_deref(),
-        id,
-        &model,
-    )?
-    .hash
+    if build_request_with_knowledge(app, &board, provider_key.as_deref(), id, &model)?.hash
         != request.hash
     {
         return Err("task or its evaluation context changed during inference; no review was recorded, retry with the current task".into());

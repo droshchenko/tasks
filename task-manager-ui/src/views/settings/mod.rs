@@ -1,5 +1,9 @@
+mod ai_providers;
 mod column_templates_panel;
+pub use ai_providers::*;
+mod knowledge;
 pub use column_templates_panel::*;
+pub use knowledge::*;
 mod diagnostics_panel;
 mod kind_templates_panel;
 pub use diagnostics_panel::*;

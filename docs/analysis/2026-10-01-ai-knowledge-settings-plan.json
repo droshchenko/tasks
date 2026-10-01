@@ -1,0 +1,27 @@
+{
+  "author": "Dmitrii Roshchenko behind Codex (tasks)",
+  "status": "implemented_and_locally_verified",
+  "request": "Make embeddings, Jev and project knowledge configurable through Settings.",
+  "scope": [
+    "Admin-only AI providers page: save, enable/disable, replace/remove credentials and test saved connections without redeploying",
+    "Project-scoped Knowledge & indexing page: connected repository, wiki folders, Graphify export, source refresh and task-embedding progress",
+    "Use saved providers in existing MCP search/index/review tools and return bounded project knowledge references in context search and Jev requests",
+    "Verify the complete browser/API/storage paths, publish the change and deploy to the existing ops stack"
+  ],
+  "decisions": [
+    "Retain the established Settings layout and Google-authenticated administrator boundary; no configuration or secrets tools on unauthenticated MCP",
+    "Store configuration durably in PostgreSQL; encrypt provider keys with authenticated encryption using a domain-separated key derived from the existing server secret",
+    "Treat environment values as initial defaults; saved settings explicitly take precedence, including disabling providers",
+    "Reuse each project's existing repository connections for wiki reads; accept Graphify JSON as data and never execute repository-supplied commands",
+    "Keep knowledge isolated by internal project identity, report source references and freshness, and distinguish text/graph retrieval from task-vector retrieval",
+    "Do not change Goals filters; the user cancelled that change"
+  ],
+  "steps": [
+    {"id": "settings-storage", "depends_on": [], "acceptance": "Admin configuration survives restart, credentials never appear in read responses, and authenticated encryption, optimistic revisions and validation are tested."},
+    {"id": "provider-and-index-api", "depends_on": ["settings-storage"], "acceptance": "Existing indexing, search and Jev resolve saved settings; explicit connection probes and bounded background indexing report real results and errors."},
+    {"id": "project-knowledge", "depends_on": ["settings-storage"], "acceptance": "Configured wiki and Graphify sources produce bounded cited context only for the selected project; unsafe paths, stale/removed sources and malformed imports are covered."},
+    {"id": "settings-ui", "depends_on": ["provider-and-index-api", "project-knowledge"], "acceptance": "A person can configure/test providers, select project sources, refresh knowledge and start/cancel/check indexing entirely from Settings; forms do not reveal stored keys."},
+    {"id": "release", "depends_on": ["settings-ui"], "acceptance": "Applicable Rust and real-WASM tests pass; isolated PostgreSQL rollout is verified before deploying API/UI on ops with backup and rollback retained."}
+  ],
+  "external_configuration": "No provider key is currently configured. Do not invent credentials or claim live provider success; validate adapter contracts with controlled providers and let the administrator supply production credentials in the new Settings UI."
+}

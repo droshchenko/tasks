@@ -19,3 +19,9 @@ The scenarios cover opening a Goal by URL, actual dependency reasons, keeping ta
 answering through Inbox, preserving a saved answer across a failed refresh, form-label isolation,
 narrow layouts and reconnecting with fresh task data and project settings. The server also counts
 subscriptions so an update/subscription feedback loop fails the test.
+
+Run `npm run test:settings` against the same built WASM for the AI/knowledge settings flow. It covers
+provider save/test, keeping and removing stored credentials, disabled testing for unsaved edits,
+project source configuration, Graphify raw upload, context preview, index progress/cancellation,
+project isolation, administrator access and narrow layouts. All providers, keys and sources in this
+browser suite are synthetic; the suite never calls a real embeddings or Jev provider.

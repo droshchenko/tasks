@@ -197,7 +197,7 @@ impl ReviewHandler {
 }
 impl ToolDefinition for ReviewHandler {
     const FUNC_NAME: &'static str = "tasks_review";
-    const DESCRIPTION: &'static str = "Evaluate one task directly with TypeSafe Jev on the tasks backend: configured task type (Choice), urgency (Score), need for human clarification (Noul), and possible duplicate among cached related tasks (Choice). Sends a bounded task/rule/context snapshot to the configured provider. Records the validated evaluation and an authored task comment; identical current snapshots reuse history. Does not change type, priority, dependencies, status or human answers. Stale results are rejected after inference. Requires backend TASKS_JEV_API_KEY.";
+    const DESCRIPTION: &'static str = "Evaluate one task directly with TypeSafe Jev on the tasks backend: configured task type (Choice), urgency (Score), need for human clarification (Noul), and possible duplicate among cached related tasks (Choice). Sends a bounded task/rule/project-knowledge snapshot to the configured provider. Records the validated evaluation and an authored task comment; identical current snapshots reuse history. Does not change type, priority, dependencies, status or human answers. Stale results are rejected after inference. An administrator configures Jev in Settings → AI providers.";
 }
 #[async_trait::async_trait]
 impl McpToolCall<ReviewInput, ReviewView> for ReviewHandler {

@@ -1,0 +1,32 @@
+{
+  "author": "Dmitrii Roshchenko behind Codex (tasks)",
+  "version": "0.3.0",
+  "status": "implemented_and_locally_verified",
+  "features": [
+    "Settings / AI providers: administrator-only embeddings and Jev configuration, enable/disable, key replacement/removal and synthetic connection probes",
+    "Encrypted credential persistence, environment defaults, optimistic editor revisions and immediate backend configuration updates",
+    "Settings / Knowledge & indexing: project selection, existing repository sources, wiki paths, Graphify export upload or checkout path, manual/automatic refresh and context preview",
+    "Task embedding coverage, background indexing, rebuild, progress and cancellation",
+    "Project-scoped knowledge in tasks_prepare, tasks_search_context and Jev request fingerprints; stale sources are excluded"
+  ],
+  "verification": {
+    "backend_unit_tests": {"passed":289,"ignored":2,"failed":0},
+    "shared_unit_tests": {"passed":53,"failed":0},
+    "ui_unit_tests": {"passed":76,"failed":0},
+    "isolated_postgresql_18": "Passed the legacy migration/atomic workflow integration test, extended with encrypted settings persistence and restoration",
+    "real_graphify_export": {"passed":true,"nodes":27912,"links":70435,"nullable_locations":true,"virtual_node_builtins":true},
+    "release_wasm_build": "passed",
+    "existing_browser_scenarios": {"passed":8,"page_errors":0},
+    "settings_browser_scenarios": {"passed":12,"page_errors":0,"covers":["provider save/test","secret never prefilled","key retained during model change","Jev configuration","wiki sources and preview","raw Graphify upload","index progress","cancellation","project isolation","key removal/disable","non-admin access","narrow layouts"]},
+    "diff_check": "passed"
+  },
+  "limits": [
+    "Live embeddings/Jev provider verification awaits administrator credentials. Browser provider responses and keys were synthetic; no production task was evaluated by an external model.",
+    "Wiki and Graphify retrieval uses text/symbol matching; task embeddings are a separate index.",
+    "Graphify is imported as data, not executed by the server. An export from a different source commit is shown as stale and excluded from retrieval.",
+    "The existing Dioxus CLI 0.7.9 reports a warning for the locked Dioxus 0.7.10 dependency; release builds and browser verification pass with this repository's deployment toolchain.",
+    "Goals filter changes were cancelled and are absent from this implementation."
+  ],
+  "delivery": {"github":"pending","deployment":"pending"},
+  "plan":"docs/analysis/2026-10-01-ai-knowledge-settings-plan.json"
+}

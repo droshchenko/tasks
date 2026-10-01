@@ -9,6 +9,8 @@ const DEFAULT_SECTION: &str = SECTION_COLUMN_TEMPLATES;
 const SECTION_COLUMN_TEMPLATES: &str = "column-templates";
 const SECTION_KIND_TEMPLATES: &str = "task-type-templates";
 const SECTION_DIAGNOSTICS: &str = "diagnostics";
+const SECTION_AI: &str = "ai-providers";
+const SECTION_KNOWLEDGE: &str = "knowledge";
 
 /// Settings — a menu of areas on the left, the chosen one on the right.
 ///
@@ -30,6 +32,7 @@ pub fn RenderSettings() -> Element {
     rsx! {
         div { class: "page-header",
             h1 { class: "page-title", "Settings" }
+            if section == SECTION_COLUMN_TEMPLATES || section == SECTION_KIND_TEMPLATES {
             div { class: "page-actions",
                 // A LINK rather than a button — a download is a navigation, and the session is a cookie
                 // the browser attaches to one. Same reason the project export is a link.
@@ -53,10 +56,21 @@ pub fn RenderSettings() -> Element {
                     "Import templates"
                 }
             }
+            }
         }
 
         div { class: "settings-layout",
             nav { class: "settings-menu",
+                RenderMenuLink {
+                    section: SECTION_AI.to_string(),
+                    title: "AI providers".to_string(),
+                    active: section == SECTION_AI,
+                }
+                RenderMenuLink {
+                    section: SECTION_KNOWLEDGE.to_string(),
+                    title: "Knowledge & indexing".to_string(),
+                    active: section == SECTION_KNOWLEDGE,
+                }
                 RenderMenuLink {
                     section: SECTION_COLUMN_TEMPLATES.to_string(),
                     title: "Column templates".to_string(),
@@ -75,7 +89,11 @@ pub fn RenderSettings() -> Element {
             }
 
             div { class: "settings-content",
-                if section == SECTION_COLUMN_TEMPLATES {
+                if section == SECTION_AI {
+                    super::AiProvidersPanel {}
+                } else if section == SECTION_KNOWLEDGE {
+                    super::KnowledgePanel {}
+                } else if section == SECTION_COLUMN_TEMPLATES {
                     super::ColumnTemplatesPanel { key: "{revision_now}" }
                 } else if section == SECTION_KIND_TEMPLATES {
                     super::KindTemplatesPanel { key: "{revision_now}" }

@@ -16,6 +16,7 @@
 //!   know: an unknown status reads as `todo`, an unknown colour falls back to the default swatch.
 
 pub mod ai_reviews;
+pub mod ai_settings;
 pub mod auth;
 pub mod column_templates;
 pub mod decisions;

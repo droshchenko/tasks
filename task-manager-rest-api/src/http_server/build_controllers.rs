@@ -10,11 +10,24 @@ use crate::app::AppContext;
 /// authenticated answer to an agent's question; README.md documents those exceptions.
 pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpServerBuilder) {
     use super::controllers::{
-        auth, column_templates, documents, github, goals, kind_templates, projects, system, tasks,
-        templates, users,
+        ai_settings, auth, column_templates, documents, github, goals, kind_templates, projects,
+        system, tasks, templates, users,
     };
 
     http_server_builder.register_get_action(system::PingAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::AiSettingsAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::SaveProviderAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::TestProviderAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::IndexStatusAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::StartIndexAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::CancelIndexAction::new(app.clone()));
+    http_server_builder
+        .register_post_action(ai_settings::KnowledgeSettingsAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::SaveKnowledgeAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::RefreshKnowledgeAction::new(app.clone()));
+    http_server_builder
+        .register_post_action(ai_settings::UploadKnowledgeGraphAction::new(app.clone()));
+    http_server_builder.register_post_action(ai_settings::PreviewKnowledgeAction::new(app.clone()));
     http_server_builder.register_post_action(system::DiagnosticsAction::new(app.clone()));
     http_server_builder.register_post_action(tasks::AnswerDecisionAction::new(app.clone()));
     http_server_builder.register_post_action(tasks::PendingDecisionsAction::new(app.clone()));
