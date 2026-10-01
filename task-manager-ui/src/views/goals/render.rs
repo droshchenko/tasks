@@ -17,6 +17,7 @@ use crate::states::AppState;
 #[component]
 pub fn RenderGoals() -> Element {
     let app_state = consume_context::<Signal<AppState>>();
+    let mut seen_connection = use_signal(|| 0_u64);
 
     let mut cs = use_signal(ComponentState::default);
 
@@ -29,7 +30,15 @@ pub fn RenderGoals() -> Element {
         let app_ra = app_state.read();
         let _revision = app_ra.board_revision;
         let push = app_ra.board_push.clone();
+        let generation = app_ra.ws_generation;
         drop(app_ra);
+        if generation > *seen_connection.peek() {
+            let reconnect = *seen_connection.peek() > 0;
+            seen_connection.set(generation);
+            if reconnect {
+                cs.write().projects.reset();
+            }
+        }
 
         match push {
             Some(snapshot) if snapshot.project == cs.peek().selected => {
@@ -414,18 +423,14 @@ fn get_tasks(
 
 /// Where a goal has got to, in the words the board uses for a task: `Todo`, `In Progress`, `Done`.
 ///
-/// **Derived here rather than read off the wire, because the wire has only two states.** A goal's `status`
-/// is `close_moment` under another name — `GoalModel::status` returns `done` for a closed goal and `todo`
-/// for every open one — so a goal with half its work landed reads exactly like one nobody has started. The
-/// middle state is the one this screen is opened to see, and what answers it is already in hand: the tasks
-/// grouped beside the goal.
-///
-/// The server's counter is consulted FIRST and the list only after, and that order is what keeps this from
-/// contradicting the `done / total` beside it: `done_amount` counts ARCHIVED work, so a goal whose early
-/// tasks have all aged off the board still says it has started.
+/// Prefer the server-derived status. The task-based fallback keeps older server responses readable.
 fn goal_status(goal: &GoalResponse, tasks: &[TaskResponse]) -> GoalStatus {
-    if goal.closed_unix_seconds.is_some() {
+    if goal.status == "done" || goal.closed_unix_seconds.is_some() {
         return GoalStatus::Done;
+    }
+
+    if goal.status == "in-progress" {
+        return GoalStatus::InProgress;
     }
 
     let started = goal.done_amount > 0 || tasks.iter().any(|task| task.status != COLUMN_ID_TODO);
@@ -838,10 +843,7 @@ fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
 
     let done = task.status == COLUMN_ID_DONE;
 
-    let assignee = task
-        .assignee_name
-        .clone()
-        .or_else(|| task.assignee.clone());
+    let assignee = task.assignee_name.clone().or_else(|| task.assignee.clone());
 
     let found = crate::api::find_task_locally(&task, &project);
 
@@ -880,8 +882,9 @@ fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
             span { class: "goal-task-title", "{title}" }
 
             if task.blocked {
-                span { class: "sticker-blocked-flag", "Blocked" }
+                span { class: "sticker-blocked-flag", title: "{crate::web::blocking_summary(&task.readiness)}", "Blocked" }
             }
+            if task.readiness.required_decisions > 0 { span { class: "tag", "Awaiting answer" } }
 
             // Only when there is a thread. A `0` on every line is noise that makes the lines that do have
             // something harder to spot.

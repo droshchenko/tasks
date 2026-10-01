@@ -43,6 +43,9 @@ pub struct KindTemplateDto {
     pub kinds: Vec<KindTemplateKindJsonModel>,
     #[sql_type("timestamp")]
     pub created: DateTimeAsMicroseconds,
+    #[sql_type("jsonb")]
+    #[json]
+    pub prompts: Option<Vec<task_manager_shared::execution_prompts::ExecutionPrompt>>,
 }
 
 #[derive(WhereDbModel, Debug)]

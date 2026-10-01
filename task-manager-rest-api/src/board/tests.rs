@@ -1,4 +1,7 @@
 use std::collections::BTreeSet;
+#[path = "workflow_tests.rs"]
+mod workflow_tests;
+use std::sync::Arc;
 
 use rust_extensions::date_time::DateTimeAsMicroseconds;
 use task_manager_shared::kind_color::KindColor;
@@ -10,11 +13,487 @@ use super::{
     KindTemplateModel, ProjectModel, TaskModel, UserModel,
 };
 
+#[test]
+fn finishing_the_last_task_completes_the_goal_and_reopening_it_restores_activity() {
+    let board = board();
+    board.upsert_project(project("p", "TM", &[]));
+    let goal = goal("p", 1);
+    board.upsert_goal(goal.clone());
+    assert_eq!(board.read().goal_state(&goal).0, "todo");
+    let mut first = task("p", 2, COLUMN_ID_DONE, &[]);
+    first.goal_number = Some(1);
+    first.close_moment = Some(DateTimeAsMicroseconds::new(10));
+    board.upsert_task(first);
+    let mut last = task("p", 3, "in-progress", &[]);
+    last.goal_number = Some(1);
+    board.upsert_task(last.clone());
+    assert_eq!(board.read().goal_state(&goal).0, "in-progress");
+    last.status = COLUMN_ID_DONE.into();
+    last.close_moment = Some(DateTimeAsMicroseconds::new(20));
+    board.upsert_task(last.clone());
+    assert_eq!(
+        board.read().goal_state(&goal),
+        ("done", Some(DateTimeAsMicroseconds::new(20)))
+    );
+    last.status = "in-progress".into();
+    last.close_moment = None;
+    board.upsert_task(last);
+    assert_eq!(board.read().goal_state(&goal), ("in-progress", None));
+    assert!(!board.read().is_goal_archived(&goal));
+}
+
+#[test]
+fn goal_completion_includes_archived_work_and_excludes_deleted_work() {
+    let board = board();
+    board.upsert_project(project("p", "TM", &[]));
+    let goal = goal("p", 1);
+    board.upsert_goal(goal.clone());
+    let mut completed = task("p", 2, COLUMN_ID_DONE, &[]);
+    completed.goal_number = Some(1);
+    completed.close_moment = Some(DateTimeAsMicroseconds::new(1));
+    board.upsert_task(completed);
+    let mut deleted = task("p", 3, COLUMN_ID_TODO, &[]);
+    deleted.goal_number = Some(1);
+    deleted.deleted_moment = Some(DateTimeAsMicroseconds::new(2));
+    board.upsert_task(deleted);
+    assert_eq!(board.read().goal_state(&goal).0, "done");
+    assert_eq!(board.read().goal_progress("p", 1), (1, 1));
+    let mut added = task("p", 4, COLUMN_ID_TODO, &[]);
+    added.goal_number = Some(1);
+    board.upsert_task(added);
+    assert_eq!(board.read().goal_state(&goal).0, "in-progress");
+}
+
+#[test]
+fn deleting_the_last_unfinished_task_closes_the_goal_today_instead_of_archiving_it() {
+    let board = board();
+    board.upsert_project(project("p", "TM", &[]));
+    let goal = goal("p", 1);
+    board.upsert_goal(goal.clone());
+    let now = DateTimeAsMicroseconds::now();
+    let mut finished = task("p", 2, COLUMN_ID_DONE, &[]);
+    finished.goal_number = Some(1);
+    finished.close_moment = Some(DateTimeAsMicroseconds::new(
+        now.unix_microseconds - 30 * 86400 * 1_000_000,
+    ));
+    board.upsert_task(finished);
+    let mut unfinished = task("p", 3, "in-progress", &[]);
+    unfinished.goal_number = Some(1);
+    board.upsert_task(unfinished.clone());
+    unfinished.deleted_moment = Some(now);
+    let changes = crate::scripts::goal_transitions(&board.read(), &unfinished, now);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].close_moment, Some(now));
+    assert!(changes[0].auto_completed);
+    board.upsert_goals_and_tasks(changes, vec![unfinished]);
+    let current = board.read().get_goal("p", 1).unwrap();
+    assert_eq!(board.read().goal_state(&current).0, "done");
+    assert!(!board.read().is_goal_archived(&current));
+}
+
+#[test]
+fn detaching_the_last_unfinished_task_updates_both_goal_clocks() {
+    let board = board();
+    board.upsert_project(project("p", "TM", &[]));
+    board.upsert_goal(goal("p", 1));
+    board.upsert_goal(goal("p", 4));
+    let mut finished = task("p", 2, COLUMN_ID_DONE, &[]);
+    finished.goal_number = Some(1);
+    finished.close_moment = Some(DateTimeAsMicroseconds::new(1));
+    board.upsert_task(finished);
+    let mut moving = task("p", 3, "in-progress", &[]);
+    moving.goal_number = Some(1);
+    board.upsert_task(moving.clone());
+    let now = DateTimeAsMicroseconds::now();
+    moving.goal_number = Some(4);
+    let changes = crate::scripts::goal_transitions(&board.read(), &moving, now);
+    assert_eq!(
+        changes
+            .iter()
+            .find(|goal| goal.number == 1)
+            .unwrap()
+            .close_moment,
+        Some(now)
+    );
+    board.upsert_goals_and_tasks(changes, vec![moving]);
+    assert_eq!(
+        board
+            .read()
+            .goal_state(&board.read().get_goal("p", 1).unwrap())
+            .0,
+        "done"
+    );
+    assert_eq!(
+        board
+            .read()
+            .goal_state(&board.read().get_goal("p", 4).unwrap())
+            .0,
+        "in-progress"
+    );
+}
+
+#[test]
+fn preparation_selects_only_current_fragments_and_analysis_is_a_separate_required_output() {
+    use task_manager_shared::execution_prompts::ExecutionPrompt;
+    let board = board();
+    board.upsert_project(project("p", "TM", &[]));
+    let mut columns = template();
+    columns.prompts = vec![
+        ExecutionPrompt {
+            target: "in-progress".into(),
+            text: "Implement the agreed change".into(),
+            requires_analysis_documents: true,
+        },
+        ExecutionPrompt {
+            target: "done".into(),
+            text: "Report verification".into(),
+            requires_analysis_documents: true,
+        },
+    ];
+    let mut kinds = kind_template();
+    kinds.prompts = vec![ExecutionPrompt {
+        target: "bug".into(),
+        text: "Reproduce before fixing".into(),
+        requires_analysis_documents: false,
+    }];
+    board.upsert_column_template(columns);
+    board.upsert_kind_template(kinds);
+    let mut before = task("p", 2, "in-progress", &[]);
+    before.kind = Some("bug".into());
+    let state = board.read();
+    let project = state.get_project("p").unwrap();
+    let selected =
+        crate::scripts::resolve_execution_prompts(&state, &project, &before, None).unwrap();
+    assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].target, "in-progress");
+    assert_eq!(selected[1].target, "bug");
+    assert!(!selected.iter().any(|prompt| prompt.target == "done"));
+    let mut after = before.clone();
+    after.status = "done".into();
+    after.documents.push("input specification".into());
+    assert!(
+        crate::scripts::validate_analysis_transition(&state, &project, &before, &after).is_err()
+    );
+    after
+        .analysis_documents
+        .push("raw/TM/github/source/analysis #1.md".into());
+    assert!(
+        crate::scripts::validate_analysis_transition(&state, &project, &before, &after).is_ok()
+    );
+}
+
+#[test]
+fn required_question_retries_after_completion_and_normalized_answer_history_are_consistent() {
+    use crate::scripts::DecisionPatch;
+    use task_manager_shared::decisions::{DecisionAnswer, DecisionChoice, DecisionRequest};
+    let mut task = task("p", 2, "in-progress", &[]);
+    let request = DecisionRequest {
+        request_key: "deploy".into(),
+        action: "Deploy release 2".into(),
+        question: "Proceed?".into(),
+        options: vec![DecisionChoice {
+            id: "prepare".into(),
+            label: "Prepare only".into(),
+            consequence: "Keep current deployment".into(),
+            recommended: true,
+        }],
+        required: true,
+        asked_by: "AI".into(),
+    };
+    let now = DateTimeAsMicroseconds::now();
+    DecisionPatch::Request(request.clone())
+        .apply(&mut task, now)
+        .unwrap();
+    let id = task.decisions[0].id.clone();
+    DecisionPatch::Answer {
+        id: id.clone(),
+        answer: DecisionAnswer {
+            option_id: Some(" prepare ".into()),
+            text: "  agreed  ".into(),
+            answered_by: "owner@example.org".into(),
+            answered_unix_seconds: 0,
+            source: "agent_reported".into(),
+        },
+    }
+    .apply(&mut task, now)
+    .unwrap();
+    assert!(
+        task.comments
+            .last()
+            .unwrap()
+            .text
+            .contains("**Choice:** Prepare only")
+    );
+    assert!(
+        !task
+            .comments
+            .last()
+            .unwrap()
+            .text
+            .contains("Free-text answer")
+    );
+    task.status = "done".into();
+    let comments = task.comments.len();
+    DecisionPatch::Request(request)
+        .apply(&mut task, now)
+        .unwrap();
+    assert_eq!(task.decisions.len(), 1);
+    assert_eq!(task.decisions[0].id, id);
+    assert_eq!(task.comments.len(), comments);
+}
+
 const TEMPLATE_ID: &str = "tpl";
 const KIND_TEMPLATE_ID: &str = "kinds-tpl";
 
+#[tokio::test]
+#[ignore = "requires the isolated TASKS_TEST_DATABASE_URL database on port 65433"]
+async fn postgres_workflow_is_atomic_and_nullable_migration_preserves_legacy_rows() {
+    use service_sdk::my_postgres::{MyPostgres, PostgresSettings, tokio_postgres};
+    struct Settings(String);
+    #[async_trait::async_trait]
+    impl PostgresSettings for Settings {
+        async fn get_connection_string(&self) -> String {
+            self.0.clone()
+        }
+    }
+    let connection_string =
+        std::env::var("TASKS_TEST_DATABASE_URL").expect("isolated test database required");
+    assert_eq!(
+        connection_string,
+        "host=127.0.0.1 port=65433 user=tasks_dev password=tasks_test_only dbname=tasks_workflow_test sslmode=disable"
+    );
+    let (client, connection) = tokio_postgres::connect(&connection_string, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    let connection_task = tokio::spawn(async move {
+        connection.await.unwrap();
+    });
+    client.batch_execute(r#"
+        DROP TABLE IF EXISTS tasks, goals, column_templates, kind_templates, semantic_vectors;
+        CREATE TABLE tasks (
+            project_id text NOT NULL, number bigint NOT NULL, task_text text NOT NULL, status text NOT NULL,
+            priority text, kind text, goal_number bigint, assignee text, labels jsonb NOT NULL, depends_on jsonb NOT NULL,
+            comments jsonb NOT NULL, subtasks jsonb, documents jsonb, gh_actions jsonb,
+            created timestamp NOT NULL, updated timestamp NOT NULL, close_moment timestamp, deleted_moment timestamp,
+            CONSTRAINT tasks_pk PRIMARY KEY(project_id, number)
+        );
+        CREATE TABLE goals (
+            id text NOT NULL, project_id text NOT NULL, number bigint NOT NULL, name text NOT NULL, description text NOT NULL,
+            color text, priority text, comments jsonb NOT NULL, subtasks jsonb, documents jsonb,
+            created timestamp NOT NULL, updated timestamp NOT NULL, close_moment timestamp, deleted_moment timestamp,
+            CONSTRAINT goals_pk PRIMARY KEY(project_id, number)
+        );
+        CREATE TABLE column_templates (id text PRIMARY KEY, name text NOT NULL, description text NOT NULL, columns jsonb NOT NULL, created timestamp NOT NULL);
+        CREATE TABLE kind_templates (id text PRIMARY KEY, name text NOT NULL, description text NOT NULL, kinds jsonb NOT NULL, created timestamp NOT NULL);
+        INSERT INTO tasks(project_id,number,task_text,status,labels,depends_on,comments,created,updated)
+            VALUES('legacy',1,'Keep this row','todo','[]','[]','[]',TIMESTAMP '2026-01-01',TIMESTAMP '2026-01-01');
+        INSERT INTO goals(id,project_id,number,name,description,comments,created,updated)
+            VALUES('legacy:2','legacy',2,'Keep this goal','Legacy goal','[]',TIMESTAMP '2026-01-01',TIMESTAMP '2026-01-01');
+        INSERT INTO column_templates VALUES('legacy','Old columns','Keep this template','[]',TIMESTAMP '2026-01-01');
+        INSERT INTO kind_templates VALUES('legacy','Old kinds','Keep this template','[]',TIMESTAMP '2026-01-01');
+    "#).await.unwrap();
+    let _schema =
+        MyPostgres::from_settings("tasks-workflow-test", Arc::new(Settings(connection_string)))
+            .with_table_schema_verification::<crate::postgres::TaskDto>(
+                "tasks",
+                Some("tasks_pk".into()),
+            )
+            .with_table_schema_verification::<crate::postgres::GoalDto>(
+                "goals",
+                Some("goals_pk".into()),
+            )
+            .with_table_schema_verification::<crate::postgres::ColumnTemplateDto>(
+                "column_templates",
+                Some("column_templates_pkey".into()),
+            )
+            .with_table_schema_verification::<crate::postgres::KindTemplateDto>(
+                "kind_templates",
+                Some("kind_templates_pkey".into()),
+            )
+            .with_table_schema_verification::<crate::postgres::SemanticVectorDto>(
+                "semantic_vectors",
+                Some("semantic_vectors_pk".into()),
+            )
+            .build()
+            .await;
+    let legacy = client.query_one("SELECT task_text, decisions IS NULL, analysis_documents IS NULL, ai_reviews IS NULL FROM tasks WHERE project_id='legacy'", &[]).await.unwrap();
+    assert_eq!(legacy.get::<_, String>(0), "Keep this row");
+    assert!(legacy.get::<_, bool>(1) && legacy.get::<_, bool>(2));
+    assert!(legacy.get::<_, bool>(3));
+    let vector = crate::postgres::SemanticVectorDto {
+        project_id: "p".into(),
+        task_number: 2,
+        provider_key: "local-fixture".into(),
+        content_hash: "hash".into(),
+        model: "embedding-test-v1".into(),
+        dimensions: 2,
+        embedding: vec![0.6, 0.8],
+    };
+    let vector_sql = service_sdk::my_postgres::sql::build_insert_or_update_sql(
+        &vector,
+        "semantic_vectors",
+        &service_sdk::my_postgres::UpdateConflictType::OnPrimaryKeyConstraint(
+            "semantic_vectors_pk".into(),
+        ),
+    );
+    client
+        .execute(&vector_sql.sql, &vector_sql.values.get_values_to_invoke())
+        .await
+        .unwrap();
+    let stored_vector: String = client
+        .query_one(
+            "SELECT embedding::text FROM semantic_vectors WHERE project_id='p'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        serde_json::from_str::<Vec<f32>>(&stored_vector).unwrap(),
+        vector.embedding
+    );
+    assert!(
+        client
+            .query_one(
+                "SELECT auto_completed IS NULL FROM goals WHERE project_id='legacy'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    assert!(
+        client
+            .query_one(
+                "SELECT prompts IS NULL FROM column_templates WHERE id='legacy'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    let mut changed_task = task("p", 2, COLUMN_ID_DONE, &[]);
+    changed_task.text = "Use $1 literally; don't execute it".into();
+    changed_task.goal_number = Some(1);
+    changed_task
+        .ai_reviews
+        .push(crate::intelligence::jev::fixture_review());
+    changed_task.close_moment = Some(DateTimeAsMicroseconds::now());
+    changed_task.analysis_documents = vec!["raw/TM/github/source/analysis #1.md".into()];
+    use task_manager_shared::decisions::{DecisionAnswer, DecisionRequest};
+    task_manager_shared::decisions::add_decision(
+        &mut changed_task.decisions,
+        DecisionRequest {
+            request_key: "choose".into(),
+            action: "Prepare the change".into(),
+            question: "Which action?".into(),
+            options: Vec::new(),
+            required: true,
+            asked_by: "AI".into(),
+        },
+        "decision1".into(),
+        1,
+    )
+    .unwrap();
+    task_manager_shared::decisions::answer_decision(
+        &mut changed_task.decisions,
+        "decision1",
+        DecisionAnswer {
+            option_id: None,
+            text: "Prepare only; preserve $1".into(),
+            answered_by: "owner@example.org".into(),
+            answered_unix_seconds: 2,
+            source: "ui".into(),
+        },
+    )
+    .unwrap();
+    let mut changed_goal = goal("p", 1);
+    changed_goal.auto_completed = true;
+    changed_goal.close_moment = changed_task.close_moment;
+    let task_row: crate::postgres::TaskDto = (&changed_task).into();
+    let goal_row: crate::postgres::GoalDto = (&changed_goal).into();
+    let statement = crate::postgres::task_and_goals_statement(&task_row, &[goal_row]);
+    client
+        .execute(&statement.sql, &statement.values.get_values_to_invoke())
+        .await
+        .unwrap();
+    let stored = client
+        .query_one(
+            "SELECT task_text, analysis_documents::text FROM tasks WHERE project_id='p'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.get::<_, String>(0), changed_task.text);
+    assert!(stored.get::<_, String>(1).contains("analysis #1.md"));
+    let review_json: String = client
+        .query_one(
+            "SELECT ai_reviews::text FROM tasks WHERE project_id='p'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        serde_json::from_str::<Vec<task_manager_shared::ai_reviews::AiReview>>(&review_json)
+            .unwrap(),
+        changed_task.ai_reviews
+    );
+    let decision_json: String = client
+        .query_one(
+            "SELECT decisions::text FROM tasks WHERE project_id='p'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        serde_json::from_str::<Vec<task_manager_shared::decisions::TaskDecision>>(&decision_json)
+            .unwrap(),
+        changed_task.decisions
+    );
+    assert!(
+        client
+            .query_one("SELECT auto_completed FROM goals WHERE project_id='p'", &[])
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    // A failed goal write must roll back the task write in the same statement.
+    client
+        .batch_execute(
+            "ALTER TABLE goals ADD CONSTRAINT no_bad_goal CHECK (name <> 'fail_this_goal')",
+        )
+        .await
+        .unwrap();
+    changed_task.text = "This update must not survive".into();
+    changed_goal.name = "fail_this_goal".into();
+    let statement = crate::postgres::task_and_goals_statement(
+        &(&changed_task).into(),
+        &[(&changed_goal).into()],
+    );
+    assert!(
+        client
+            .execute(&statement.sql, &statement.values.get_values_to_invoke())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        client
+            .query_one("SELECT task_text FROM tasks WHERE project_id='p'", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "Use $1 literally; don't execute it"
+    );
+    drop(client);
+    connection_task.abort();
+}
+
 fn kind_template() -> KindTemplateModel {
     KindTemplateModel {
+        prompts: Vec::new(),
+
         id: KIND_TEMPLATE_ID.to_string(),
         name: "Default".to_string(),
         description: String::new(),
@@ -31,6 +510,8 @@ fn kind_template() -> KindTemplateModel {
 
 fn template() -> ColumnTemplateModel {
     ColumnTemplateModel {
+        prompts: Vec::new(),
+
         id: TEMPLATE_ID.to_string(),
         name: "Default".to_string(),
         description: String::new(),
@@ -81,6 +562,10 @@ fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
 
 fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> TaskModel {
     TaskModel {
+        decisions: Vec::new(),
+        ai_reviews: Vec::new(),
+        analysis_documents: Vec::new(),
+
         project_id: project_id.to_string(),
         number,
         text: format!("task {number}"),
@@ -111,6 +596,8 @@ fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> Task
 
 fn goal(project_id: &str, number: i64) -> GoalModel {
     GoalModel {
+        auto_completed: false,
+
         project_id: project_id.to_string(),
         number,
         name: format!("goal {number}"),
@@ -858,13 +1345,24 @@ fn a_deleted_task_leaves_every_derived_answer_and_stays_findable() {
 
     let read = board.read();
 
-    assert_eq!(read.goal_progress("p", 1), (1, 0), "counted as one, not two");
+    assert_eq!(
+        read.goal_progress("p", 1),
+        (1, 0),
+        "counted as one, not two"
+    );
     assert_eq!(read.tasks_of_goal("p", 1).len(), 1);
-    assert_eq!(read.open_tasks_of_goal("p", 1).len(), 1, "a deleted task cannot hold a goal open");
+    assert_eq!(
+        read.open_tasks_of_goal("p", 1).len(),
+        1,
+        "a deleted task cannot hold a goal open"
+    );
     assert_eq!(read.tasks_amount("p"), 1);
     assert_eq!(read.labels_of_project("p"), vec!["kept".to_string()]);
 
-    assert!(read.get_task("p", 3).is_none(), "hidden from the ordinary lookup");
+    assert!(
+        read.get_task("p", 3).is_none(),
+        "hidden from the ordinary lookup"
+    );
     assert!(
         read.get_task_including_deleted("p", 3).is_some(),
         "and found by the one search uses"

@@ -15,9 +15,12 @@
 //!   column" into a 500 on a read endpoint. The reader decides what to do with a value it does not
 //!   know: an unknown status reads as `todo`, an unknown colour falls back to the default swatch.
 
+pub mod ai_reviews;
 pub mod auth;
 pub mod column_templates;
+pub mod decisions;
 pub mod documents;
+pub mod execution_prompts;
 pub mod github;
 pub mod goals;
 pub mod kind_color;
@@ -25,6 +28,7 @@ pub mod kind_templates;
 pub mod priority;
 pub mod project_transfer;
 pub mod projects;
+pub mod readiness;
 pub mod subtasks;
 pub mod system;
 pub mod task_title;

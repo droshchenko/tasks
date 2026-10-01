@@ -245,6 +245,7 @@ impl From<&KindModel> for KindTemplateKindJsonModel {
 impl From<&KindTemplateDto> for KindTemplateModel {
     fn from(src: &KindTemplateDto) -> Self {
         Self {
+            prompts: src.prompts.clone().unwrap_or_default(),
             id: src.id.clone(),
             name: src.name.clone(),
             description: src.description.clone(),
@@ -257,6 +258,7 @@ impl From<&KindTemplateDto> for KindTemplateModel {
 impl From<&KindTemplateModel> for KindTemplateDto {
     fn from(src: &KindTemplateModel) -> Self {
         Self {
+            prompts: Some(src.prompts.clone()),
             id: src.id.clone(),
             name: src.name.clone(),
             description: src.description.clone(),
@@ -289,6 +291,7 @@ pub fn kind_template_to_response(
                 },
             )
             .collect(),
+        prompts: src.prompts.clone(),
         used_by: used_by as i32,
     }
 }
@@ -322,6 +325,7 @@ impl From<&ColumnTemplateDto> for ColumnTemplateModel {
         columns.sort_by_key(|itm| itm.order);
 
         Self {
+            prompts: src.prompts.clone().unwrap_or_default(),
             id: src.id.clone(),
             name: src.name.clone(),
             description: src.description.clone(),
@@ -334,6 +338,7 @@ impl From<&ColumnTemplateDto> for ColumnTemplateModel {
 impl From<&ColumnTemplateModel> for ColumnTemplateDto {
     fn from(src: &ColumnTemplateModel) -> Self {
         Self {
+            prompts: Some(src.prompts.clone()),
             id: src.id.clone(),
             name: src.name.clone(),
             description: src.description.clone(),
@@ -365,6 +370,7 @@ pub fn column_template_to_response(
                 },
             )
             .collect(),
+        prompts: src.prompts.clone(),
         used_by: used_by as i32,
     }
 }

@@ -28,6 +28,7 @@ pub const ARCHIVE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// index and its source disagree.
 #[derive(Clone)]
 pub struct BoardInner {
+    pub read_revision: i64,
     projects: AHashMap<String, Arc<ProjectModel>>,
     /// Template id -> the named set of columns projects follow. Columns are configured here, not on a
     /// project; a project carries only the id of the template it follows.
@@ -58,6 +59,7 @@ pub struct BoardInner {
 impl BoardInner {
     pub fn new() -> Self {
         Self {
+            read_revision: DateTimeAsMicroseconds::now().unix_microseconds,
             projects: AHashMap::new(),
             column_templates: AHashMap::new(),
             kind_templates: AHashMap::new(),
@@ -188,7 +190,6 @@ impl BoardInner {
             .or_default()
             .insert(task.number, task);
     }
-
 
     pub(super) fn put_user(&mut self, user: Arc<UserModel>) {
         self.users.insert(user.email.clone(), user);
@@ -447,7 +448,7 @@ impl BoardInner {
     /// once it has been closed for longer than the project's archive window. An open goal never archives,
     /// however old it is — an epic that has run for a year is not history, it is late.
     pub fn is_goal_archived(&self, goal: &GoalModel) -> bool {
-        let Some(closed) = goal.close_moment else {
+        let Some(closed) = self.goal_state(goal).1 else {
             return false;
         };
 
@@ -457,7 +458,8 @@ impl BoardInner {
 
         let now = DateTimeAsMicroseconds::now();
 
-        now.unix_microseconds - closed.unix_microseconds > project.archive_after().as_micros() as i64
+        now.unix_microseconds - closed.unix_microseconds
+            > project.archive_after().as_micros() as i64
     }
 
     /// Whether every task of this goal is done — the question that decides if it may be closed.
@@ -468,6 +470,46 @@ impl BoardInner {
             .into_iter()
             .filter(|task| task.status != task_manager_shared::projects::COLUMN_ID_DONE)
             .collect()
+    }
+
+    // The tasks are the source of truth. Completion is projected from the same snapshot as the
+    // counters, so task writes, imports, deletions and restarts cannot leave a stale goal status.
+    pub fn goal_state(&self, goal: &GoalModel) -> (&'static str, Option<DateTimeAsMicroseconds>) {
+        let tasks = self.tasks_of_goal(&goal.project_id, goal.number);
+        if tasks.is_empty() {
+            return if goal.close_moment.is_some() && !goal.auto_completed {
+                ("done", goal.close_moment)
+            } else {
+                ("todo", None)
+            };
+        }
+        if tasks
+            .iter()
+            .all(|task| task.status == task_manager_shared::projects::COLUMN_ID_DONE)
+        {
+            let completed = tasks
+                .iter()
+                .map(|task| task.close_moment.unwrap_or(task.updated))
+                .chain(goal.close_moment)
+                .max_by_key(|moment| moment.unix_microseconds);
+            return ("done", completed);
+        }
+        let started = tasks.iter().any(|task| {
+            self.projects
+                .get(&goal.project_id)
+                .map(|project| {
+                    project.effective_status(&task.status)
+                        != task_manager_shared::projects::COLUMN_ID_TODO
+                })
+                .unwrap_or(false)
+        });
+        (if started { "in-progress" } else { "todo" }, None)
+    }
+
+    pub fn project_task_change(&self, task: TaskModel) -> Self {
+        let mut next = self.clone();
+        next.put_task(Arc::new(task));
+        next
     }
 
     pub fn get_project(&self, project_id: &str) -> Option<Arc<ProjectModel>> {
@@ -652,7 +694,8 @@ impl BoardInner {
 
         let now = DateTimeAsMicroseconds::now();
 
-        now.unix_microseconds - closed.unix_microseconds > project.archive_after().as_micros() as i64
+        now.unix_microseconds - closed.unix_microseconds
+            > project.archive_after().as_micros() as i64
     }
 
     /// Whether a task is blocked: any id in `depends_on` naming a task that is not Done.

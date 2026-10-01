@@ -7,6 +7,25 @@ pub fn console_log(message: &str) {
     web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(message));
 }
 
+pub fn blocking_summary(readiness: &task_manager_shared::readiness::TaskReadiness) -> String {
+    if readiness.dependencies.is_empty() {
+        return "Open the task to inspect its dependencies".into();
+    }
+    readiness
+        .dependencies
+        .iter()
+        .map(|item| {
+            format!(
+                "{} · {} ({})",
+                item.task_id,
+                item.title,
+                item.status.as_deref().unwrap_or("missing or deleted")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Leave the app entirely — a full browser navigation, not a route push.
 ///
 /// Two callers, and both genuinely need to leave: the Google consent page is not ours to route to, and

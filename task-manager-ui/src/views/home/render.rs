@@ -16,6 +16,7 @@ use crate::states::AppState;
 #[component]
 pub fn RenderHome(search: Option<String>) -> Element {
     let app_state = consume_context::<Signal<AppState>>();
+    let mut seen_connection = use_signal(|| 0_u64);
 
     let seeded = search.clone().unwrap_or_default();
 
@@ -69,6 +70,9 @@ pub fn RenderHome(search: Option<String>) -> Element {
             if let Ok(found) = crate::api::find_task(seeded.trim()).await {
                 if found.task.is_some() {
                     crate::dialogs::open(crate::dialogs::DialogState::ViewTask { found });
+                } else if let Some(goal) = found.goal {
+                    let status = goal.status.clone();
+                    crate::dialogs::open(crate::dialogs::DialogState::ViewGoal { goal, status });
                 }
             }
         }
@@ -88,7 +92,15 @@ pub fn RenderHome(search: Option<String>) -> Element {
         // makes two pushes carrying identical tasks count as two.
         let _revision = app_ra.board_revision;
         let push = app_ra.board_push.clone();
+        let generation = app_ra.ws_generation;
         drop(app_ra);
+        if generation > *seen_connection.peek() {
+            let reconnect = *seen_connection.peek() > 0;
+            seen_connection.set(generation);
+            if reconnect {
+                cs.write().projects.reset();
+            }
+        }
 
         match push {
             // Only the board on screen. A push for the project somebody just switched away from can still be
@@ -377,6 +389,10 @@ fn goals_on_board(tasks: &[TaskResponse]) -> Vec<(String, String)> {
 /// to do with what was typed.
 fn task_id_parts(query: &str) -> Option<(&str, &str)> {
     let (prefix, number) = query.rsplit_once('-')?;
+    let number = number
+        .strip_prefix('G')
+        .or_else(|| number.strip_prefix('g'))
+        .unwrap_or(number);
 
     let ok = !prefix.is_empty()
         && prefix
@@ -471,6 +487,20 @@ fn matches_search(task: &TaskResponse, search: &str) -> bool {
     }
 
     match task_id_parts(search) {
+        Some((_, number))
+            if search
+                .rsplit_once('-')
+                .is_some_and(|(_, suffix)| suffix.starts_with('G') || suffix.starts_with('g')) =>
+        {
+            task.goal
+                .as_deref()
+                .and_then(task_id_parts)
+                .is_some_and(|(_, digits)| {
+                    digits
+                        .trim_start_matches('0')
+                        .starts_with(number.trim_start_matches('0'))
+                })
+        }
         Some((_, number)) => id_number_starts_with(&task.id, number),
         None => matches_text(task, &search.to_lowercase()),
     }
@@ -802,9 +832,12 @@ fn RenderHeader(
                             if looks_like_a_task_id(&query) {
                                 spawn(async move {
                                     if let Ok(found) = crate::api::find_task(&query).await {
-                                        crate::dialogs::open(
-                                            crate::dialogs::DialogState::ViewTask { found },
-                                        );
+                                        if let Some(goal) = found.goal.clone() {
+                                            let status = goal.status.clone();
+                                            crate::dialogs::open(crate::dialogs::DialogState::ViewGoal { goal, status });
+                                        } else {
+                                            crate::dialogs::open(crate::dialogs::DialogState::ViewTask { found });
+                                        }
                                     }
                                 });
                             }
@@ -1036,12 +1069,10 @@ fn RenderSticker(
 
     // Unknown colour falls back to the default swatch rather than to nothing, so a goal coloured by a build
     // that knew one more swatch still draws a band.
-    let goal_hex = KindColor::parse_or_default(task.goal_color.as_deref().unwrap_or_default()).hex();
+    let goal_hex =
+        KindColor::parse_or_default(task.goal_color.as_deref().unwrap_or_default()).hex();
 
-    let goal_title = task
-        .goal_name
-        .clone()
-        .unwrap_or_else(|| "Goal".to_string());
+    let goal_title = task.goal_name.clone().unwrap_or_else(|| "Goal".to_string());
 
     // Built here rather than fetched: this side already holds the whole task and the project it is on, so
     // the card opens instantly and without a round trip. `archived` is false by definition — a card that is
@@ -1180,6 +1211,15 @@ fn RenderSticker(
                 }
 
                 div { class: "sticker-title", "{title}" }
+                if task.blocked || task.readiness.required_decisions > 0 || task.readiness.analysis_required {
+                    div { class: "sticker-attention",
+                        if task.blocked {
+                            span { class: "sticker-blocked-flag", title: "{crate::web::blocking_summary(&task.readiness)}", "Blocked" }
+                        }
+                        if task.readiness.required_decisions > 0 { span { class: "tag", "Awaiting answer" } }
+                        if task.readiness.analysis_required { span { class: "tag", "Analysis needed" } }
+                    }
+                }
 
                 // Under the title, because the title is what the card is FOR and who has it is the next
                 // question — and it is the same question on every card, so it belongs in the same place on
@@ -1266,8 +1306,17 @@ fn handles(ids: &[String]) -> String {
 mod tests {
     use super::*;
 
-    pub(super) fn task(id: &str, text: &str, labels: &[&str], assignee: Option<&str>) -> TaskResponse {
+    pub(super) fn task(
+        id: &str,
+        text: &str,
+        labels: &[&str],
+        assignee: Option<&str>,
+    ) -> TaskResponse {
         TaskResponse {
+            execution_prompts: Vec::new(),
+            decisions: Vec::new(),
+            analysis_documents: Vec::new(),
+
             id: id.to_string(),
             project: "P".to_string(),
             text: text.to_string(),
@@ -1286,6 +1335,9 @@ mod tests {
             blocks: Vec::new(),
             link_statuses: Vec::new(),
             blocked: false,
+            readiness: Default::default(),
+            ai_reviews: Vec::new(),
+            revision_unix_microseconds: 0,
             documents: Vec::new(),
             subtasks: Vec::new(),
             gh_actions: Vec::new(),
@@ -1320,11 +1372,20 @@ mod tests {
 
         assert!(!archived(&fresh, None));
         assert!(archived(&old_news, None));
-        assert!(!archived(&open, None), "open work never archives, however old");
+        assert!(
+            !archived(&open, None),
+            "open work never archives, however old"
+        );
 
         // And the window is the project's: two days hides what the default would still be drawing.
-        assert!(archived(&fresh, Some(2)) == false, "a minute is inside two days");
-        assert!(archived(&old_news, Some(60)) == false, "thirty days is inside sixty");
+        assert!(
+            archived(&fresh, Some(2)) == false,
+            "a minute is inside two days"
+        );
+        assert!(
+            archived(&old_news, Some(60)) == false,
+            "thirty days is inside sixty"
+        );
     }
 
     /// Which of the two things the box does is decided here, so the shapes are worth pinning.
@@ -1652,13 +1713,7 @@ mod tests {
         loose_one.goal = None;
         loose_two.goal = None;
 
-        let mut column = vec![
-            &loose_one,
-            &under_a,
-            &loose_two,
-            &under_b,
-            &under_a_again,
-        ];
+        let mut column = vec![&loose_one, &under_a, &loose_two, &under_b, &under_a_again];
 
         board_order(&mut column);
 
@@ -1666,13 +1721,7 @@ mod tests {
 
         assert_eq!(
             ids,
-            vec![
-                "RMS-2",
-                "RMS-5",
-                "RMS-4",
-                "RMS-1",
-                "RMS-3",
-            ],
+            vec!["RMS-2", "RMS-5", "RMS-4", "RMS-1", "RMS-3",],
             "both cards of RMS-G10 first and in board order, then RMS-G20, then the loose pile in board order"
         );
     }
@@ -1735,6 +1784,21 @@ mod deletion_and_goal_filter_tests {
         let mut result = tests::task(id, "text", &[], None);
         result.goal = goal.map(|itm| itm.to_string());
         result
+    }
+
+    #[test]
+    fn goal_handles_open_and_filter_the_goal_members() {
+        assert!(looks_like_a_task_id("RMS-G7"));
+        assert!(looks_like_a_task_id("RMS-g0007"));
+        assert!(matches_search(
+            &with_goal("RMS-1", Some("RMS-G7")),
+            "RMS-G7"
+        ));
+        assert!(!matches_search(&with_goal("RMS-7", None), "RMS-G7"));
+        assert!(!matches_search(
+            &with_goal("RMS-1", Some("RMS-G8")),
+            "RMS-G7"
+        ));
     }
 
     /// An empty filter is the board; a handle is one epic; and the reserved value is the work that belongs to

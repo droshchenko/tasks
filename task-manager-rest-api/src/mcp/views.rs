@@ -1,3 +1,4 @@
+use super::readiness_views::{GoalWaitingTaskView, TaskReadinessView};
 use mcp_server_middleware::*;
 use rust_extensions::AsStr;
 use serde::{Deserialize, Serialize};
@@ -119,7 +120,7 @@ impl ProjectView {
             goals: board
                 .goals_of_project(&project.id)
                 .iter()
-                .filter(|goal| !goal.is_closed())
+                .filter(|goal| board.goal_state(goal).0 != "done")
                 .map(|goal| GoalView::from_model(goal, project, board))
                 .collect(),
         }
@@ -151,15 +152,21 @@ pub struct GoalView {
     )]
     pub priority: String,
     #[property(
-        description = "`todo` while the goal is open, `done` once it is closed. Derived from whether it has been closed, so it cannot disagree with `closed_unix_seconds` — a goal has these two states and nothing in between in this version. The Goals screen shows a third, `In Progress`, which is NOT this field: it is derived in the browser from whether any task under the goal has moved off `todo`, so read `done_amount` and the tasks themselves rather than this to tell a started goal from an untouched one"
+        description = "Server-derived todo, in-progress or done. A nonempty goal is done when all non-deleted tasks are done, including archived work. Adding or reopening unfinished work makes it active again. Empty new goals do not automatically complete"
     )]
     pub status: String,
     #[property(
         description = "How many tasks are part of this goal, INCLUDING work already archived off the board. Do not recompute this from tasks_list: that leaves archived work out, and an old goal would read as half-done"
     )]
     pub tasks_amount: i32,
-    #[property(description = "How many of those tasks are done. The goal is closable when it equals `tasks_amount`")]
+    #[property(
+        description = "How many of those tasks are done. The goal is closable when it equals `tasks_amount`"
+    )]
     pub done_amount: i32,
+    #[property(
+        description = "Unfinished goal tasks waiting for dependencies, required human answers or analysis files; current reasons, not a separate goal status"
+    )]
+    pub waiting_tasks: Vec<GoalWaitingTaskView>,
     #[property(
         description = "The goal's own checklist, in the order it was written — the notes-to-self of the epic, kept inside it. Separate from `tasks_amount` / `done_amount`, which count its TASKS and are what decide whether it can close: an unticked item here does not hold the goal open. Use it for the small things an epic drags along that are not worth a card of their own. Usually empty"
     )]
@@ -174,7 +181,9 @@ pub struct GoalView {
     pub comments_amount: i32,
     #[property(description = "When the goal was created, unix seconds (UTC)")]
     pub created_unix_seconds: i64,
-    #[property(description = "When the goal itself last changed, unix seconds (UTC). A comment does not move this")]
+    #[property(
+        description = "When the goal itself last changed, unix seconds (UTC). A comment does not move this"
+    )]
     pub updated_unix_seconds: i64,
     #[property(
         description = "When it was closed, unix seconds (UTC), and absent while it is open. A goal closed longer ago than the project's archive window is left out of goals_list unless you ask for it"
@@ -189,6 +198,7 @@ pub struct GoalView {
 impl GoalView {
     pub fn from_model(goal: &GoalModel, project: &ProjectModel, board: &BoardInner) -> Self {
         let (tasks_amount, done_amount) = board.goal_progress(&goal.project_id, goal.number);
+        let (status, closed) = board.goal_state(goal);
 
         Self {
             id: crate::board::compose_goal_handle(&project.prefix, goal.number),
@@ -197,17 +207,19 @@ impl GoalView {
             description: goal.description.clone(),
             color: rust_extensions::AsStr::as_str(&goal.color).to_string(),
             priority: rust_extensions::AsStr::as_str(&goal.priority).to_string(),
-            status: goal.status().to_string(),
+            status: status.to_string(),
             tasks_amount: tasks_amount as i32,
             done_amount: done_amount as i32,
+            waiting_tasks: crate::mappers::goal_waiting_tasks(goal, board)
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             subtasks: SubtaskView::from_models(&goal.subtasks),
             documents: goal.documents.clone(),
             comments_amount: goal.comments.len() as i32,
             created_unix_seconds: goal.created.unix_microseconds / 1_000_000,
             updated_unix_seconds: goal.updated.unix_microseconds / 1_000_000,
-            closed_unix_seconds: goal
-                .close_moment
-                .map(|itm| itm.unix_microseconds / 1_000_000),
+            closed_unix_seconds: closed.map(|itm| itm.unix_microseconds / 1_000_000),
             deleted_unix_seconds: goal
                 .deleted_moment
                 .map(|itm| itm.unix_microseconds / 1_000_000),
@@ -459,7 +471,11 @@ impl DocumentView {
     /// The brief is passed in rather than looked up: this type knows nothing about the app, and a
     /// signature that asks for it is what makes the compiler point at every place a listing could have
     /// forgotten one.
-    pub fn from_dto(src: &crate::postgres::DocumentDto, project_prefix: &str, brief: String) -> Self {
+    pub fn from_dto(
+        src: &crate::postgres::DocumentDto,
+        project_prefix: &str,
+        brief: String,
+    ) -> Self {
         let body = crate::scripts::body_of(src);
 
         Self {
@@ -470,7 +486,10 @@ impl DocumentView {
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.doc_path.clone(),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
+            content_type: crate::scripts::content_type_of(
+                src.content_type.as_deref(),
+                &src.doc_path,
+            ),
             is_binary: body.is_binary(),
             size: body.size_bytes(),
             version: src.version,
@@ -595,7 +614,10 @@ impl DocumentContentView {
             id: src.id.clone(),
             project: project_prefix.to_string(),
             path: src.doc_path.clone(),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
+            content_type: crate::scripts::content_type_of(
+                src.content_type.as_deref(),
+                &src.doc_path,
+            ),
             is_binary,
             size,
             lines_total: content.as_deref().map(count_lines),
@@ -649,7 +671,10 @@ impl DocumentContentView {
             // The path AT THAT VERSION, not the current one — which is the whole reason a move is recorded
             // as a version.
             path: src.doc_path.clone(),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
+            content_type: crate::scripts::content_type_of(
+                src.content_type.as_deref(),
+                &src.doc_path,
+            ),
             is_binary,
             size,
             lines_total: content.as_deref().map(count_lines),
@@ -715,9 +740,7 @@ fn count_lines(text: &str) -> i64 {
 ///
 /// One function because both constructors above need the identical four-way split, and because base64 belongs
 /// in exactly one place on this surface — here, at the boundary JSON forces it through.
-fn split_body(
-    body: crate::scripts::DocumentBody,
-) -> (Option<String>, Option<String>, bool, i64) {
+fn split_body(body: crate::scripts::DocumentBody) -> (Option<String>, Option<String>, bool, i64) {
     let size = body.size_bytes();
 
     match body {
@@ -758,7 +781,9 @@ pub struct DocumentSearchHitView {
         description = "WHAT TO WRITE DOWN AND WHAT TO ATTACH — the url naming this document: `raw/{project}/document/{id}` for one of the project's own, `raw/{project}/github/{repository}/{path}` for a file in a connected repository. It goes into add_documents on a task or a goal, and every tool here takes it wherever it takes an id"
     )]
     pub reference: String,
-    #[property(description = "The document's id — what documents_get, documents_edit and documents_outline take")]
+    #[property(
+        description = "The document's id — what documents_get, documents_edit and documents_outline take"
+    )]
     pub id: String,
     #[property(description = "Where it lives")]
     pub path: String,
@@ -847,7 +872,10 @@ impl DocumentVersionView {
             event: src.event.clone(),
             path: src.doc_path.clone(),
             size: src.content_size.unwrap_or(0),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
+            content_type: crate::scripts::content_type_of(
+                src.content_type.as_deref(),
+                &src.doc_path,
+            ),
             who: src.who.clone(),
             moment_unix_seconds: src.moment.unix_microseconds / 1_000_000,
         }
@@ -923,7 +951,10 @@ impl TrashedDocumentView {
             id: src.id.clone(),
             path: src.doc_path.clone(),
             size: src.content_size.unwrap_or(0),
-            content_type: crate::scripts::content_type_of(src.content_type.as_deref(), &src.doc_path),
+            content_type: crate::scripts::content_type_of(
+                src.content_type.as_deref(),
+                &src.doc_path,
+            ),
             deleted_unix_seconds: src.deleted.unix_microseconds / 1_000_000,
             deleted_by: src.deleted_by.clone(),
         }
@@ -941,7 +972,9 @@ pub struct BoardMatchView {
         description = "Who wrote the comment — an email, or `AI`. Present only for a `comment`; the other parts belong to the card rather than to a person"
     )]
     pub who: Option<String>,
-    #[property(description = "When the comment was left, unix seconds (UTC). Present only for a `comment`")]
+    #[property(
+        description = "When the comment was left, unix seconds (UTC). Present only for a `comment`"
+    )]
     pub moment_unix_seconds: Option<i64>,
     #[property(description = "The matching line itself, clipped when very long")]
     pub line: String,
@@ -968,11 +1001,17 @@ pub struct BoardSearchHitView {
     pub headline: String,
     #[property(description = "Which column the task is in, or `todo` / `done` for a goal")]
     pub status: String,
-    #[property(description = "How urgent it is: `super-high`, `high`, `normal`, `low` or `super-low`")]
+    #[property(
+        description = "How urgent it is: `super-high`, `high`, `normal`, `low` or `super-low`"
+    )]
     pub priority: String,
-    #[property(description = "The goal this task belongs to, by goal id. Absent on a goal and on a standalone task")]
+    #[property(
+        description = "The goal this task belongs to, by goal id. Absent on a goal and on a standalone task"
+    )]
     pub goal: Option<String>,
-    #[property(description = "Who is on it — an email or `AI`. Absent for a goal and for unassigned work")]
+    #[property(
+        description = "Who is on it — an email or `AI`. Absent for a goal and for unassigned work"
+    )]
     pub assignee: Option<String>,
     #[property(
         description = "How many lines matched on this card in total, across its text, its checklist and its whole thread. What the results are SORTED BY, and the number that tells the card where something was decided from the card that mentions it once"
@@ -1083,6 +1122,26 @@ pub struct TaskView {
     )]
     pub blocked: bool,
     #[property(
+        description = "Current reasons why work needs attention, with dependencies distinguished from completion requirements"
+    )]
+    pub readiness: TaskReadinessView,
+    #[property(
+        description = "How many human questions are recorded on this task; tasks_prepare returns their full immutable history"
+    )]
+    pub decisions_amount: i32,
+    #[property(
+        description = "True while a required human question is unanswered. The task cannot land in done until it is answered or cancelled"
+    )]
+    pub awaiting_human: bool,
+    #[property(
+        description = "Recorded Jev evaluations; read them with tasks_review_history, which can include exact snapshots"
+    )]
+    pub ai_reviews_amount: i32,
+    #[property(
+        description = "References to files containing the analysis results, separate from the input specification"
+    )]
+    pub analysis_documents: Vec<String>,
+    #[property(
         description = "The task's checklist, in the order it was written — the breakdown of THIS piece of work, kept inside it. Read it before starting: it says what the task actually involves, and ticking items off with tasks_update as you go is how the next reader sees where you got to. It is not a list of tasks: nothing here has a status, an assignee or a place on the board, and an unticked item does not stop the task from landing. Work somebody else has to see or depend on is a task of its own, under the same goal. Usually empty"
     )]
     pub subtasks: Vec<SubtaskView>,
@@ -1146,6 +1205,14 @@ impl TaskView {
                 .map(|number| compose_task_handle(&project.prefix, *number))
                 .collect(),
             blocked: board.is_blocked(task),
+            readiness: crate::mappers::task_readiness(task, project, board).into(),
+            decisions_amount: task.decisions.len() as i32,
+            ai_reviews_amount: task.ai_reviews.len() as i32,
+            awaiting_human: task
+                .decisions
+                .iter()
+                .any(|decision| decision.blocks_completion()),
+            analysis_documents: task.analysis_documents.clone(),
             subtasks: SubtaskView::from_models(&task.subtasks),
             documents: task.documents.clone(),
             gh_actions: GhActionView::from_models(&task.gh_actions),

@@ -71,6 +71,7 @@ impl ProjectSubscribers {
     /// itself would refuse them. A snapshot IS the board, so the check has to happen before the send.
     pub async fn push_to_watchers(&self, project_id: &str, payload: &str, members: &[String]) {
         let connections = self.connections.load_full();
+        let mut deliveries = tokio::task::JoinSet::new();
 
         for connection in connections.values() {
             if !connection.is_watching(project_id) {
@@ -83,7 +84,16 @@ impl ProjectSubscribers {
                     .any(|member| member.eq_ignore_ascii_case(&connection.email));
 
             if allowed {
-                connection.send_payload(payload).await;
+                let connection = connection.clone();
+                let payload = payload.to_string();
+                deliveries.spawn(async move {
+                    (connection.ws.id, connection.send_payload(&payload).await)
+                });
+            }
+        }
+        while let Some(result) = deliveries.join_next().await {
+            if let Ok((id, false)) = result {
+                self.remove(id);
             }
         }
     }

@@ -130,6 +130,14 @@ impl MyWebSocketCallback for HomeWsCallbacks {
         let Some(connection) = self.app.subscribers.get_by_id(my_web_socket.id) else {
             return;
         };
+        if serde_json::from_str::<serde_json::Value>(payload.as_str())
+            .ok()
+            .and_then(|value| value.get("ping").and_then(|ping| ping.as_bool()))
+            == Some(true)
+        {
+            connection.send_payload("{\"pong\":true}").await;
+            return;
+        }
 
         let Some(prefix) = parse_watch(payload.as_str()) else {
             connection
@@ -161,7 +169,8 @@ impl MyWebSocketCallback for HomeWsCallbacks {
             return;
         };
 
-        connection.watch(project_id);
+        connection.watch(project_id.clone());
+        self.app.send_current_board(&project_id, &connection).await;
     }
 }
 

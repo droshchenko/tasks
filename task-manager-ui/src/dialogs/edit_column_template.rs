@@ -26,6 +26,7 @@ struct ComponentState {
 struct Draft {
     name: String,
     description: String,
+    prompts: Vec<task_manager_shared::execution_prompts::ExecutionPrompt>,
     columns: Vec<ColumnTemplateColumn>,
 }
 
@@ -43,11 +44,13 @@ impl ComponentState {
             Some(template) => Draft {
                 name: template.name.clone(),
                 description: template.description.clone(),
+                prompts: template.prompts.clone(),
                 columns: template.columns.clone(),
             },
             None => Draft {
                 name: String::new(),
                 description: String::new(),
+                prompts: Vec::new(),
                 columns: Vec::new(),
             },
         };
@@ -106,6 +109,7 @@ impl ComponentState {
 
     fn remove_column(&mut self, id: &str) {
         self.draft.columns.retain(|itm| itm.id != id);
+        self.draft.prompts.retain(|prompt| prompt.target != id);
     }
 
     fn set_column_name(&mut self, id: &str, value: String) {
@@ -137,6 +141,7 @@ pub struct ColumnTemplateSubmit {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub prompts: Vec<task_manager_shared::execution_prompts::ExecutionPrompt>,
     pub columns: Vec<ColumnTemplateColumn>,
 }
 
@@ -163,6 +168,7 @@ pub fn EditColumnTemplateDialog(
             id,
             name: draft.name.trim().to_string(),
             description: draft.description.trim().to_string(),
+            prompts: draft.prompts,
             columns: draft.columns,
         });
     };
@@ -179,6 +185,11 @@ pub fn EditColumnTemplateDialog(
     let name = cs_ra.draft.name.clone();
     let description = cs_ra.draft.description.clone();
     let columns = cs_ra.draft.columns.clone();
+    let prompts = cs_ra.draft.prompts.clone();
+    let mut prompt_targets: Vec<String> = columns.iter().map(|item| item.id.clone()).collect();
+    prompt_targets.insert(0, "todo".into());
+    prompt_targets.push("done".into());
+
     let new_column = cs_ra.new_column.clone();
     // The submit outcome is the router's, not this dialog's — see `DialogFeedback`.
     let feedback = super::feedback();
@@ -217,6 +228,16 @@ pub fn EditColumnTemplateDialog(
 
         div { class: "field-hint", style: "margin-top: 6px",
             "Todo and Done are in every project and are not listed here. A column id is typed once and never renamed — tasks point at it as their status. Nothing is sent until Save."
+        }
+
+        super::prompt_fields::ExecutionPromptEditor {
+            prompts, targets: prompt_targets,
+            on_requirement: move |(target, required): (String, bool)| {
+                task_manager_shared::execution_prompts::set_analysis_requirement(&mut cs.write().draft.prompts, &target, required);
+            },
+            on_edit: move |(target, text): (String, String)| {
+                task_manager_shared::execution_prompts::set_prompt(&mut cs.write().draft.prompts, &target, text);
+            },
         }
 
         div { class: "table-responsive", style: "margin-top: 12px",
@@ -361,6 +382,8 @@ mod tests {
 
     fn template() -> ColumnTemplateResponse {
         ColumnTemplateResponse {
+            prompts: Vec::new(),
+
             id: "tpl".to_string(),
             name: "Development".to_string(),
             description: String::new(),

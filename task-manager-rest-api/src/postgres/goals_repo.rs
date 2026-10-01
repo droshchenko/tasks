@@ -47,10 +47,8 @@ pub struct GoalSubtaskJsonModel {
 // The number comes from the SAME counter as the project's task numbers, so no number names both a task
 // and a goal, and a task can point at its goal with a bare number.
 //
-// There is no `status` column either. A goal has two states in this version and `close_moment` tells
-// them apart on its own; a status beside it could disagree with it, and nothing would catch that. The
-// wire reports a status — derived. Real columns for a goal are the second iteration, and the column
-// arrives with them.
+// State is derived from tasks. close_moment and auto_completed retain the transition
+// time and distinguish automatic closure from an explicit empty legacy closure.
 //
 // It does not hold its tasks: the task row carries the goal number. That direction is what every read
 // wants, since a task is drawn far more often than a goal is listed.
@@ -110,6 +108,7 @@ pub struct GoalDto {
     // stays until deletion exists".
     #[sql_type("timestamp")]
     pub deleted_moment: Option<DateTimeAsMicroseconds>,
+    pub auto_completed: Option<bool>,
 }
 
 pub struct GoalsRepo {

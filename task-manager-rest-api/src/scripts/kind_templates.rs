@@ -25,6 +25,7 @@ pub async fn save_kind_template(
     name: &str,
     description: &str,
     kinds: &[KindTemplateKind],
+    prompts: Option<&[task_manager_shared::execution_prompts::ExecutionPrompt]>,
 ) -> Result<String, String> {
     if name.trim().is_empty() {
         return Err("a task-type template needs a name".to_string());
@@ -69,7 +70,24 @@ pub async fn save_kind_template(
         }
     };
 
+    let targets: Vec<_> = next.iter().map(|kind| kind.id.as_str()).collect();
+    let existing_prompts = app
+        .board
+        .read()
+        .get_kind_template(&id)
+        .map(|template| template.prompts.clone())
+        .unwrap_or_default();
+    let preserved: Vec<_> = existing_prompts
+        .into_iter()
+        .filter(|prompt| targets.contains(&prompt.target.as_str()))
+        .collect();
+    let prompts = task_manager_shared::execution_prompts::validate_prompts(
+        prompts.unwrap_or(&preserved),
+        &targets,
+    )?;
     let template = KindTemplateModel {
+        prompts,
+
         id: id.clone(),
         name: name.trim().to_string(),
         description: description.trim().to_string(),

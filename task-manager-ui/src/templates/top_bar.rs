@@ -29,6 +29,18 @@ pub fn TopBar(active: &'static str) -> Element {
         })
         .unwrap_or_default();
 
+    let sync_title = app_state_ra
+        .last_synced_unix_seconds
+        .map(|time| {
+            let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(time as f64 * 1000.0));
+            format!(
+                "Last synchronized: {}",
+                date.to_locale_string("en-GB", &wasm_bindgen::JsValue::UNDEFINED)
+                    .as_string()
+                    .unwrap_or_default()
+            )
+        })
+        .unwrap_or_else(|| "Waiting for the first synchronized snapshot".into());
     let class_of = |name: &str| {
         if name == active {
             "topbar-tab active"
@@ -45,6 +57,7 @@ pub fn TopBar(active: &'static str) -> Element {
                 // on the board somebody is already looking at.
                 Link { class: class_of("home"), to: AppRoute::Home { search: None }, "Home" }
                 Link { class: class_of("goals"), to: AppRoute::Goals {}, "Goals" }
+                Link { class: class_of("inbox"), to: AppRoute::Inbox {}, "Inbox" }
                 // Visible to everybody, unlike the admin screens: a document is the work's reference material,
                 // and reading it is what every member of a project needs.
                 Link { class: class_of("documents"), to: AppRoute::Documents { selected: String::new() }, "Documents" }
@@ -59,6 +72,12 @@ pub fn TopBar(active: &'static str) -> Element {
                 }
             }
             div { class: "topbar-right",
+                if app_state_ra.ws_started {
+                    span { class: "sync-status", role: "status",
+                        title: "{sync_title}",
+                        "{app_state_ra.ws_status}"
+                    }
+                }
                 // Title as well as text: the bar is one row, so a long name · email is truncated, and
                 // the full address is the thing that answers "which of my Google accounts is this?".
                 div { class: "topbar-whoami", title: "{whoami}", "{whoami}" }

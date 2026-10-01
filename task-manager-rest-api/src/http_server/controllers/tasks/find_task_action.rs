@@ -67,7 +67,10 @@ async fn handle_request(
             // task answers is worth asking the goals about before reporting nothing.
             if let Some(parsed) = crate::board::parse_task_handle(input_data.query.trim()) {
                 if let Some(project) = board.get_project_by_prefix(&parsed.prefix) {
-                    if board.get_goal_including_deleted(&project.id, parsed.number).is_some() {
+                    if board
+                        .get_goal_including_deleted(&project.id, parsed.number)
+                        .is_some()
+                    {
                         let handle =
                             crate::board::compose_goal_handle(&project.prefix, parsed.number);
                         return found_goal(action, &board, &user, &handle);
@@ -135,6 +138,7 @@ fn found_goal(
             &found.project.prefix,
             tasks_amount,
             done_amount,
+            &board,
         )),
         project: found.project.prefix.clone(),
         project_name: found.project.name.clone(),

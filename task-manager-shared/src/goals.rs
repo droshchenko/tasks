@@ -12,8 +12,9 @@ use crate::tasks::TaskCommentResponse;
 // same per-project counter task numbers come from, so no number names both a task and a goal, and the `G`
 // says which of the two you are holding.
 //
-// `status` is derived from whether the goal is closed, not stored, so it cannot disagree with
-// `closed_unix_seconds`. Progress is `done_amount` out of `tasks_amount`, also derived on every read, and
+// `status` is derived by the server from the tasks: todo, in-progress or done. Completion
+// time is tracked separately so removing a blocker cannot backdate a new completion.
+// Progress is `done_amount` out of `tasks_amount`, also derived on every read, and
 // it counts ARCHIVED tasks too: a goal can only be closed once all its tasks are done, and by then the
 // oldest of them have aged off the board — a count that skipped those would report finished work as
 // half-done. Which is why the Goals screen must not recompute these numbers from the tasks it holds.
@@ -36,6 +37,8 @@ pub struct GoalResponse {
     pub status: String,
     pub tasks_amount: i32,
     pub done_amount: i32,
+    #[serde(default)]
+    pub waiting_tasks: Vec<crate::readiness::GoalWaitingTask>,
     // The goal's own checklist, in the order it was written. Separate from `tasks_amount` /
     // `done_amount` and deliberately not folded into them: those count the goal's TASKS, which is what
     // decides whether it can close, and mixing a private breakdown into the number a goal is judged by
@@ -49,6 +52,8 @@ pub struct GoalResponse {
     pub comments: Vec<TaskCommentResponse>,
     pub created_unix_seconds: i64,
     pub updated_unix_seconds: i64,
+    #[serde(default)]
+    pub revision_unix_microseconds: i64,
     // When the goal was closed, and absent while it is open. What the archive window is measured from: a
     // goal closed longer ago than the project's window is not returned unless asked for.
     pub closed_unix_seconds: Option<i64>,

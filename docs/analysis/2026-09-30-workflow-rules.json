@@ -1,0 +1,60 @@
+{
+  "author": "Codex, tasks",
+  "date": "2026-09-30",
+  "follow_up": "2026-10-01-implementation-results.json",
+  "upstream": "my-ai-utils/task-manager-mcp",
+  "baseline_commit": "099602ec34e8fb510b704834e4f2fa5871c0340d",
+  "findings": [
+    "The baseline MCP instructions combine every workflow in one long text, while projects already select independent column and task-type templates.",
+    "Goal status was based on a separately persisted close moment, so a goal with all tasks done could still be In Progress.",
+    "Task comments could store a conversation but did not identify questions, immutable offered choices or the provenance of a human answer.",
+    "Task modifications cloned and replaced the entire row; concurrent comments and task updates could overwrite one another."
+  ],
+  "implementation": {
+    "prompts": {
+      "storage": "Optional JSON prompt lists on existing template rows; legacy null or missing fields resolve to empty lists.",
+      "selection": "project.column_template_id + task.status, and project.kind_template_id + task.kind",
+      "anchors": "Todo and Done remain fixed columns, but can have prompts.",
+      "version": "SHA-256 over scope, template ID, target, text and output requirement.",
+      "analysis_links": "Templates can require attached analysis-file references at stage exit or task-type completion."
+    },
+    "goals": {
+      "source_of_truth": "The same board snapshot and non-deleted tasks used by progress counters.",
+      "completion": "A nonempty goal is Done when every task is Done; archived tasks still count.",
+      "reopening": "An unfinished added or reopened task makes the goal active and clears its projected closure timestamp.",
+      "legacy": "An explicitly closed empty legacy goal retains its manual state; newly created empty goals do not automatically close.",
+      "transition_time": "Automatic completion/reopening clocks and system events are stored atomically with the triggering task; this prevents a removed blocker from backdating completion."
+    },
+    "decisions": {
+      "storage": "Questions and answers share the task row with its comment history, so one upsert persists both.",
+      "flow": "tasks_request_decision -> actual human question/reply -> tasks_answer_decision",
+      "identity": "A stable per-task request key makes retries idempotent; each question has a stable decision ID.",
+      "history": "Original action, wording and options remain unchanged after answer or cancellation.",
+      "provenance": "Authenticated board answers use ui; chat replies use agent_reported; imports retain imported:<original-source> and validate immutable history invariants.",
+      "blocking": "An unanswered required question prevents the task from landing in Done; optional questions do not.",
+      "limits": "The MCP server cannot intercept arbitrary client chats. The client must use the documented request/reply tools for task-related questions."
+    },
+    "consistency": "An async guard serializes task and goal read-modify-write operations; SDK parameterized data-modifying CTEs commit their rows atomically. Bounded ordered socket delivery runs after the guard is released.",
+    "rollout": "Deploy backend before the UI. Added database fields are nullable. Existing templates, tasks and exports remain readable; no destructive migration is needed."
+  },
+  "verification": {
+    "commit": "c22c24f7090033709ea9499d810e8c628af03ded",
+    "date": "2026-10-01",
+    "unit_tests": { "shared": 53, "backend": 266, "ui": 72 },
+    "postgres_integration": "Passed separately against disposable local PostgreSQL 16: nullable migration preserves legacy rows; decision history round-trips; task/goal writes commit together and roll back together on constraint failure.",
+    "wasm": "Current UI passes cargo check for wasm32-unknown-unknown.",
+    "backend_locked": "cargo check --locked passes without changing dependency pins.",
+    "review": "Independent read-only code review: no remaining blocking findings after corrections.",
+    "limits": "No browser visual verification or production deployment was performed. One database test is ignored by default and was explicitly run against the disposable database."
+  },
+  "acceptance_scenarios": [
+    "Only the selected stage and task-type fragments are returned for one task.",
+    "Editing a fragment or its analysis-file requirement changes its content version.",
+    "Completing the last task automatically completes its goal; adding or reopening unfinished work reverses that state.",
+    "Retries do not duplicate a question or reply, and recommended choices never submit an answer automatically.",
+    "Free text and cancelled questions remain in history.",
+    "A person can answer directly in the task card, with identity and time supplied by the server.",
+    "Required unanswered questions and configured missing analysis links reject task completion or the relevant stage exit.",
+    "Project export/import preserves decision history and remaps analysis-document references."
+  ]
+}

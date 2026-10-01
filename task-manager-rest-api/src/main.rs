@@ -8,6 +8,7 @@ mod board;
 mod documents;
 mod github;
 mod http_server;
+mod intelligence;
 mod mappers;
 mod mcp;
 mod postgres;
@@ -57,9 +58,9 @@ async fn main() {
 
         // Before the controllers, and outside `/api` on purpose: a framed html document resolves its relative
         // assets against this route, so the shape of the url is part of the contract. See the middleware.
-        builder.register_custom_middleware(Arc::new(
-            http_server::RawDocumentsMiddleware::new(app.clone()),
-        ));
+        builder.register_custom_middleware(Arc::new(http_server::RawDocumentsMiddleware::new(
+            app.clone(),
+        )));
 
         builder.register_custom_middleware(ws_middleware);
         builder.register_custom_middleware(mcp_middleware.clone());

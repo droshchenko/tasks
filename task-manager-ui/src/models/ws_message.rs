@@ -17,6 +17,7 @@ use task_manager_shared::ws::{BoardSnapshot, ServerWsPayload};
 pub enum ServerWsMessage {
     BoardSnapshot(BoardSnapshot),
     ProjectChanged,
+    Pong,
     Error(String),
     Unknown(String),
 }
@@ -39,6 +40,9 @@ impl ServerWsMessage {
 
         if let Some(error) = payload.error {
             return Self::Error(error);
+        }
+        if payload.pong == Some(true) {
+            return Self::Pong;
         }
 
         Self::Unknown(raw.to_string())

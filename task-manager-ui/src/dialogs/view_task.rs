@@ -17,7 +17,8 @@ use task_manager_shared::tasks::{
 /// been talking about it.
 #[component]
 pub fn ViewTaskDialog(found: FindTaskResponse) -> Element {
-    let Some(task) = found.task.clone() else {
+    let app = consume_context::<Signal<crate::states::AppState>>();
+    let Some(mut task) = found.task.clone() else {
         // A miss carries the server's own message, which says what would fix it — a bad shape, an unknown
         // prefix with the known ones listed, or a number that is not on that board.
         let reason = if found.not_found.is_empty() {
@@ -38,6 +39,16 @@ pub fn ViewTaskDialog(found: FindTaskResponse) -> Element {
     // The handle and the title, which is what a person calls this task when they talk about it. The project
     // was here instead and is now an attribute — it is the same project for every card you open off a board,
     // so it was paying for the one line that identifies the task.
+    if let Some(snapshot) = app.read().board_push.as_ref() {
+        if snapshot.project == task.project {
+            if let Some(current) = snapshot.tasks.iter().find(|current| {
+                current.id == task.id
+                    && current.revision_unix_microseconds > task.revision_unix_microseconds
+            }) {
+                task = current.clone();
+            }
+        }
+    }
     let title = format!("{} · {}", task.id, task_title(&task.text));
     let content = render_task(&task, &found);
 
@@ -74,7 +85,7 @@ fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
     let text_html = super::md_to_html(body);
 
     rsx! {
-        div { class: "task-view",
+        div { class: if task.comments.is_empty() { "task-view compact-thread" } else { "task-view" },
             {render_goal_band(task)}
             div { class: "task-view-top",
                 // The text and the checklist are one scrolling column, and the attribute column is the
@@ -82,6 +93,20 @@ fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                 // it. Wrapped even when there is no checklist, because the top area is a two-column grid
                 // and a third child would drop onto a second row.
                 div { class: "task-view-left",
+                    super::readiness::ReadinessDetails { readiness: task.readiness.clone() }
+                    if !task.execution_prompts.is_empty() {
+                        details { class: "task-execution-prompts",
+                            summary { "Applied execution prompts" }
+                            for prompt in task.execution_prompts.iter() {
+                                div { class: "form-row",
+                                    strong { "{prompt.scope} · {prompt.target}" }
+                                    div { class: "muted mono", "Template {prompt.template_id} · version {prompt.version}" }
+                                    pre { "{prompt.text}" }
+                                    if prompt.requires_analysis_documents { div { class: "field-hint", "Analysis file links required" } }
+                                }
+                            }
+                        }
+                    }
                     if body.is_empty() {
                         // Said rather than left blank: an empty pane reads as something that failed to
                         // load, whereas most one-line tasks are one line on purpose.
@@ -95,6 +120,8 @@ fn render_task(task: &TaskResponse, found: &FindTaskResponse) -> Element {
                     if !task.subtasks.is_empty() {
                         super::Checklist { items: task.subtasks.clone() }
                     }
+                    super::task_decisions::TaskDecisionHistory { task_id: task.id.clone(), decisions: task.decisions.clone() }
+                    super::ai_reviews::AiReviews { reviews: task.ai_reviews.clone() }
                 }
                 {render_attributes(task, found)}
             }
@@ -230,6 +257,18 @@ fn render_attributes(task: &TaskResponse, found: &FindTaskResponse) -> Element {
             // this screen deliberately does not make one until a row is clicked.
             if !task.documents.is_empty() {
                 super::DocumentRefs { project: found.project.clone(), ids: task.documents.clone() }
+            }
+            if !task.analysis_documents.is_empty() {
+                div { class: "task-view-attr",
+                    div { class: "task-view-attr-label", "Analysis results" }
+                    super::DocumentRefs { project: found.project.clone(), ids: task.analysis_documents.clone() }
+                }
+            }
+            if task.decisions.iter().any(|decision| decision.blocks_completion()) {
+                div { class: "task-view-attr",
+                    div { class: "task-view-attr-label", "Human decision" }
+                    span { class: "tag", "Awaiting answer" }
+                }
             }
 
             // Straight after the documents, because the two are the same question asked in opposite
@@ -385,7 +424,7 @@ fn render_links(ids: &[String], statuses: &[TaskLinkResponse]) -> Element {
 /// task on another project or one closed long enough ago to be off the board entirely — the two cases where
 /// the loaded board has no answer. A failure is shown the same way a missing id is: as the dialog's own
 /// "Not found", carrying what went wrong.
-fn show(id: String) {
+pub(crate) fn show(id: String) {
     spawn(async move {
         let found = match crate::api::find_task(&id).await {
             Ok(found) => found,

@@ -6,6 +6,7 @@ use crate::postgres::{GoalCommentJsonModel, GoalDto, GoalSubtaskJsonModel};
 impl From<&GoalDto> for GoalModel {
     fn from(src: &GoalDto) -> Self {
         Self {
+            auto_completed: src.auto_completed.unwrap_or(false),
             project_id: src.project_id.clone(),
             number: src.number,
             name: src.name.clone(),
@@ -42,6 +43,7 @@ impl From<&GoalDto> for GoalModel {
 impl From<&GoalModel> for GoalDto {
     fn from(src: &GoalModel) -> Self {
         Self {
+            auto_completed: Some(src.auto_completed),
             // Dead column, written because the deployed table still has it NOT NULL. See `GoalDto`.
             id: crate::postgres::dead_id(&src.project_id, src.number),
             project_id: src.project_id.clone(),
@@ -117,7 +119,9 @@ pub fn goal_to_response(
     prefix: &str,
     tasks_amount: usize,
     done_amount: usize,
+    board: &crate::board::BoardInner,
 ) -> GoalResponse {
+    let (status, closed) = board.goal_state(src);
     GoalResponse {
         id: compose_goal_handle(prefix, src.number),
         project: prefix.to_string(),
@@ -125,9 +129,10 @@ pub fn goal_to_response(
         description: src.description.clone(),
         color: rust_extensions::AsStr::as_str(&src.color).to_string(),
         priority: rust_extensions::AsStr::as_str(&src.priority).to_string(),
-        status: src.status().to_string(),
+        status: status.to_string(),
         tasks_amount: tasks_amount as i32,
         done_amount: done_amount as i32,
+        waiting_tasks: super::goal_waiting_tasks(src, board),
         subtasks: super::subtasks_to_response(&src.subtasks),
         // Ids only — see `task_to_response`.
         documents: src.documents.clone(),
@@ -142,9 +147,8 @@ pub fn goal_to_response(
             .collect(),
         created_unix_seconds: src.created.unix_microseconds / 1_000_000,
         updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
-        closed_unix_seconds: src
-            .close_moment
-            .map(|itm| itm.unix_microseconds / 1_000_000),
+        revision_unix_microseconds: board.read_revision,
+        closed_unix_seconds: closed.map(|itm| itm.unix_microseconds / 1_000_000),
         deleted_unix_seconds: src
             .deleted_moment
             .map(|itm| itm.unix_microseconds / 1_000_000),

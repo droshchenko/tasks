@@ -25,6 +25,7 @@ struct ComponentState {
 struct Draft {
     name: String,
     description: String,
+    prompts: Vec<task_manager_shared::execution_prompts::ExecutionPrompt>,
     kinds: Vec<KindTemplateKind>,
 }
 
@@ -55,6 +56,7 @@ impl ComponentState {
             Some(template) => Draft {
                 name: template.name.clone(),
                 description: template.description.clone(),
+                prompts: template.prompts.clone(),
                 kinds: template.kinds.clone(),
             },
             None => Draft::default(),
@@ -109,6 +111,7 @@ impl ComponentState {
 
     fn remove(&mut self, id: &str) {
         self.draft.kinds.retain(|itm| itm.id != id);
+        self.draft.prompts.retain(|prompt| prompt.target != id);
     }
 
     fn set_name(&mut self, id: &str, value: String) {
@@ -142,6 +145,7 @@ pub struct KindTemplateSubmit {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub prompts: Vec<task_manager_shared::execution_prompts::ExecutionPrompt>,
     pub kinds: Vec<KindTemplateKind>,
 }
 
@@ -166,6 +170,7 @@ pub fn EditKindTemplateDialog(
             id,
             name: draft.name.trim().to_string(),
             description: draft.description.trim().to_string(),
+            prompts: draft.prompts,
             kinds: draft.kinds,
         });
     };
@@ -173,6 +178,9 @@ pub fn EditKindTemplateDialog(
     let name = cs_ra.draft.name.clone();
     let description = cs_ra.draft.description.clone();
     let draft = cs_ra.draft.kinds.clone();
+    let prompts = cs_ra.draft.prompts.clone();
+    let prompt_targets: Vec<String> = draft.iter().map(|item| item.id.clone()).collect();
+
     let used_by = template.as_deref().map(|itm| itm.used_by).unwrap_or(0);
     let new_kind = cs_ra.new_kind.clone();
     // The submit outcome is the router's, not this dialog's — see `DialogFeedback`.
@@ -217,7 +225,17 @@ pub fn EditKindTemplateDialog(
         if draft.is_empty() {
             div { class: "empty-note", style: "margin-top: 12px", "No task types yet." }
         } else {
-            div { class: "table-responsive", style: "margin-top: 12px",
+        super::prompt_fields::ExecutionPromptEditor {
+            prompts, targets: prompt_targets,
+            on_requirement: move |(target, required): (String, bool)| {
+                task_manager_shared::execution_prompts::set_analysis_requirement(&mut cs.write().draft.prompts, &target, required);
+            },
+            on_edit: move |(target, text): (String, String)| {
+                task_manager_shared::execution_prompts::set_prompt(&mut cs.write().draft.prompts, &target, text);
+            },
+        }
+
+        div { class: "table-responsive", style: "margin-top: 12px",
                 table { class: "table",
                     thead {
                         tr {
@@ -445,6 +463,8 @@ mod tests {
 
     fn template() -> KindTemplateResponse {
         KindTemplateResponse {
+            prompts: Vec::new(),
+
             id: "tpl".to_string(),
             name: "Development".to_string(),
             description: String::new(),

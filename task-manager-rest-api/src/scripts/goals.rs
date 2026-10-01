@@ -130,6 +130,7 @@ pub fn resolve_goal_reference(
 /// names both a task and a goal. Validation happens before the number is reserved, so a refused call does
 /// not burn one.
 pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, String> {
+    let _mutation = app.task_mutations.lock().await;
     let board = app.board.read();
     let project = resolve_project_by_prefix(&board, &new_goal.project_prefix)?;
 
@@ -172,6 +173,8 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
     let now = DateTimeAsMicroseconds::now();
 
     let goal = GoalModel {
+        auto_completed: false,
+
         project_id: project.id.clone(),
         number,
         name: new_goal.name.trim().to_string(),
@@ -197,6 +200,7 @@ pub async fn create_goal(app: &AppContext, new_goal: NewGoal) -> Result<String, 
     super::persist_project_counter(app, &project.id, &ctx).await;
 
     app.board.upsert_goal(goal);
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(compose_goal_handle(&project.prefix, number))
@@ -217,6 +221,7 @@ pub async fn update_goal(
     handle: &str,
     patch: GoalPatch,
 ) -> Result<String, String> {
+    let _mutation = app.task_mutations.lock().await;
     if patch.is_empty() {
         return Err(
             "nothing to update: pass at least one of name, description, color, priority, close, a checklist change, a document reference or comment"
@@ -230,6 +235,12 @@ pub async fn update_goal(
     let mut goal = resolved.goal.as_ref().clone();
 
     let was_closed = goal.is_closed();
+    if patch.close == Some(false)
+        && board.goal_progress(&project.id, goal.number).0 > 0
+        && board.goal_state(&goal).0 == "done"
+    {
+        return Err("this goal is complete because all its tasks are done; add or reopen unfinished work to make it active".into());
+    }
     let handle = compose_goal_handle(&project.prefix, goal.number);
 
     if let Some(name) = &patch.name {
@@ -297,6 +308,7 @@ pub async fn update_goal(
     // would count as archived and quietly leave the screen.
     match patch.close {
         Some(true) => {
+            goal.auto_completed = false;
             if !was_closed {
                 goal.close_moment = Some(DateTimeAsMicroseconds::now());
             }
@@ -324,6 +336,7 @@ pub async fn update_goal(
     app.goals_repo.upsert(&dto, &ctx).await;
 
     app.board.upsert_goal(goal);
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(handle)
@@ -342,6 +355,7 @@ pub async fn update_goal(
 ///
 /// Deleting twice is not an error and does not move the moment.
 pub async fn delete_goal(app: &AppContext, handle: &str) -> Result<String, String> {
+    let _mutation = app.task_mutations.lock().await;
     let board = app.board.read();
     let resolved = resolve_goal_by_handle(&board, handle)?;
     let project = resolved.project;
@@ -358,6 +372,7 @@ pub async fn delete_goal(app: &AppContext, handle: &str) -> Result<String, Strin
 
     let handle = compose_goal_handle(&project.prefix, goal.number);
     app.board.upsert_goal(goal);
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(handle)
@@ -374,6 +389,7 @@ pub async fn add_goal_comment(
     who: &str,
     text: &str,
 ) -> Result<String, String> {
+    let _mutation = app.task_mutations.lock().await;
     if who.trim().is_empty() {
         return Err("a comment needs an author — an email, or `AI`".to_string());
     }
@@ -399,6 +415,7 @@ pub async fn add_goal_comment(
 
     let handle = compose_goal_handle(&project.prefix, goal.number);
     app.board.upsert_goal(goal);
+    drop(_mutation);
     app.notify_project_changed(&project.id).await;
 
     Ok(handle)
