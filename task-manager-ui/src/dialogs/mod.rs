@@ -38,6 +38,8 @@ mod md;
 mod prompt_fields;
 mod task_decisions;
 pub use md::*;
+pub(crate) use task_decisions::TaskDecisionCard;
+pub(crate) use view_task::show as show_task;
 mod message;
 pub use message::*;
 mod refresh_github;
@@ -48,6 +50,8 @@ mod view_document;
 pub use view_document::*;
 mod view_goal;
 pub use view_goal::*;
+mod ai_reviews;
+mod readiness;
 mod view_task;
 pub use view_task::*;
 

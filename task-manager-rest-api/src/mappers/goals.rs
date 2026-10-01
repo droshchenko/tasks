@@ -132,6 +132,7 @@ pub fn goal_to_response(
         status: status.to_string(),
         tasks_amount: tasks_amount as i32,
         done_amount: done_amount as i32,
+        waiting_tasks: super::goal_waiting_tasks(src, board),
         subtasks: super::subtasks_to_response(&src.subtasks),
         // Ids only — see `task_to_response`.
         documents: src.documents.clone(),
@@ -146,6 +147,7 @@ pub fn goal_to_response(
             .collect(),
         created_unix_seconds: src.created.unix_microseconds / 1_000_000,
         updated_unix_seconds: src.updated.unix_microseconds / 1_000_000,
+        revision_unix_microseconds: board.read_revision,
         closed_unix_seconds: closed.map(|itm| itm.unix_microseconds / 1_000_000),
         deleted_unix_seconds: src
             .deleted_moment

@@ -25,7 +25,11 @@ pub async fn load_state(app: &AppContext) {
     let template_rows = app.column_templates_repo.get_all(&ctx).await;
     let kind_template_rows = app.kind_templates_repo.get_all(&ctx).await;
     let goal_rows = app.goals_repo.get_all(&ctx).await;
-
+    if let Ok(rows) = app.semantic_repo.get_all(&ctx).await {
+        for row in rows {
+            app.semantic_index.upsert(row);
+        }
+    }
 
     // Membership lives in its own table, so it is folded back onto the projects here — the only place
     // the two halves are joined.

@@ -1,3 +1,4 @@
+use super::readiness_views::{GoalWaitingTaskView, TaskReadinessView};
 use mcp_server_middleware::*;
 use rust_extensions::AsStr;
 use serde::{Deserialize, Serialize};
@@ -163,6 +164,10 @@ pub struct GoalView {
     )]
     pub done_amount: i32,
     #[property(
+        description = "Unfinished goal tasks waiting for dependencies, required human answers or analysis files; current reasons, not a separate goal status"
+    )]
+    pub waiting_tasks: Vec<GoalWaitingTaskView>,
+    #[property(
         description = "The goal's own checklist, in the order it was written — the notes-to-self of the epic, kept inside it. Separate from `tasks_amount` / `done_amount`, which count its TASKS and are what decide whether it can close: an unticked item here does not hold the goal open. Use it for the small things an epic drags along that are not worth a card of their own. Usually empty"
     )]
     pub subtasks: Vec<SubtaskView>,
@@ -205,6 +210,10 @@ impl GoalView {
             status: status.to_string(),
             tasks_amount: tasks_amount as i32,
             done_amount: done_amount as i32,
+            waiting_tasks: crate::mappers::goal_waiting_tasks(goal, board)
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             subtasks: SubtaskView::from_models(&goal.subtasks),
             documents: goal.documents.clone(),
             comments_amount: goal.comments.len() as i32,
@@ -1113,6 +1122,10 @@ pub struct TaskView {
     )]
     pub blocked: bool,
     #[property(
+        description = "Current reasons why work needs attention, with dependencies distinguished from completion requirements"
+    )]
+    pub readiness: TaskReadinessView,
+    #[property(
         description = "How many human questions are recorded on this task; tasks_prepare returns their full immutable history"
     )]
     pub decisions_amount: i32,
@@ -1120,6 +1133,10 @@ pub struct TaskView {
         description = "True while a required human question is unanswered. The task cannot land in done until it is answered or cancelled"
     )]
     pub awaiting_human: bool,
+    #[property(
+        description = "Recorded Jev evaluations; read them with tasks_review_history, which can include exact snapshots"
+    )]
+    pub ai_reviews_amount: i32,
     #[property(
         description = "References to files containing the analysis results, separate from the input specification"
     )]
@@ -1188,7 +1205,9 @@ impl TaskView {
                 .map(|number| compose_task_handle(&project.prefix, *number))
                 .collect(),
             blocked: board.is_blocked(task),
+            readiness: crate::mappers::task_readiness(task, project, board).into(),
             decisions_amount: task.decisions.len() as i32,
+            ai_reviews_amount: task.ai_reviews.len() as i32,
             awaiting_human: task
                 .decisions
                 .iter()

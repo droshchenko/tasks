@@ -1,7 +1,6 @@
 use dioxus::prelude::*;
 use dioxus_utils::RenderState;
-use futures::{SinkExt, StreamExt};
-use reqwasm::websocket::{Message, futures::WebSocket};
+
 use task_manager_shared::auth::MeResponse;
 
 mod api;
@@ -12,7 +11,6 @@ mod templates;
 mod views;
 mod web;
 
-use models::ServerWsMessage;
 use states::AppState;
 
 #[derive(Routable, PartialEq, Clone)]
@@ -48,6 +46,8 @@ pub enum AppRoute {
     // arguments — nothing here is searched, and which project is showing is remembered rather than linked.
     #[route("/goals")]
     Goals {},
+    #[route("/inbox")]
+    Inbox {},
     // The project's documents: the tree on the left, whatever is selected on the right. The selection is IN
     // the url so a document can be linked to — an agent can say "see TM/docs/design.md" as an address, and a
     // reload lands back on it. Modelled on the file browser in `remote-development-mcp`.
@@ -195,6 +195,11 @@ fn Goals() -> Element {
 }
 
 #[component]
+fn Inbox() -> Element {
+    rsx! { Shell { active: "inbox", crate::views::inbox::RenderInbox {} } }
+}
+
+#[component]
 fn Documents(selected: String) -> Element {
     rsx! {
         Shell { active: "documents",
@@ -278,87 +283,6 @@ pub fn start_ws() {
     kick_off_ws(app_state);
 }
 
-/// Hold the socket open and bump `board_revision` when the server says a board changed.
-///
-/// It carries nothing: the session is a cookie, which the browser attaches to the handshake by itself.
-///
-/// No reconnect loop yet: a dropped socket leaves the board static until the page is reloaded, and since the
-/// live dot came off the header there is nothing on screen that says so — only a line in the console. If that
-/// starts biting, the fix is a reconnect, not putting the dot back.
-fn kick_off_ws(mut app_state: Signal<AppState>) {
-    spawn(async move {
-        // Bound before use: `get_origin` borrows from the settings, so calling it on a temporary would
-        // not outlive the statement.
-        let settings = dioxus_utils::js::GlobalAppSettings::new();
-        let origin = settings.get_origin();
-
-        let ws_origin = if origin.starts_with("https") {
-            origin.replacen("https", "wss", 1)
-        } else {
-            origin.replacen("http", "ws", 1)
-        };
-
-        // No token in the url any more: the session is a cookie, and the browser sends cookies on the
-        // WebSocket handshake — which is the one thing the WebSocket API will do that it will not do with a
-        // header. It used to be spelled here, where it landed in browser history and in proxy logs.
-        let ws_url = if ws_origin.ends_with('/') {
-            format!("{ws_origin}ws")
-        } else {
-            format!("{ws_origin}/ws")
-        };
-
-        // The channel is installed before the socket opens, so a `watch` sent by Home while the
-        // handshake is still in flight waits in it rather than being dropped.
-        let mut outgoing = crate::web::install_ws_sender();
-
-        match WebSocket::open(&ws_url) {
-            Ok(ws) => {
-                // Split so sending and receiving are independent: the read half blocks on the server, and
-                // a `watch` must not have to wait behind it.
-                let (mut write, mut read) = ws.split();
-
-                spawn(async move {
-                    while let Some(payload) = outgoing.next().await {
-                        if write.send(Message::Text(payload)).await.is_err() {
-                            break;
-                        }
-                    }
-                });
-
-                while let Some(message) = read.next().await {
-                    match message {
-                        Ok(Message::Text(text)) => match ServerWsMessage::parse(&text) {
-                            // Landed as-is for the view to apply. Nothing is requested and nothing is
-                            // emptied first, which is the whole point: the screen does not flinch.
-                            ServerWsMessage::BoardSnapshot(snapshot) => {
-                                app_state.write().board_pushed(snapshot);
-                            }
-                            // No board came with it, so the view re-reads — the old protocol, kept because
-                            // it is the one thing that works when the server cannot build a snapshot.
-                            ServerWsMessage::ProjectChanged => {
-                                app_state.write().board_invalidated();
-                            }
-                            ServerWsMessage::Error(err) => {
-                                crate::web::console_log(format!("ws: {err}").as_str());
-                            }
-                            ServerWsMessage::Unknown(raw) => {
-                                crate::web::console_log(format!("ws: unknown {raw}").as_str());
-                            }
-                        },
-                        Ok(Message::Bytes(_)) => {}
-                        Err(err) => {
-                            crate::web::console_log(format!("ws error: {err:?}").as_str());
-                            break;
-                        }
-                    }
-                }
-
-                // The socket is gone. Nothing on screen says so — see `kick_off_ws`.
-                crate::web::console_log("ws closed");
-            }
-            Err(err) => {
-                crate::web::console_log(format!("cannot open ws: {err:?}").as_str());
-            }
-        }
-    });
+fn kick_off_ws(app_state: Signal<AppState>) {
+    crate::web::run_ws(app_state);
 }

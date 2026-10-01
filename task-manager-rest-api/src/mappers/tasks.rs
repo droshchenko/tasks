@@ -93,6 +93,7 @@ impl From<&TaskDto> for TaskModel {
         Self {
             decisions: src.decisions.clone().unwrap_or_default(),
             analysis_documents: src.analysis_documents.clone().unwrap_or_default(),
+            ai_reviews: src.ai_reviews.clone().unwrap_or_default(),
             project_id: src.project_id.clone(),
             number: src.number,
             text: src.task_text.clone(),
@@ -140,6 +141,7 @@ impl From<&TaskModel> for TaskDto {
         Self {
             decisions: Some(src.decisions.clone()),
             analysis_documents: Some(src.analysis_documents.clone()),
+            ai_reviews: Some(src.ai_reviews.clone()),
             project_id: src.project_id.clone(),
             number: src.number,
             task_text: src.text.clone(),
@@ -227,6 +229,14 @@ pub fn task_to_response(
             .collect(),
         link_statuses: link_statuses(task, &blocks, project, board),
         blocked: board.is_blocked(task),
+        readiness: super::task_readiness(task, project, board),
+        ai_reviews: task
+            .ai_reviews
+            .iter()
+            .rev()
+            .take(5)
+            .map(|review| review.summary.clone())
+            .collect(),
         subtasks: subtasks_to_response(&task.subtasks),
         // The ids only. Resolving them means reading Postgres, which this function cannot do and a board
         // read must not do — the browser asks for a document when somebody opens one, and draws the count
@@ -254,6 +264,7 @@ pub fn task_to_response(
             .collect(),
         created_unix_seconds: task.created.unix_microseconds / 1_000_000,
         updated_unix_seconds: task.updated.unix_microseconds / 1_000_000,
+        revision_unix_microseconds: board.read_revision,
         closed_unix_seconds: task
             .close_moment
             .map(|itm| itm.unix_microseconds / 1_000_000),

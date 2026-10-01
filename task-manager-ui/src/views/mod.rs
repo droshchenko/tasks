@@ -2,6 +2,7 @@ pub mod auth_callback;
 pub mod documents;
 pub mod goals;
 pub mod home;
+pub mod inbox;
 pub mod login;
 pub mod logout;
 pub mod projects_setup;

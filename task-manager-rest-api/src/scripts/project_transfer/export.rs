@@ -373,6 +373,7 @@ fn task_to_file(project: &ProjectModel, task: &TaskModel) -> TaskFileModel {
     TaskFileModel {
         decisions: task.decisions.clone(),
         analysis_documents: task.analysis_documents.clone(),
+        ai_reviews: task.ai_reviews.clone(),
         id: compose_task_handle(&project.prefix, task.number),
         text_base64: encode_text(&task.text),
         // The STORED status, not the effective one: a task parked in a column the project's template no

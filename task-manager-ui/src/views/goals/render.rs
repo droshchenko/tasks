@@ -17,6 +17,7 @@ use crate::states::AppState;
 #[component]
 pub fn RenderGoals() -> Element {
     let app_state = consume_context::<Signal<AppState>>();
+    let mut seen_connection = use_signal(|| 0_u64);
 
     let mut cs = use_signal(ComponentState::default);
 
@@ -29,7 +30,15 @@ pub fn RenderGoals() -> Element {
         let app_ra = app_state.read();
         let _revision = app_ra.board_revision;
         let push = app_ra.board_push.clone();
+        let generation = app_ra.ws_generation;
         drop(app_ra);
+        if generation > *seen_connection.peek() {
+            let reconnect = *seen_connection.peek() > 0;
+            seen_connection.set(generation);
+            if reconnect {
+                cs.write().projects.reset();
+            }
+        }
 
         match push {
             Some(snapshot) if snapshot.project == cs.peek().selected => {
@@ -873,8 +882,9 @@ fn RenderGoalTask(task: TaskResponse, project: ProjectResponse) -> Element {
             span { class: "goal-task-title", "{title}" }
 
             if task.blocked {
-                span { class: "sticker-blocked-flag", "Blocked" }
+                span { class: "sticker-blocked-flag", title: "{crate::web::blocking_summary(&task.readiness)}", "Blocked" }
             }
+            if task.readiness.required_decisions > 0 { span { class: "tag", "Awaiting answer" } }
 
             // Only when there is a thread. A `0` on every line is noise that makes the lines that do have
             // something harder to spot.

@@ -17,6 +17,7 @@ pub fn build_controllers(app: &Arc<AppContext>, http_server_builder: &mut HttpSe
     http_server_builder.register_get_action(system::PingAction::new(app.clone()));
     http_server_builder.register_post_action(system::DiagnosticsAction::new(app.clone()));
     http_server_builder.register_post_action(tasks::AnswerDecisionAction::new(app.clone()));
+    http_server_builder.register_post_action(tasks::PendingDecisionsAction::new(app.clone()));
 
     http_server_builder.register_post_action(auth::GoogleAuthUrlAction::new(app.clone()));
     http_server_builder.register_post_action(auth::GoogleCallbackAction::new(app.clone()));

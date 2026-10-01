@@ -235,6 +235,8 @@ pub struct TaskFileModel {
     pub decisions: Vec<task_manager_shared::decisions::TaskDecision>,
     #[serde(default)]
     pub analysis_documents: Vec<String>,
+    #[serde(default)]
+    pub ai_reviews: Vec<task_manager_shared::ai_reviews::AiReview>,
 }
 
 /// `comments.yaml`.

@@ -13,6 +13,20 @@ use task_manager_shared::kind_color::KindColor;
 /// dialog existed there was nowhere in the browser to read it.
 #[component]
 pub fn ViewGoalDialog(goal: GoalResponse, status: String) -> Element {
+    let app = consume_context::<Signal<crate::states::AppState>>();
+    let mut goal = goal;
+    let mut status = status;
+    if let Some(snapshot) = app.read().board_push.as_ref() {
+        if snapshot.project == goal.project {
+            if let Some(current) = snapshot.goals.iter().find(|current| {
+                current.id == goal.id
+                    && current.revision_unix_microseconds > goal.revision_unix_microseconds
+            }) {
+                goal = current.clone();
+                status = goal.status.clone();
+            }
+        }
+    }
     let title = format!("{} · {}", goal.id, goal.name);
     let content = render_goal(&goal, &status);
 
@@ -29,12 +43,27 @@ fn render_goal(goal: &GoalResponse, status: &str) -> Element {
     let has_description = !goal.description.trim().is_empty();
 
     rsx! {
-        div { class: "task-view",
+        div { class: if goal.comments.is_empty() { "task-view compact-thread" } else { "task-view" },
             div { class: "task-view-top",
                 // One scrolling column for the description and the checklist under it, exactly as the task
                 // dialog arranges the same two things — see the note there for why it is wrapped even when
                 // there is no checklist.
                 div { class: "task-view-left",
+                    if !goal.waiting_tasks.is_empty() {
+                        section { class: "goal-waiting-tasks",
+                            h3 { "Tasks needing attention ({goal.waiting_tasks.len()})" }
+                            for waiting in goal.waiting_tasks.iter() {
+                                details { class: "goal-waiting-task",
+                                    summary { "{waiting.task_id} · {waiting.title}" }
+                                    button { class: "task-view-link", onclick: {
+                                        let id = waiting.task_id.clone();
+                                        move |_| super::view_task::show(id.clone())
+                                    }, "Open task" }
+                                    super::readiness::ReadinessDetails { readiness: waiting.readiness.clone() }
+                                }
+                            }
+                        }
+                    }
                     if has_description {
                         div { class: "task-view-text md", dangerous_inner_html: "{description_html}" }
                     } else {

@@ -43,6 +43,9 @@ impl Board {
 
         let mut next = self.inner.load().as_ref().clone();
         mutation(&mut next);
+        next.read_revision = rust_extensions::date_time::DateTimeAsMicroseconds::now()
+            .unix_microseconds
+            .max(next.read_revision.saturating_add(1));
         next.rebuild_indexes();
 
         self.inner.store(Arc::new(next));
@@ -55,6 +58,9 @@ impl Board {
     /// cold start).
     pub fn replace_all(&self, mut loaded: BoardInner) {
         let _guard = self.write_lock.lock();
+        loaded.read_revision = rust_extensions::date_time::DateTimeAsMicroseconds::now()
+            .unix_microseconds
+            .max(self.inner.load().read_revision.saturating_add(1));
 
         loaded.rebuild_indexes();
         self.inner.store(Arc::new(loaded));

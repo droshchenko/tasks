@@ -166,6 +166,9 @@ pub struct TaskDto {
     #[sql_type("jsonb")]
     #[json]
     pub analysis_documents: Option<Vec<String>>,
+    #[sql_type("jsonb")]
+    #[json]
+    pub ai_reviews: Option<Vec<task_manager_shared::ai_reviews::AiReview>>,
 }
 
 pub struct TasksRepo {

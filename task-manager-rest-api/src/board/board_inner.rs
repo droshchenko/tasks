@@ -28,6 +28,7 @@ pub const ARCHIVE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// index and its source disagree.
 #[derive(Clone)]
 pub struct BoardInner {
+    pub read_revision: i64,
     projects: AHashMap<String, Arc<ProjectModel>>,
     /// Template id -> the named set of columns projects follow. Columns are configured here, not on a
     /// project; a project carries only the id of the template it follows.
@@ -58,6 +59,7 @@ pub struct BoardInner {
 impl BoardInner {
     pub fn new() -> Self {
         Self {
+            read_revision: DateTimeAsMicroseconds::now().unix_microseconds,
             projects: AHashMap::new(),
             column_templates: AHashMap::new(),
             kind_templates: AHashMap::new(),

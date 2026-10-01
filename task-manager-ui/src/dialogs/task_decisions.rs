@@ -1,5 +1,8 @@
 use dioxus::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use task_manager_shared::decisions::TaskDecision;
+
+static NEXT_INPUT_ID: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Default, Clone, PartialEq)]
 struct AnswerDraft {
@@ -7,6 +10,7 @@ struct AnswerDraft {
     text: String,
     saving: bool,
     error: String,
+    recorded: bool,
 }
 
 #[component]
@@ -25,18 +29,27 @@ pub fn TaskDecisionHistory(task_id: String, decisions: Vec<TaskDecision>) -> Ele
 }
 
 #[component]
-fn TaskDecisionCard(task_id: String, decision: TaskDecision) -> Element {
+pub fn TaskDecisionCard(
+    task_id: String,
+    decision: TaskDecision,
+    on_answered: Option<EventHandler<()>>,
+) -> Element {
+    let input_id = use_hook(|| NEXT_INPUT_ID.fetch_add(1, Ordering::Relaxed));
     let mut draft = use_signal(AnswerDraft::default);
     let selection = draft.read().option.clone();
     let text = draft.read().text.clone();
     let saving = draft.read().saving;
     let error = draft.read().error.clone();
+    let recorded = draft.read().recorded;
     let can_answer = !saving && (!selection.is_empty() || !text.trim().is_empty());
     let question_id = decision.id.clone();
     let action_task = task_id.clone();
     let answer = move |_| {
         let state = draft.read().clone();
-        if state.saving || (state.option.is_empty() && state.text.trim().is_empty()) {
+        if state.saving
+            || state.recorded
+            || (state.option.is_empty() && state.text.trim().is_empty())
+        {
             return;
         }
         let task_id = action_task.clone();
@@ -56,16 +69,24 @@ fn TaskDecisionCard(task_id: String, decision: TaskDecision) -> Element {
                     draft.write().saving = false;
                     draft.write().error = error.message;
                 }
-                Ok(()) => match crate::api::find_task(&task_id).await {
-                    Ok(found) => super::open(super::DialogState::ViewTask { found }),
-                    Err(error) => {
-                        draft.write().saving = false;
-                        draft.write().error = format!(
-                            "Answer saved; the task could not be refreshed: {}",
-                            error.message
-                        );
+                Ok(()) => {
+                    draft.write().recorded = true;
+                    draft.write().saving = false;
+                    if let Some(on_answered) = on_answered {
+                        on_answered.call(());
+                        return;
                     }
-                },
+                    match crate::api::find_task(&task_id).await {
+                        Ok(found) => super::open(super::DialogState::ViewTask { found }),
+                        Err(error) => {
+                            draft.write().saving = false;
+                            draft.write().error = format!(
+                                "Answer saved; the task could not be refreshed: {}",
+                                error.message
+                            );
+                        }
+                    }
+                }
             }
         });
     };
@@ -102,19 +123,22 @@ fn TaskDecisionCard(task_id: String, decision: TaskDecision) -> Element {
             } else if decision.status == "cancelled" {
                 p { class: "muted", "Cancelled: {decision.cancel_reason.clone().unwrap_or_default()}" }
                 p { class: "muted", "By {decision.cancelled_by.clone().unwrap_or_default()} · {decision_time(decision.cancelled_unix_seconds.unwrap_or_default())}" }
+            } else if recorded {
+                p { role: "status", "Answer recorded." }
+                if !error.is_empty() { div { class: "error-banner", "{error}" } }
             } else {
                 if !error.is_empty() { div { class: "error-banner", "{error}" } }
                 if !decision.options.is_empty() {
-                    label { r#for: "decision-choice-{decision.id}", "Your choice" }
-                    select { id: "decision-choice-{decision.id}", onchange: move |event| draft.write().option = event.value(),
+                    label { r#for: "decision-choice-{input_id}", "Your choice" }
+                    select { id: "decision-choice-{input_id}", onchange: move |event| draft.write().option = event.value(),
                         option { value: "", selected: selection.is_empty(), "Choose an option or write an answer" }
                         for option in decision.options.iter() {
                             option { value: "{option.id}", selected: selection == option.id, "{option.label}" }
                         }
                     }
                 }
-                label { r#for: "decision-text-{decision.id}", "Answer or note" }
-                textarea { id: "decision-text-{decision.id}", rows: "3", value: "{text}", oninput: move |event| draft.write().text = event.value() }
+                label { r#for: "decision-text-{input_id}", "Answer or note" }
+                textarea { id: "decision-text-{input_id}", rows: "3", value: "{text}", oninput: move |event| draft.write().text = event.value() }
                 button { class: "btn btn-primary", disabled: !can_answer, onclick: answer,
                     if saving { "Saving…" } else { "Record answer" }
                 }
@@ -123,7 +147,7 @@ fn TaskDecisionCard(task_id: String, decision: TaskDecision) -> Element {
     }
 }
 
-fn decision_time(seconds: i64) -> String {
+pub(super) fn decision_time(seconds: i64) -> String {
     js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(seconds as f64 * 1000.0))
         .to_locale_string("en-GB", &wasm_bindgen::JsValue::UNDEFINED)
         .as_string()

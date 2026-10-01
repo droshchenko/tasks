@@ -31,6 +31,10 @@ pub struct AppContext {
     pub goals_repo: GoalsRepo,
     pub project_members_repo: ProjectMembersRepo,
     pub tasks_repo: TasksRepo,
+    pub semantic_repo: crate::postgres::SemanticRepo,
+    pub semantic_index: crate::intelligence::semantic::SemanticIndex,
+    pub semantic_jobs: tokio::sync::Mutex<()>,
+    pub evaluation_jobs: tokio::sync::Mutex<()>,
     pub users_repo: UsersRepo,
 
     // THE EXCEPTION to the line above: documents are never loaded into memory, so every read of one comes
@@ -133,6 +137,10 @@ impl AppContext {
             goals_repo: GoalsRepo::new(settings_reader.clone()).await,
             project_members_repo: ProjectMembersRepo::new(settings_reader.clone()).await,
             tasks_repo: TasksRepo::new(settings_reader.clone()).await,
+            semantic_repo: crate::postgres::SemanticRepo::new(settings_reader.clone()).await,
+            semantic_index: Default::default(),
+            semantic_jobs: tokio::sync::Mutex::new(()),
+            evaluation_jobs: tokio::sync::Mutex::new(()),
             users_repo: UsersRepo::new(settings_reader.clone()).await,
             documents_repo: DocumentsRepo::new(settings_reader.clone()).await,
             board: Board::new(),
@@ -257,5 +265,52 @@ impl AppContext {
         self.subscribers
             .push_to_watchers(project_id, &payload, &members)
             .await;
+    }
+
+    pub async fn send_current_board(
+        &self,
+        project_id: &str,
+        connection: &crate::subscribers::HomeConnection,
+    ) {
+        let _delivery = self.notifications.lock().await;
+        let payload = {
+            let board = self.board.read();
+            board
+                .get_project(project_id)
+                .filter(|project| connection.is_admin || project.is_member(&connection.email))
+                .and_then(|project| {
+                    let tasks = board
+                        .tasks_of_project(project_id)
+                        .iter()
+                        .map(|task| crate::mappers::task_to_response(task, &project, &board))
+                        .collect();
+                    let goals = board
+                        .goals_of_project(project_id)
+                        .iter()
+                        .filter(|goal| !board.is_goal_archived(goal))
+                        .map(|goal| {
+                            let (total, done) = board.goal_progress(project_id, goal.number);
+                            crate::mappers::goal_to_response(
+                                goal,
+                                &project.prefix,
+                                total,
+                                done,
+                                &board,
+                            )
+                        })
+                        .collect();
+                    serde_json::to_string(&ServerWsPayload::board(BoardSnapshot {
+                        project: project.prefix.clone(),
+                        tasks,
+                        goals,
+                    }))
+                    .ok()
+                })
+        };
+        if let Some(payload) = payload {
+            connection.send_payload(&payload).await;
+        } else {
+            connection.send_error("no access to this project").await;
+        }
     }
 }

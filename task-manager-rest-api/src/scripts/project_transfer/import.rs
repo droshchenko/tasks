@@ -603,6 +603,12 @@ fn build_task(
     skipped: &mut Vec<SkippedImport>,
 ) -> Result<TaskModel, String> {
     task_manager_shared::decisions::validate_decision_history(&src.decisions)?;
+    task_manager_shared::ai_reviews::validate_reviews(&src.ai_reviews)?;
+    if src.ai_reviews.iter().any(|review| {
+        crate::documents::content_hash(review.request_json.as_bytes()) != review.summary.input_hash
+    }) {
+        return Err("AI review request does not match its recorded input hash".into());
+    }
     if src.status.trim().eq_ignore_ascii_case("done")
         && src
             .decisions
@@ -694,6 +700,17 @@ fn build_task(
             })
             .collect(),
         analysis_documents: resolve_documents(&src.analysis_documents, documents),
+        ai_reviews: src
+            .ai_reviews
+            .iter()
+            .cloned()
+            .map(|mut review| {
+                if !review.summary.source.starts_with("imported:") {
+                    review.summary.source = format!("imported:{}", review.summary.source);
+                }
+                review
+            })
+            .collect(),
 
         project_id: project.id.clone(),
         number,
@@ -1116,6 +1133,7 @@ mod tests {
         let tasks = TasksFile {
             tasks: vec![TaskFileModel {
                 decisions: Vec::new(),
+                ai_reviews: Vec::new(),
                 analysis_documents: Vec::new(),
                 id: "TM-42".to_string(),
                 text_base64: encode_text("Ship it:\n- properly\n"),
@@ -1303,6 +1321,7 @@ mod tests {
     fn a_task_file_model(id: &str) -> TaskFileModel {
         TaskFileModel {
             decisions: Vec::new(),
+            ai_reviews: Vec::new(),
             analysis_documents: Vec::new(),
             id: id.to_string(),
             text_base64: encode_text("do the thing"),

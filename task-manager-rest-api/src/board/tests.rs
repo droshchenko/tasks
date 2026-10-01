@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+#[path = "workflow_tests.rs"]
+mod workflow_tests;
 use std::sync::Arc;
 
 use rust_extensions::date_time::DateTimeAsMicroseconds;
@@ -267,7 +269,7 @@ async fn postgres_workflow_is_atomic_and_nullable_migration_preserves_legacy_row
         connection.await.unwrap();
     });
     client.batch_execute(r#"
-        DROP TABLE IF EXISTS tasks, goals, column_templates, kind_templates;
+        DROP TABLE IF EXISTS tasks, goals, column_templates, kind_templates, semantic_vectors;
         CREATE TABLE tasks (
             project_id text NOT NULL, number bigint NOT NULL, task_text text NOT NULL, status text NOT NULL,
             priority text, kind text, goal_number bigint, assignee text, labels jsonb NOT NULL, depends_on jsonb NOT NULL,
@@ -308,11 +310,48 @@ async fn postgres_workflow_is_atomic_and_nullable_migration_preserves_legacy_row
                 "kind_templates",
                 Some("kind_templates_pkey".into()),
             )
+            .with_table_schema_verification::<crate::postgres::SemanticVectorDto>(
+                "semantic_vectors",
+                Some("semantic_vectors_pk".into()),
+            )
             .build()
             .await;
-    let legacy = client.query_one("SELECT task_text, decisions IS NULL, analysis_documents IS NULL FROM tasks WHERE project_id='legacy'", &[]).await.unwrap();
+    let legacy = client.query_one("SELECT task_text, decisions IS NULL, analysis_documents IS NULL, ai_reviews IS NULL FROM tasks WHERE project_id='legacy'", &[]).await.unwrap();
     assert_eq!(legacy.get::<_, String>(0), "Keep this row");
     assert!(legacy.get::<_, bool>(1) && legacy.get::<_, bool>(2));
+    assert!(legacy.get::<_, bool>(3));
+    let vector = crate::postgres::SemanticVectorDto {
+        project_id: "p".into(),
+        task_number: 2,
+        provider_key: "local-fixture".into(),
+        content_hash: "hash".into(),
+        model: "embedding-test-v1".into(),
+        dimensions: 2,
+        embedding: vec![0.6, 0.8],
+    };
+    let vector_sql = service_sdk::my_postgres::sql::build_insert_or_update_sql(
+        &vector,
+        "semantic_vectors",
+        &service_sdk::my_postgres::UpdateConflictType::OnPrimaryKeyConstraint(
+            "semantic_vectors_pk".into(),
+        ),
+    );
+    client
+        .execute(&vector_sql.sql, &vector_sql.values.get_values_to_invoke())
+        .await
+        .unwrap();
+    let stored_vector: String = client
+        .query_one(
+            "SELECT embedding::text FROM semantic_vectors WHERE project_id='p'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        serde_json::from_str::<Vec<f32>>(&stored_vector).unwrap(),
+        vector.embedding
+    );
     assert!(
         client
             .query_one(
@@ -336,6 +375,9 @@ async fn postgres_workflow_is_atomic_and_nullable_migration_preserves_legacy_row
     let mut changed_task = task("p", 2, COLUMN_ID_DONE, &[]);
     changed_task.text = "Use $1 literally; don't execute it".into();
     changed_task.goal_number = Some(1);
+    changed_task
+        .ai_reviews
+        .push(crate::intelligence::jev::fixture_review());
     changed_task.close_moment = Some(DateTimeAsMicroseconds::now());
     changed_task.analysis_documents = vec!["raw/TM/github/source/analysis #1.md".into()];
     use task_manager_shared::decisions::{DecisionAnswer, DecisionRequest};
@@ -384,6 +426,19 @@ async fn postgres_workflow_is_atomic_and_nullable_migration_preserves_legacy_row
         .unwrap();
     assert_eq!(stored.get::<_, String>(0), changed_task.text);
     assert!(stored.get::<_, String>(1).contains("analysis #1.md"));
+    let review_json: String = client
+        .query_one(
+            "SELECT ai_reviews::text FROM tasks WHERE project_id='p'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        serde_json::from_str::<Vec<task_manager_shared::ai_reviews::AiReview>>(&review_json)
+            .unwrap(),
+        changed_task.ai_reviews
+    );
     let decision_json: String = client
         .query_one(
             "SELECT decisions::text FROM tasks WHERE project_id='p'",
@@ -508,6 +563,7 @@ fn project(id: &str, prefix: &str, history: &[&str]) -> ProjectModel {
 fn task(project_id: &str, number: i64, status: &str, depends_on: &[i64]) -> TaskModel {
     TaskModel {
         decisions: Vec::new(),
+        ai_reviews: Vec::new(),
         analysis_documents: Vec::new(),
 
         project_id: project_id.to_string(),

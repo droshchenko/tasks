@@ -1,6 +1,7 @@
 {
   "author": "Codex, tasks",
   "date": "2026-09-30",
+  "follow_up": "2026-10-01-implementation-results.json",
   "upstream": "my-ai-utils/task-manager-mcp",
   "baseline_commit": "099602ec34e8fb510b704834e4f2fa5871c0340d",
   "findings": [
@@ -37,6 +38,7 @@
     "rollout": "Deploy backend before the UI. Added database fields are nullable. Existing templates, tasks and exports remain readable; no destructive migration is needed."
   },
   "verification": {
+    "commit": "c22c24f7090033709ea9499d810e8c628af03ded",
     "date": "2026-10-01",
     "unit_tests": { "shared": 53, "backend": 266, "ui": 72 },
     "postgres_integration": "Passed separately against disposable local PostgreSQL 16: nullable migration preserves legacy rows; decision history round-trips; task/goal writes commit together and roll back together on constraint failure.",

@@ -37,6 +37,20 @@ pub struct TaskDecision {
     pub cancelled_unix_seconds: Option<i64>,
 }
 
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct PendingDecision {
+    pub task_id: String,
+    pub task_title: String,
+    pub project: String,
+    pub project_name: String,
+    pub decision: TaskDecision,
+}
+
+#[derive(Serialize, Deserialize, MyHttpObjectStructure, Clone, Debug, PartialEq)]
+pub struct PendingDecisionsResponse {
+    pub items: Vec<PendingDecision>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecisionRequest {
     pub request_key: String,
@@ -122,7 +136,16 @@ pub fn add_decision(
         let existing = &history[index];
         if existing.action.trim() == request.action
             && existing.question.trim() == request.question
-            && existing.options.iter().zip(&request.options).all(|(old, new)| old.id == new.id && old.label.trim() == new.label && old.consequence.trim() == new.consequence && old.recommended == new.recommended)
+            && existing
+                .options
+                .iter()
+                .zip(&request.options)
+                .all(|(old, new)| {
+                    old.id == new.id
+                        && old.label.trim() == new.label
+                        && old.consequence.trim() == new.consequence
+                        && old.recommended == new.recommended
+                })
             && existing.options.len() == request.options.len()
             && existing.required == request.required
             && existing.asked_by.trim() == request.asked_by
@@ -241,9 +264,19 @@ pub fn validate_decision_history(history: &[TaskDecision]) -> Result<(), String>
     let mut validated = Vec::new();
     let mut ids = Vec::new();
     for decision in history {
-        if decision.id != decision.id.trim() || decision.request_key != decision.request_key.trim()
-            || decision.options.iter().any(|choice| choice.id != choice.id.trim())
-            || decision.answer.as_ref().and_then(|answer| answer.option_id.as_deref()).map(|id| id != id.trim() || id.is_empty()).unwrap_or(false) {
+        if decision.id != decision.id.trim()
+            || decision.request_key != decision.request_key.trim()
+            || decision
+                .options
+                .iter()
+                .any(|choice| choice.id != choice.id.trim())
+            || decision
+                .answer
+                .as_ref()
+                .and_then(|answer| answer.option_id.as_deref())
+                .map(|id| id != id.trim() || id.is_empty())
+                .unwrap_or(false)
+        {
             return Err("imported decision and option identifiers must use their canonical spelling without surrounding whitespace".into());
         }
         if decision.id.trim().is_empty()

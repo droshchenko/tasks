@@ -22,9 +22,8 @@ use crate::tasks::TaskResponse;
 //
 // `goals` rides along because every change to one arrives this way too — a goal renamed or closed through
 // MCP has to appear on the Goals screen without anybody re-reading anything. Their progress counters are
-// computed server-side and count archived work; `tasks` does NOT include archived work, so a client that
-// recomputed the counters from what is in this snapshot would disagree with the server, and disagree more
-// the older the goal. Take the numbers as given.
+// computed server-side and count archived work. Tasks include archived work too; the board applies its
+// live-window filter while the Goals screen can show the complete membership.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BoardSnapshot {
     // The board's PREFIX — what the client sent in its `{"watch":…}` and what it compares this against to
@@ -35,7 +34,7 @@ pub struct BoardSnapshot {
     pub goals: Vec<GoalResponse>,
 }
 
-// One message from the server. Exactly one of the fields is set on any given message.
+// A snapshot may carry the legacy change signal beside it. Errors and heartbeat replies stand alone.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ServerWsPayload {
     // Kept alongside `board_snapshot` for one reason only: a tab opened before the snapshot existed knows
@@ -47,6 +46,8 @@ pub struct ServerWsPayload {
     pub board_snapshot: Option<BoardSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pong: Option<bool>,
 }
 
 impl ServerWsPayload {
@@ -56,6 +57,7 @@ impl ServerWsPayload {
             project_changed: Some(snapshot.project.clone()),
             board_snapshot: Some(snapshot),
             error: None,
+            pong: None,
         }
     }
 

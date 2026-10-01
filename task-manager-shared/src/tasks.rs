@@ -98,6 +98,10 @@ pub struct TaskResponse {
     #[serde(default)]
     pub link_statuses: Vec<TaskLinkResponse>,
     pub blocked: bool,
+    #[serde(default)]
+    pub readiness: crate::readiness::TaskReadiness,
+    #[serde(default)]
+    pub ai_reviews: Vec<crate::ai_reviews::AiReviewSummary>,
     // The checklist, in the order it was written. Empty for a task nobody broke down, which is most of
     // them. Carried in full — titles and texts — because the card that draws it is drawn from this
     // response and there is no second call from the browser for it.
@@ -123,6 +127,8 @@ pub struct TaskResponse {
     pub comments: Vec<TaskCommentResponse>,
     pub created_unix_seconds: i64,
     pub updated_unix_seconds: i64,
+    #[serde(default)]
+    pub revision_unix_microseconds: i64,
     // When the task landed in Done, and absent whenever it is not there. Home shows it, and it is what
     // the seven-day archive window is measured from — a task closed longer ago than that is not returned
     // at all.
@@ -282,6 +288,9 @@ mod tests {
             blocks: Vec::new(),
             link_statuses: Vec::new(),
             blocked: false,
+            readiness: Default::default(),
+            ai_reviews: Vec::new(),
+            revision_unix_microseconds: 0,
             documents: Vec::new(),
             subtasks: Vec::new(),
             gh_actions: Vec::new(),

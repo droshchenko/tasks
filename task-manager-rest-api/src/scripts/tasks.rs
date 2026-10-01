@@ -234,6 +234,7 @@ pub async fn create_task(app: &AppContext, new_task: NewTask) -> Result<String, 
 
     let task = TaskModel {
         decisions: Vec::new(),
+        ai_reviews: Vec::new(),
         analysis_documents: Vec::new(),
 
         project_id: project.id.clone(),

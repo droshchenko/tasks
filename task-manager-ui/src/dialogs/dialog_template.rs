@@ -80,6 +80,10 @@ fn render_modal(
             class: "modal-backdrop",
             div {
                 class: "{modal_class}",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-label": "{title}",
+                onkeydown: move |event| { if event.key() == Key::Escape { event.stop_propagation(); close(); } },
                 div { class: "modal-header",
                     if let Some(on_back) = on_back {
                         button {

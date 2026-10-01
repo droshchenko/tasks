@@ -15,6 +15,9 @@ pub struct AppState {
     pub signed_in: DataState<Option<MeResponse>>,
     /// True once the WebSocket task has been spawned, so a re-render does not open a second one.
     pub ws_started: bool,
+    pub ws_status: String,
+    pub ws_generation: u64,
+    pub last_synced_unix_seconds: Option<i64>,
     /// Bumped by the WebSocket on every push about the open board. Views watch it, which is what makes two
     /// pushes carrying identical tasks still count as two pushes.
     pub board_revision: u64,
@@ -32,6 +35,9 @@ impl Default for AppState {
         Self {
             signed_in: DataState::new(),
             ws_started: false,
+            ws_status: "Connecting".into(),
+            ws_generation: 0,
+            last_synced_unix_seconds: None,
             board_revision: 0,
             board_push: None,
         }

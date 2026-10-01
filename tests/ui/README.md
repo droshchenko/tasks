@@ -1,0 +1,21 @@
+# UI smoke test
+
+Build the actual Dioxus client in release mode so the development hot-reload socket is absent:
+
+```sh
+cd task-manager-ui
+dx build --web --release
+```
+
+From `tests/ui`, install the pinned test dependencies with `npm ci`. Set `TASKS_UI_DIST` to the
+`public` directory reported by the build. Use an installed browser with `TASKS_CHROME_PATH`, or
+install Playwright's Chromium with `npx playwright install chromium`, then run `npm test`.
+
+The script creates a temporary loopback HTTP/WebSocket server, uses only synthetic records and a
+fresh headless browser profile, and stops both on completion. It does not call the deployed board
+or an AI provider. Screenshots and the result report are written to the ignored `results` folder.
+
+The scenarios cover opening a Goal by URL, actual dependency reasons, keeping task text readable,
+answering through Inbox, preserving a saved answer across a failed refresh, form-label isolation,
+narrow layouts and reconnecting with fresh task data and project settings. The server also counts
+subscriptions so an update/subscription feedback loop fails the test.

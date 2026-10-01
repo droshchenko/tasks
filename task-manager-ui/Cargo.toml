@@ -30,7 +30,7 @@ rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-ext
 
 # The WebSocket Home holds open. A browser cannot put headers on it — the session rides as a cookie, which it
 # does send on the handshake.
-reqwasm = "*"
+gloo-net = { version = "0.7.0", default-features = false, features = ["websocket"] }
 futures = { version = "*" }
 
 # A task's text is Markdown. Safe by default: `markdown::to_html` escapes raw HTML rather than passing

@@ -242,6 +242,82 @@ New `prompts`, `decisions`, `analysis_documents` and `auto_completed` database c
 The schema verifier adds them to populated tables; old JSON and export files remain readable. Deploy
 the backend before the UI. No destructive schema migration is required.
 
+## Readiness, Inbox and live recovery
+
+Task reads now carry `readiness`: unfinished dependencies with their titles, statuses and assignees,
+required unanswered questions, and missing analysis results. Missing/deleted dependencies are explicit.
+Goal reads include the unfinished tasks needing attention. These are current explanations, not another
+stored status. REST, MCP and WebSocket use the same calculation; open task/goal dialogs accept newer
+snapshot revisions, including changes caused by a dependency or template rather than the task itself.
+Goal IDs also work in the board search and direct `?search=PREFIX-G7` links.
+
+The **Inbox** reads pending questions across the signed-in person's accessible active projects, with
+required questions first and the oldest first within each group. It refreshes every 30 seconds while
+visible and on demand. A saved answer remains saved if the following refresh fails. A modal makes its
+background inert; each rendered answer form has distinct labels even when the same question is also
+visible in the Inbox. Empty comment threads leave space for the specification and decisions.
+
+The socket reconnects with bounded exponential backoff, restores the latest selected project and
+receives a fresh snapshot on subscription. Ping/pong detects stalled connections; identical selections
+do not resubscribe. Project configuration is refreshed on reconnect. The header reports connection
+state and the last snapshot time. Delivery is ordered with regular board updates.
+
+## Semantic search and Jev in tasks
+
+Both integrations run directly in this backend. They are optional: ordinary task operations and local
+text search need neither an embeddings provider nor a Jev key.
+
+| Server environment | Meaning |
+|---|---|
+| `TASKS_EMBEDDINGS_URL` | Full HTTP(S) embeddings endpoint. Omit to use text search only. |
+| `TASKS_EMBEDDINGS_MODEL` | Embedding model; prefer a pinned version. Required with the endpoint. |
+| `TASKS_EMBEDDINGS_API_KEY` | Optional bearer credential, including for an authenticated local provider. |
+| `TASKS_JEV_API_KEY` | TypeSafe credential. Omit to disable new Jev evaluations. |
+| `TASKS_JEV_MODEL` | Direct TypeSafe model/version; defaults to `jev-latest`. The actual returned version is recorded. |
+
+Credentials stay in the server environment and never enter tool arguments, UI responses or receipts.
+The embeddings adapter posts `{model, input: [...], encoding_format: "float"}` and requires a response
+with a model identity and indexed `data` entries containing numeric embeddings. Requests have a 25-second
+deadline and no hidden inference retries. Only explicit indexing, search or review calls contact a
+provider. Use the existing `tasks_search` for exhaustive local literal/regex search with no external call.
+
+- `tasks_index_semantic`: index up to 16 task snapshots per call. Repeat until `remaining` is zero;
+  with `force`, pass the returned `next_after` as `after_number`. A changed task is skipped and retried.
+- `tasks_search_context`: project-scoped exact-ID, text and vector retrieval with explicit `text`/
+  `hybrid` mode and fallback notices. Results include analysis-file references. Similarity never creates
+  a dependency, marks a duplicate or changes a task.
+- `tasks_review`: ask Jev for configured task type (Choice), urgency on five defined levels (Score),
+  missing material input (Noul), and a possible duplicate among up to five current same-project vector
+  candidates (Choice). It records a validated recommendation and an authored task comment.
+- `tasks_review_history`: read recent evaluations, optionally with their exact request/response snapshots,
+  without contacting the provider. The task dialog shows the latest five summaries.
+
+Vectors live in a separate, rebuildable PostgreSQL `semantic_vectors` cache, keyed by internal project,
+task and provider identity. They never travel in board snapshots or project exports. Current content
+hashes, model identities and dimensions are checked before ranking; deleted tasks and other projects
+cannot participate. At the current board scale, exact cosine comparison avoids an extension or another
+service. A later ANN/pgvector implementation can preserve the MCP contract. Embedding inputs are bounded
+excerpts of task text, recent comments and recorded human decisions; attached file contents are not indexed.
+
+Jev uses [TypeSafe's typed HTTP API](https://docs.typesafe.ai/api), not a chat completion. Probabilities,
+confidence and urgency scores remain distinct. The backend rejects undeclared choices, malformed
+distributions, inconsistent score rubrics and unexpected models. It rechecks the task/context fingerprint
+after inference under the mutation guard; a stale result cannot be recorded onto a changed task or a
+different project reusing its handle. Identical current requests reuse the recorded evaluation.
+In this initial policy every recommendation requires review; task properties, human answers, completion
+rules and authorizations are never inferred from a model result.
+
+Full receipts are stored in a nullable `tasks.ai_reviews` JSON column and preserved by project exports.
+Imports validate shape, probabilities and request hashes and mark the source as imported. Model-generated
+summary comments are recognized by their corresponding receipts and excluded from subsequent AI context
+so reviews do not train on their own summaries. Provider accuracy on the team's real task corpus is a
+separate live evaluation; protocol tests use synthetic examples.
+
+The [implementation plan and Linear references](docs/analysis/2026-10-01-tasks-improvement-plan.json)
+record the intended scope and acceptance checks. The real-WASM smoke test in `tests/ui` covers goal
+links, readiness, Inbox answers, refresh failures, narrow layouts and reconnect recovery with synthetic
+HTTP/WebSocket fixtures. See [its run instructions](tests/ui/README.md).
+
 ## Priority — five steps, and it decides the order
 
 A task **and a goal** each carry one of `super-high`, `high`, `normal`, `low`, `super-low`. A fixed scale
@@ -1627,6 +1703,5 @@ Not for `task-manager-ui`: it is a Dioxus WASM build with its own toolchain and 
 - **Copying it needs a secure context.** `navigator.clipboard` exists on https and on localhost, which is
   both of the ways the board is reached; served over plain http the button shows the link in a dialog to be
   copied by hand instead.
-- **No WebSocket reconnect.** A dropped socket leaves Home static until the page is reloaded. The dot in
-  the header goes grey so it is visible rather than silent, but a laptop waking from sleep currently needs
-  a refresh.
+- Semantic search currently indexes task excerpts and recorded human decisions. Full attached-file
+  ingestion and automatic application of calibrated Jev recommendations remain separate follow-up work.

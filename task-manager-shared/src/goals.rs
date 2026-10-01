@@ -37,6 +37,8 @@ pub struct GoalResponse {
     pub status: String,
     pub tasks_amount: i32,
     pub done_amount: i32,
+    #[serde(default)]
+    pub waiting_tasks: Vec<crate::readiness::GoalWaitingTask>,
     // The goal's own checklist, in the order it was written. Separate from `tasks_amount` /
     // `done_amount` and deliberately not folded into them: those count the goal's TASKS, which is what
     // decides whether it can close, and mixing a private breakdown into the number a goal is judged by
@@ -50,6 +52,8 @@ pub struct GoalResponse {
     pub comments: Vec<TaskCommentResponse>,
     pub created_unix_seconds: i64,
     pub updated_unix_seconds: i64,
+    #[serde(default)]
+    pub revision_unix_microseconds: i64,
     // When the goal was closed, and absent while it is open. What the archive window is measured from: a
     // goal closed longer ago than the project's window is not returned unless asked for.
     pub closed_unix_seconds: Option<i64>,

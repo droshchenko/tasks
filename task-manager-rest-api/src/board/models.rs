@@ -406,6 +406,7 @@ pub struct TaskModel {
     pub deleted_moment: Option<DateTimeAsMicroseconds>,
     pub decisions: Vec<task_manager_shared::decisions::TaskDecision>,
     pub analysis_documents: Vec<String>,
+    pub ai_reviews: Vec<task_manager_shared::ai_reviews::AiReview>,
 }
 
 impl TaskModel {
