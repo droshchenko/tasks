@@ -115,6 +115,18 @@ pub fn config_hash(config: &KnowledgeConfig) -> String {
     )
 }
 
+pub fn source_hash(
+    config: &KnowledgeConfig,
+    connection: &crate::board::GithubConnectionModel,
+) -> String {
+    crate::documents::content_hash(
+        serde_json::json!({"settings":config_hash(config),"owner":connection.owner,
+        "repository":connection.repo,"branch":connection.branch,"root":connection.repo_path})
+        .to_string()
+        .as_bytes(),
+    )
+}
+
 pub fn relative_path(path: &str) -> Result<String, String> {
     let path = path.trim().trim_end_matches('/');
     if path.is_empty()
@@ -230,6 +242,7 @@ pub fn status(
             .is_some_and(|connection| {
                 snapshot.repository == format!("{}/{}", connection.owner, connection.repo)
                     && snapshot.repo_path == connection.repo_path
+                    && snapshot.config_hash == source_hash(config, connection)
             });
     let upload_matches = config.graph_source != "upload"
         || snapshot.graph_upload_hash
@@ -239,8 +252,7 @@ pub fn status(
                 .read()
                 .get(&project.id)
                 .map_or("", |g| g.content_hash.as_str());
-    let fresh = snapshot.config_hash == config_hash(config)
-        && repository_matches
+    let fresh = repository_matches
         && upload_matches
         && graph::same_commit(&snapshot.commit, &mirror.commit);
     let graph_fresh = snapshot
@@ -398,5 +410,24 @@ mod tests {
         let cache = KnowledgeCache::restore(vec![foreign]);
         assert!(cache.snapshots.read().is_empty());
         assert!(cache.errors.read().contains_key("other"));
+    }
+
+    #[test]
+    fn connection_branch_changes_invalidate_the_knowledge_source() {
+        let config = KnowledgeConfig {
+            connection: "source".into(),
+            graph_source: "none".into(),
+            ..Default::default()
+        };
+        let mut connection = crate::board::GithubConnectionModel {
+            name: "source".into(),
+            owner: "example".into(),
+            repo: "repository".into(),
+            branch: "main".into(),
+            repo_path: String::new(),
+        };
+        let before = source_hash(&config, &connection);
+        connection.branch = "release".into();
+        assert_ne!(before, source_hash(&config, &connection));
     }
 }

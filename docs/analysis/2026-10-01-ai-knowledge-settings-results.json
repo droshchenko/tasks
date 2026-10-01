@@ -10,7 +10,7 @@
     "Project-scoped knowledge in tasks_prepare, tasks_search_context and Jev request fingerprints; stale sources are excluded"
   ],
   "verification": {
-    "backend_unit_tests": {"passed":289,"ignored":2,"failed":0},
+    "backend_unit_tests": {"passed":290,"ignored":2,"failed":0},
     "shared_unit_tests": {"passed":53,"failed":0},
     "ui_unit_tests": {"passed":76,"failed":0},
     "isolated_postgresql_18": "Passed the legacy migration/atomic workflow integration test, extended with encrypted settings persistence and restoration",

@@ -1,4 +1,4 @@
-use super::{Snapshot, UploadedGraph, WikiDocument, config, config_hash, graph, settings_view};
+use super::{Snapshot, UploadedGraph, WikiDocument, config, graph, settings_view, source_hash};
 use crate::{app::AppContext, postgres::AppSettingDto};
 use std::{path::Path, sync::Arc};
 use task_manager_shared::ai_settings::*;
@@ -6,6 +6,36 @@ use task_manager_shared::ai_settings::*;
 const MAX_WIKI_FILES: usize = 3000;
 const MAX_FILE_BYTES: usize = 128 * 1024;
 const MAX_WIKI_BYTES: usize = 24 * 1024 * 1024;
+
+fn checked_root(clone: &Path, repo_path: &str) -> Result<std::path::PathBuf, String> {
+    let clone = clone
+        .canonicalize()
+        .map_err(|_| "The connected repository is not available.")?;
+    let root = crate::github::workdir::connection_root(&clone, repo_path)
+        .canonicalize()
+        .map_err(|_| "The configured repository folder is not available.")?;
+    if !root.starts_with(&clone) {
+        return Err("The connected folder points outside its repository.".into());
+    }
+    Ok(root)
+}
+
+async fn git_value(clone: &Path, args: &[&str]) -> Result<String, String> {
+    let output = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(clone)
+        .args(args)
+        .output()
+        .await
+        .map_err(|_| "The connected checkout could not be inspected.")?;
+    if !output.status.success() {
+        return Err(
+            "The connected checkout could not be inspected. Refresh the repository connection."
+                .into(),
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
 
 pub fn source_matches(path: &str, roots: &[String]) -> bool {
     roots.iter().any(|root| {
@@ -100,9 +130,9 @@ pub async fn refresh(app: &AppContext, prefix: &str) -> Result<KnowledgeSettings
     let repository = format!("{}/{}", connection.owner, connection.repo);
     let clone_dir =
         crate::github::workdir::connection_dir(&app.git_repos_path, &project.id, &connection.name);
-    let root = crate::github::workdir::connection_root(&clone_dir, &connection.repo_path);
     let lock = app.github.workdir_lock(&project.id, &connection.name);
     let _read = lock.read().await;
+    let root = checked_root(&clone_dir, &connection.repo_path)?;
     let mirror = app.github.get_or_pending(&project.id, &connection.name);
     if mirror.listed.is_none() {
         return Err("The repository has not been indexed yet. Refresh its connection in Projects setup first.".into());
@@ -122,6 +152,35 @@ pub async fn refresh(app: &AppContext, prefix: &str) -> Result<KnowledgeSettings
     }
     if !graph::same_commit(&commit, &mirror.commit) {
         return Err("The repository listing is stale. Refresh its connection first.".into());
+    }
+    let remote = git_value(&clone_dir, &["config", "--get", "remote.origin.url"]).await?;
+    let expected_remote = crate::github::workdir::repo_url(&connection);
+    if !remote
+        .trim_end_matches(".git")
+        .eq_ignore_ascii_case(expected_remote.trim_end_matches(".git"))
+    {
+        return Err("The checkout does not match the configured repository. Refresh its connection before indexing.".into());
+    }
+    if !connection.branch.is_empty() {
+        let branch = git_value(&clone_dir, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .await
+            .unwrap_or_default();
+        if branch != connection.branch {
+            let tag = format!("refs/tags/{}^{{commit}}", connection.branch);
+            let tagged = if branch.is_empty() {
+                git_value(
+                    &clone_dir,
+                    &["rev-parse", "--verify", "--end-of-options", &tag],
+                )
+                .await
+                .ok()
+            } else {
+                None
+            };
+            if tagged.as_deref() != Some(commit.as_str()) {
+                return Err("The checkout is not on the configured branch or tag. Refresh its connection before indexing.".into());
+            }
+        }
     }
     let mut files: Vec<_> = mirror
         .entries
@@ -187,12 +246,13 @@ pub async fn refresh(app: &AppContext, prefix: &str) -> Result<KnowledgeSettings
     })
     .await
     .map_err(|_| "Knowledge indexing was interrupted.")?;
+    let source_fingerprint = source_hash(&config, &connection);
     let snapshot = Snapshot {
         project_id: project.id.clone(),
         connection: connection.name,
         repository,
         repo_path: connection.repo_path,
-        config_hash: config_hash(&config),
+        config_hash: source_fingerprint,
         commit,
         documents,
         graph,
@@ -318,6 +378,11 @@ mod tests {
             std::os::unix::fs::symlink(&outside, root.join("escape.md")).unwrap();
             assert!(safe_file(&root, "escape.md", 128).is_err());
             std::fs::remove_file(outside).unwrap();
+            let outside_dir = root.with_extension("outside-directory");
+            std::fs::create_dir(&outside_dir).unwrap();
+            std::os::unix::fs::symlink(&outside_dir, root.join("escape-root")).unwrap();
+            assert!(checked_root(&root, "escape-root").is_err());
+            std::fs::remove_dir(outside_dir).unwrap();
         }
         std::fs::remove_dir_all(root).unwrap();
     }

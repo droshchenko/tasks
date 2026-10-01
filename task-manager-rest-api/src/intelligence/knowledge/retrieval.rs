@@ -1,4 +1,4 @@
-use super::{Snapshot, config, config_hash, graph};
+use super::{Snapshot, config, graph, source_hash};
 use crate::app::AppContext;
 use std::sync::Arc;
 use task_manager_shared::{
@@ -209,7 +209,7 @@ pub fn search_project(
         .map_or_else(String::new, |g| g.content_hash.clone());
     let Some(snapshot) = snapshot.filter(|snapshot| {
         snapshot.project_id == project.id
-            && snapshot.config_hash == config_hash(&config)
+            && snapshot.config_hash == source_hash(&config, connection)
             && (config.graph_source != "upload" || snapshot.graph_upload_hash == upload_hash)
             && snapshot.repository == format!("{}/{}", connection.owner, connection.repo)
             && snapshot.repo_path == connection.repo_path

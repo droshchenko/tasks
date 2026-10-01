@@ -339,6 +339,8 @@ The same Settings page configures each project's sources independently:
 own project. Wiki and graph retrieval is text/symbol based and works independently of embeddings.
 Stale settings, changed repository identities, missing indexes and graphs from a different commit are
 reported; stale evidence is excluded. Retrieved text is evidence, not authorization or agent instructions.
+Repository branch changes also invalidate the index. Refresh verifies the checkout's repository and
+branch/tag, and rejects a connected folder that resolves outside the cloned repository.
 Jev's request fingerprint includes the knowledge actually supplied, so changed evidence invalidates a
 pending evaluation. Knowledge caches and provider configuration are excluded from project exports.
 
